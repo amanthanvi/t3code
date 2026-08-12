@@ -1,0 +1,46 @@
+{
+  "captured": [
+    {
+      "file": "/tmp/t3-issues/shots/web-legacy-features.png",
+      "shows": "Settings → General with Legacy features expanded, showing Plan mode (legacy), Stream token by token (legacy), and Sidebar (legacy).",
+      "surface": "web",
+      "capturedAt": "2026-08-12T23:08:41Z"
+    },
+    {
+      "file": "/tmp/t3-issues/shots/mobile-legacy-section.png",
+      "shows": "Mobile Settings scrolled to Legacy, containing only the Legacy Thread List row.",
+      "surface": "ios-sim",
+      "capturedAt": "2026-08-12T23:13:27Z"
+    },
+    {
+      "file": "/tmp/t3-issues/shots/web-agents-panel.png",
+      "shows": "Web thread with settled parent output while the Agents panel shows three Claude background agents actively working.",
+      "surface": "web",
+      "capturedAt": "2026-08-12T23:23:53Z"
+    },
+    {
+      "file": "/tmp/t3-issues/shots/mobile-idle-during-subagents.png",
+      "shows": "The same thread three seconds later on iOS: settled parent output and normal composer, with no working indicator, Agents panel, or sub-agent visibility.",
+      "surface": "ios-sim",
+      "capturedAt": "2026-08-12T23:23:56Z"
+    },
+    {
+      "file": "/tmp/t3-issues/shots/mobile-slash-plan.png",
+      "shows": "Mobile composer slash-command menu showing /plan (Switch to plan mode) and /default (Switch to default mode).",
+      "surface": "ios-sim",
+      "capturedAt": "2026-08-12T23:36:55Z"
+    },
+    {
+      "file": "/tmp/t3-issues/shots/web-mode-picker.png",
+      "shows": "Web compact composer Mode control showing Chat and Plan, with Plan selected while the legacy Plan mode setting is enabled.",
+      "surface": "web",
+      "capturedAt": "2026-08-12T23:09:29Z"
+    }
+  ],
+  "failed": [],
+  "buildArtifactsLeftInWorktree": [
+    "apps/mobile/ios/"
+  ],
+  "processesCleanedUp": true,
+  "notes": "Six PNGs verified non-empty by dimensions/size and visually inspected; paired web/iOS agent shots were captured 3 seconds apart while three Claude agents were active. Commands used: Expo prebuild, Xcode simulator build/run, isolated vp dev and Metro, Playwright, and simctl screenshot. Generated ignored apps/mobile/ios/ remains; temporary ThreadComposer harness was reverted and the pre-existing pnpm-lock.yaml modification was untouched. Owned services/browser were stopped, secret logs deleted, booted simulator preserved. Temporary DerivedData was permanently deleted after capture to reclaim space. Risk: generated iOS project and Pods occupy about 1.2 GB."
+}
