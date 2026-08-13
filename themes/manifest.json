@@ -1,0 +1,43 @@
+{
+  "captured": [
+    {
+      "file": "/tmp/t3-issues/shots2/web-theme-library.png",
+      "shows": "Web Settings > Appearance with intro copy, System/Light/Dark appearance-mode tiles, Create theme and Import theme actions, and all six built-in theme cards: T3 Code, T3 Chat, Grove, Ocean, Ember, and Iris.",
+      "surface": "web",
+      "capturedAt": "2026-08-13T00:29:17Z"
+    },
+    {
+      "file": "/tmp/t3-issues/shots2/mobile-appearance.png",
+      "shows": "iOS Appearance screen top: title, Text card with Text size, Terminal card with Custom font size and Font size, and the start of Code & Diffs; no theme or appearance-mode controls.",
+      "surface": "ios-sim",
+      "capturedAt": "2026-08-13T00:32:21Z"
+    },
+    {
+      "file": "/tmp/t3-issues/shots2/mobile-appearance-2.png",
+      "shows": "iOS Appearance screen bottom: Terminal and Code & Diffs cards with Custom font size, Font size, and Word break controls, followed by blank end-of-screen space proving there are no theme controls below.",
+      "surface": "ios-sim",
+      "capturedAt": "2026-08-13T00:32:07Z"
+    },
+    {
+      "file": "/tmp/t3-issues/shots2/web-theme-editor.png",
+      "shows": "Web Create theme editor with Theme name placeholder e.g. Aurora, Light/Dark appearance group, Background and Accent controls, and Advanced switch.",
+      "surface": "web",
+      "capturedAt": "2026-08-13T00:29:38Z"
+    },
+    {
+      "file": "/tmp/t3-issues/shots2/web-theme-import.png",
+      "shows": "Web Add a theme dialog with Open VSX description, search placeholder, Dracula/Catppuccin/Nord/Tokyo Night suggestions, and file/JSON import section.",
+      "surface": "web",
+      "capturedAt": "2026-08-13T00:29:53Z"
+    },
+    {
+      "file": "/tmp/t3-issues/shots2/web-theme-applied.png",
+      "shows": "Optional web main-app evidence with the non-default Ocean theme applied in explicit dark mode, visible as a navy surface with cyan accent.",
+      "surface": "web",
+      "capturedAt": "2026-08-13T00:30:55Z"
+    }
+  ],
+  "failed": [],
+  "processesCleanedUp": true,
+  "notes": "Changed files: six PNGs plus this manifest, only under /tmp/t3-issues/shots2; repo source unchanged and git clean. Commands: isolated vp dev, Expo dev-client Metro, XcodeBuildMCP/simctl, Playwright CLI, sips, ps/lsof, and git status. Validation: visual inspection plus non-empty PNG checks; web 1440x900, iOS 1206x2622. Risk: optional applied-theme shot uses the disposable environment's empty main-app state."
+}
