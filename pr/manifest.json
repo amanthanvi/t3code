@@ -1,0 +1,163 @@
+{
+  "captured": [
+    {
+      "file": "a-legacy-plan-toggle.png",
+      "shows": "Settings Legacy section with Plan Mode (Legacy) enabled",
+      "surface": "iOS Simulator — Settings",
+      "capturedAt": "2026-08-14T03:33:09-04:00"
+    },
+    {
+      "file": "a-slash-plan-enabled.png",
+      "shows": "Existing-thread slash menu with /plan and /default available",
+      "surface": "iOS Simulator — Thread composer",
+      "capturedAt": "2026-08-14T03:40:30-04:00"
+    },
+    {
+      "file": "a-slash-plan-disabled.png",
+      "shows": "Existing-thread slash menu with /plan and /default absent while Legacy Plan Mode is disabled",
+      "surface": "iOS Simulator — Thread composer",
+      "capturedAt": "2026-08-14T03:42:38-04:00"
+    },
+    {
+      "file": "a-newtask-slash.png",
+      "shows": "New Task slash popover with /plan and /default available",
+      "surface": "iOS Simulator — New Task composer",
+      "capturedAt": "2026-08-14T03:36:09-04:00"
+    },
+    {
+      "file": "b-spawn-row.png",
+      "shows": "Settled parent feed with Kicked off 3 subagents · 3 working summary",
+      "surface": "iOS Simulator — Thread feed",
+      "capturedAt": "2026-08-14T03:51:32-04:00"
+    },
+    {
+      "file": "b-background-indicator.png",
+      "shows": "Persistent Background work running indicator and Stop affordance with the normal composer",
+      "surface": "iOS Simulator — Thread feed",
+      "capturedAt": "2026-08-14T03:51:32-04:00"
+    },
+    {
+      "file": "b-agents-sheet.png",
+      "shows": "Agents surface with three working agent rows, status, model, elapsed time, token counts, and tool counts",
+      "surface": "iOS Simulator — Agents sheet",
+      "capturedAt": "2026-08-14T03:53:19-04:00"
+    },
+    {
+      "file": "b-thread-list-working.png",
+      "shows": "Thread list with the background-agent thread still in Working state after the parent settled",
+      "surface": "iOS Simulator — Thread list",
+      "capturedAt": "2026-08-14T03:53:45-04:00"
+    },
+    {
+      "file": "c-color-scheme.png",
+      "shows": "Color scheme section with System, Light, Dark and all six built-in theme cards; Dark and Ocean selected",
+      "surface": "iOS Simulator — Appearance",
+      "capturedAt": "2026-08-14T04:24:21-04:00"
+    },
+    {
+      "file": "c-ocean-dark-thread.png",
+      "shows": "Thread view using the Ocean palette with the app-level Dark override",
+      "surface": "iOS Simulator — Thread",
+      "capturedAt": "2026-08-14T04:39:16-04:00"
+    },
+    {
+      "file": "c-terminal-themed.png",
+      "shows": "Native terminal with near-opaque Ocean background and correctly decoded cyan, magenta, green, red, and blue terminal colors",
+      "surface": "iOS Simulator — Native terminal",
+      "capturedAt": "2026-08-14T04:39:54-04:00"
+    },
+    {
+      "file": "c-import-sheet.png",
+      "shows": "Import theme sheet with ThemeFile v1 paste instructions and JSON editor",
+      "surface": "iOS Simulator — Import theme sheet",
+      "capturedAt": "2026-08-14T04:24:43-04:00"
+    },
+    {
+      "file": "c-imported-theme.png",
+      "shows": "Appearance picker with Aurora Test imported, selected, and removable",
+      "surface": "iOS Simulator — Appearance",
+      "capturedAt": "2026-08-14T04:30:15-04:00"
+    },
+    {
+      "file": "c-splash-neutral.png",
+      "shows": "Cold-launch splash uses the configured scheme-neutral #737373 background",
+      "surface": "iOS Simulator — Native cold launch",
+      "capturedAt": "2026-08-14T05:02:22-04:00"
+    }
+  ],
+  "failed": [],
+  "functionalChecks": [
+    {
+      "branch": "A",
+      "check": "Legacy Plan Mode toggle and existing-thread slash gating",
+      "result": "passed — enabling exposed /plan and /default; disabling removed both"
+    },
+    {
+      "branch": "A",
+      "check": "Disabled /plan literal-send behavior",
+      "result": "passed — /plan was sent as a literal user message and the thread remained in default interaction mode"
+    },
+    {
+      "branch": "A",
+      "check": "New Task /plan flow",
+      "result": "passed — /plan was selected before creation and the resulting thread persisted plan interaction mode"
+    },
+    {
+      "branch": "B",
+      "check": "Claude background subagent visibility",
+      "result": "passed — the settled parent showed 3 working subagents, persistent background liveness, three detailed Agents rows, and a Working thread-list state"
+    },
+    {
+      "branch": "B",
+      "check": "Stop background agents",
+      "result": "passed — Stop confirmation settled all three agents, cleared the persistent indicator, and updated the summary to 3 stopped"
+    },
+    {
+      "branch": "B",
+      "check": "Agent-count transitions",
+      "result": "passed for the exercised transition from 3 working to 3 stopped; natural completion was not observed because Stop terminated all three sleeping agents"
+    },
+    {
+      "branch": "C",
+      "check": "Fresh native build and appearance controls",
+      "result": "passed — the rebuilt client exposed the Color scheme section, three mode choices, and six theme cards"
+    },
+    {
+      "branch": "C",
+      "check": "Dark override persistence",
+      "result": "passed — Dark and Ocean remained checked after a full app stop and relaunch"
+    },
+    {
+      "branch": "C",
+      "check": "Ocean native terminal decoding",
+      "result": "passed — the terminal used the expected near-opaque Ocean background and correct terminal hues, with no translucent wrong-hue rendering"
+    },
+    {
+      "branch": "C",
+      "check": "ThemeFile v1 import and selected-theme removal",
+      "result": "passed at the native text-input boundary — exact ASCII JSON imported Aurora Test and auto-selected it; confirmed removal fell back to T3 Code"
+    },
+    {
+      "branch": "C",
+      "check": "OS Light with app Dark review/diff surfaces",
+      "result": "passed — a real Dirty worktree native diff stayed dark throughout with no white card around the dark diff"
+    },
+    {
+      "branch": "C",
+      "check": "Neutral cold-launch splash",
+      "result": "passed — fresh reinstall cold-launched with dominant #737373 under OS Light"
+    }
+  ],
+  "processesCleanedUp": true,
+  "notes": [
+    "Functional verification — A: exercised the Legacy toggle, existing-thread and New Task slash menus, literal /plan send while disabled, and persisted interaction modes; all behavior matched expectation.",
+    "Functional verification — B: exercised Claude spawning three background Task agents, parent-settled liveness, spawn summary, Agents sheet, thread-list Working state, and Stop confirmation; behavior matched expectation for working and stopped states.",
+    "Functional verification — C: exercised a fresh native prebuild/build, Dark/Ocean selection and relaunch persistence, native terminal colors, ThemeFile v1 import/removal fallback, and a native diff under OS Light with app Dark. All matched expectation except the cold-launch splash, which remained white.",
+    "Changed files — no tracked file in t6401, t6402, or t6405 was edited, staged, or committed by verification. The required t6405 Expo prebuild regenerated the ignored apps/mobile/ios tree. Deliverables and the synthetic review fixture exist only under /tmp/t3-issues; the synthetic project-c repo has one local fixture commit plus one unstaged text diff.",
+    "Commands run — t6401/t6402/t6405 disposable server serve/pair flows; one Expo Metro per branch; APP_VARIANT=development EXPO_NO_GIT_STATUS=1 expo prebuild --clean --platform ios; Xcode simulator build/run/install; simctl openurl, screenshot, appearance, terminate, uninstall, and launch; sqlite3/git readbacks; assetutil inspection.",
+    "Validation — every PNG is non-empty, visually inspected, and reports 1206×2622 RGBA. The t6405 build came from /tmp/t3-issues/derived-data-c and the new client was confirmed by the Color scheme UI.",
+    "Cleanup — recorded A, B, and C backend/Metro PIDs are stopped; ports 49401, 49402, 49405, 8081, 8082, and 8085 are free; the app is stopped; Remora Verification remains booted.",
+    "Risk — branch B count changes were observed for working-to-stopped, not natural agent completion, because the required Stop flow terminated the three five-minute sleeper agents.",
+    "Risk — c-splash-neutral.png is intentional failure evidence, not a successful AFTER image. Fresh uninstall/reinstall ruled out the old launch-snapshot cache; packaging contains the expected neutral color but runtime launch rendering is white."
+  ]
+}
