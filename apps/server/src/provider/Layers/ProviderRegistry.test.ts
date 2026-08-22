@@ -861,7 +861,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               streamChanges: Stream.empty,
             },
             adapter: {} as ProviderInstance["adapter"],
-            textGeneration: {} as ProviderInstance["textGeneration"],
+            textGeneration: {} as NonNullable<ProviderInstance["textGeneration"]>,
           } satisfies ProviderInstance;
           const instanceRegistryLayer = Layer.succeed(
             ProviderInstanceRegistry.ProviderInstanceRegistry,
@@ -950,7 +950,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               streamChanges: Stream.fromPubSub(changes),
             },
             adapter: {} as ProviderInstance["adapter"],
-            textGeneration: {} as ProviderInstance["textGeneration"],
+            textGeneration: {} as NonNullable<ProviderInstance["textGeneration"]>,
           } satisfies ProviderInstance;
           const instanceRegistryLayer = Layer.succeed(
             ProviderInstanceRegistry.ProviderInstanceRegistry,
@@ -1079,7 +1079,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 streamChanges: Stream.fromPubSub(changes),
               },
               adapter: {} as ProviderInstance["adapter"],
-              textGeneration: {} as ProviderInstance["textGeneration"],
+              textGeneration: {} as NonNullable<ProviderInstance["textGeneration"]>,
             } satisfies ProviderInstance;
             const instanceRegistryLayer = Layer.succeed(
               ProviderInstanceRegistry.ProviderInstanceRegistry,
@@ -1186,7 +1186,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               streamChanges: Stream.empty,
             },
             adapter: {} as ProviderInstance["adapter"],
-            textGeneration: {} as ProviderInstance["textGeneration"],
+            textGeneration: {} as NonNullable<ProviderInstance["textGeneration"]>,
           } satisfies ProviderInstance;
           const instanceRegistryLayer = Layer.succeed(
             ProviderInstanceRegistry.ProviderInstanceRegistry,
@@ -1279,7 +1279,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               streamChanges: Stream.empty,
             },
             adapter: {} as ProviderInstance["adapter"],
-            textGeneration: {} as ProviderInstance["textGeneration"],
+            textGeneration: {} as NonNullable<ProviderInstance["textGeneration"]>,
           });
           const codexInstance = makeInstance(codexProvider);
           const claudeInstance = makeInstance(claudeProvider);
@@ -1742,6 +1742,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
               assert.deepStrictEqual(providers.map((provider) => provider.instanceId).toSorted(), [
                 "claudeAgent",
+                "cline",
                 "codex",
                 "cursor",
                 "grok",

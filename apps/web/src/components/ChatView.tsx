@@ -195,7 +195,11 @@ import {
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { useBrowserHistoryStore } from "~/browserHistoryStore";
 import { registerFaviconProjectForThread } from "~/browserFaviconStore";
-import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
+import {
+  getProviderModelCapabilities,
+  getUnsupportedProviderModeReason,
+  resolveSelectableProvider,
+} from "../providerModels";
 import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import {
   useClientSettings,
@@ -2758,6 +2762,11 @@ function ChatViewContent(props: ChatViewProps) {
     const defaultInstanceId = defaultInstanceIdForDriver(selectedProvider);
     return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
   }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
+  const unsupportedProviderModeReason = getUnsupportedProviderModeReason({
+    provider: activeProviderStatus,
+    runtimeMode,
+    interactionMode,
+  });
   const providerStatusBannerKey = getProviderStatusBannerKey(activeProviderStatus);
   const [dismissedProviderStatusBannerKey, setDismissedProviderStatusBannerKey] = useState<
     string | null
@@ -6792,7 +6801,7 @@ function ChatViewContent(props: ChatViewProps) {
                                 ? "Sending feedback"
                                 : threadDetailLoading
                                   ? "Messages loading"
-                                  : null
+                                  : unsupportedProviderModeReason
                             }
                             isPreparingWorktree={isPreparingWorktree}
                             externalDrawerAttached={externalComposerDrawerAttached}

@@ -9,6 +9,7 @@ import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSet
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
+  filterTextGenerationProviderInstanceEntries,
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import {
@@ -40,6 +41,16 @@ const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; descr
     },
   };
 
+export function sourceControlWriterToggleState(input: {
+  readonly hasOverride: boolean;
+  readonly hasSupportedModel: boolean;
+}) {
+  return {
+    checked: input.hasOverride,
+    disabled: !input.hasSupportedModel && !input.hasOverride,
+  } as const;
+}
+
 export function SourceControlWritingSettingsSection() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
@@ -60,9 +71,16 @@ export function SourceControlWritingSettingsSection() {
     resolvedSourceControlWriterSelection === settings.textGenerationModelSelection
       ? defaultModelSelection
       : resolvedSourceControlWriterSelection;
-  const instanceEntries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings),
+  const instanceEntries = filterTextGenerationProviderInstanceEntries(
+    sortProviderInstanceEntries(
+      applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings),
+    ),
   );
+  const canUseDedicatedModel = instanceEntries.length > 0;
+  const dedicatedWriterToggle = sourceControlWriterToggleState({
+    hasOverride: usesDedicatedModel,
+    hasSupportedModel: canUseDedicatedModel,
+  });
   const modelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
     serverProviders,
@@ -173,7 +191,7 @@ export function SourceControlWritingSettingsSection() {
         description="Optional model override for change descriptions, change request titles and descriptions, and branch or bookmark names. Off uses the global text generation model."
         control={
           <div className="flex flex-wrap items-center justify-end gap-2">
-            {usesDedicatedModel ? (
+            {usesDedicatedModel && canUseDedicatedModel ? (
               <ProviderModelPicker
                 activeInstanceId={activeSelection.instanceId}
                 model={activeSelection.model}
@@ -191,7 +209,8 @@ export function SourceControlWritingSettingsSection() {
               />
             ) : null}
             <Switch
-              checked={usesDedicatedModel}
+              checked={dedicatedWriterToggle.checked}
+              disabled={dedicatedWriterToggle.disabled}
               onCheckedChange={(checked) =>
                 updateSettings({
                   sourceControlWriterModelSelection: checked

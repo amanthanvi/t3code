@@ -49,7 +49,7 @@ const mobileEndorsementRows = [
       </h1>
 
       <p class="hero-sub">
-        Orchestrate Claude Code, Codex, OpenCode, Cursor, and Grok from one surface.
+        Orchestrate Claude Code, Codex, Cline, OpenCode, Cursor, and Grok from one surface.
         Bring your own subscription. Fork the whole thing.
       </p>
 
@@ -186,8 +186,8 @@ const mobileEndorsementRows = [
       <div class="section-head">
         <h2>Bring your own sub</h2>
         <p>
-          T3 Code doesn't resell tokens. Plug in Claude Code, Codex, OpenCode,
-          Cursor, or Grok with the credentials you already have — we orchestrate
+          T3 Code doesn't resell tokens. Plug in Claude Code, Codex, Cline,
+          OpenCode, Cursor, or Grok with the credentials you already have — we orchestrate
           them, you keep your plan.
         </p>
       </div>
@@ -205,6 +205,13 @@ const mobileEndorsementRows = [
           <div class="harness-meta">
             <div class="harness-name">Codex CLI</div>
             <div class="harness-tag">codex login</div>
+          </div>
+        </div>
+        <div class="harness">
+          <div class="harness-mark"><img src="/harnesses/cline.svg" alt="" /></div>
+          <div class="harness-meta">
+            <div class="harness-name">Cline</div>
+            <div class="harness-tag">cline auth</div>
           </div>
         </div>
         <div class="harness">
@@ -811,7 +818,7 @@ const mobileEndorsementRows = [
 
   .harness-grid {
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(6, 1fr);
     gap: 0;
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -1266,10 +1273,6 @@ const mobileEndorsementRows = [
     .harness-grid { grid-template-columns: 1fr 1fr; }
     .harness { border-right: 0; border-bottom: 1px solid var(--border); }
     .harness:nth-child(odd) { border-right: 1px solid var(--border); }
-    .harness:nth-child(5):last-child {
-      grid-column: 1 / -1;
-      border-right: 0;
-    }
     .git-inner { grid-template-columns: 1fr; gap: 40px; }
     .open-grid { grid-template-columns: 1fr; }
   }

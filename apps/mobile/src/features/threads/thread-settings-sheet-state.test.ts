@@ -19,6 +19,9 @@ function modelOption(
     isDefault: false,
     isLegacy: false,
     capabilities: null,
+    supportedRuntimeModes: ["approval-required", "auto-accept-edits", "auto", "full-access"],
+    showInteractionModeToggle: true,
+    supportsImageAttachments: true,
     selection: {
       instanceId: ProviderInstanceId.make("codex"),
       model,

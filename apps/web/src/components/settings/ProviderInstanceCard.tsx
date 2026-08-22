@@ -443,12 +443,13 @@ export function ProviderInstanceCard({
     : null;
 
   const customModels = readConfigStringArray(instance.config, "customModels");
+  const supportsCustomModels = driverOption?.supportsCustomModels !== false;
   // Server-returned models may lag behind settings writes. Treat probe
   // models as the source for built-ins only; custom rows come directly
   // from the current instance config so add/remove reflects immediately.
   const modelsForDisplay = deriveProviderModelsForDisplay({
     liveModels: liveProvider?.models,
-    customModels,
+    customModels: supportsCustomModels ? customModels : [],
   });
 
   const updateDisplayName = (value: string) => {
@@ -781,6 +782,7 @@ export function ProviderInstanceCard({
                 hiddenModels={hiddenModels}
                 favoriteModels={favoriteModels}
                 modelOrder={modelOrder}
+                supportsCustomModels={supportsCustomModels}
                 onChange={updateCustomModels}
                 onHiddenModelsChange={onHiddenModelsChange}
                 onFavoriteModelsChange={onFavoriteModelsChange}

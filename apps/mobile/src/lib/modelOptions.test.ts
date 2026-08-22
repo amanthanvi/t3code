@@ -4,7 +4,12 @@ import { ProviderInstanceId, type ServerConfig } from "@t3tools/contracts";
 
 import {
   buildModelOptions,
+  getUnsupportedProviderAttachmentReason,
+  getUnsupportedProviderModeReason,
+  getUnavailableProviderModelReason,
+  getProviderSendBlockReason,
   groupByProvider,
+  providerSupportsImageAttachments,
   resolveDefaultableModelSelection,
   resolveSelectableModelSelection,
 } from "./modelOptions";
@@ -136,6 +141,184 @@ describe("mobile model options", () => {
     expect(resolveSelectableModelSelection(config, removed)).toBeNull();
     // No config (environment offline) — nothing to validate against.
     expect(resolveSelectableModelSelection(null, disabled)).toBe(disabled);
+  });
+
+  it("does not synthesize Cline selections missing from the online catalog", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "cline",
+          driver: "cline",
+          enabled: true,
+          installed: true,
+          status: "error",
+          auth: { status: "authenticated" },
+          models: [],
+        },
+      ],
+    } as unknown as ServerConfig;
+    const stale = {
+      instanceId: ProviderInstanceId.make("cline"),
+      model: "composer-2",
+    };
+
+    expect(resolveSelectableModelSelection(config, stale)).toBeNull();
+    expect(buildModelOptions(config, stale)).toEqual([]);
+    const changedCatalog = {
+      ...config,
+      providers: [
+        {
+          ...config.providers[0]!,
+          status: "ready",
+          models: [
+            {
+              slug: "current-account-model",
+              name: "Current account model",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+    expect(resolveSelectableModelSelection(changedCatalog, stale)).toBeNull();
+    expect(
+      buildModelOptions(changedCatalog, stale).map((option) => option.selection.model),
+    ).toEqual(["current-account-model"]);
+    // Offline config cannot be validated, so the existing draft remains
+    // available until a server snapshot arrives.
+    expect(resolveSelectableModelSelection(null, stale)).toBe(stale);
+    expect(buildModelOptions(null, stale)).toHaveLength(1);
+  });
+
+  it("preserves Cline routing while its model catalog is still checking", () => {
+    const selection = {
+      instanceId: ProviderInstanceId.make("cline"),
+      model: "last-known-cline-model",
+    };
+    const config = {
+      providers: [
+        {
+          instanceId: "cline",
+          driver: "cline",
+          displayName: "Cline",
+          enabled: true,
+          installed: true,
+          status: "warning",
+          auth: { status: "unknown" },
+          supportsImageAttachments: false,
+          models: [],
+        },
+        {
+          instanceId: "codex",
+          driver: "codex",
+          displayName: "Codex",
+          enabled: true,
+          installed: true,
+          status: "ready",
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "gpt-5.6-sol",
+              name: "GPT-5.6 Sol",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    expect(resolveSelectableModelSelection(config, selection)).toEqual(selection);
+    expect(
+      buildModelOptions(config, selection).some((option) => option.providerKey === "cline"),
+    ).toBe(false);
+    expect(getUnavailableProviderModelReason({ config, selection })).toContain("still checking");
+    expect(providerSupportsImageAttachments({ config, selection })).toBe(false);
+    expect(
+      getProviderSendBlockReason({
+        config,
+        selection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        attachmentCount: 1,
+      }),
+    ).not.toBeNull();
+  });
+
+  it("preserves carried Cline modes but blocks them until the user chooses supported modes", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "cline",
+          driver: "cline",
+          displayName: "Cline",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          supportedRuntimeModes: ["full-access"],
+          showInteractionModeToggle: false,
+          supportsImageAttachments: false,
+          models: [
+            {
+              slug: "current-account-model",
+              name: "Current account model",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+    const selection = {
+      instanceId: ProviderInstanceId.make("cline"),
+      model: "current-account-model",
+    };
+
+    expect(
+      getUnsupportedProviderModeReason({
+        config,
+        selection,
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+      }),
+    ).toContain("Choose Full access");
+    expect(
+      getUnsupportedProviderModeReason({
+        config,
+        selection,
+        runtimeMode: "full-access",
+        interactionMode: "plan",
+      }),
+    ).toContain("Choose Build");
+    expect(
+      getUnsupportedProviderModeReason({
+        config,
+        selection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      }),
+    ).toBeNull();
+    expect(groupByProvider(buildModelOptions(config, selection))[0]).toMatchObject({
+      supportedRuntimeModes: ["full-access"],
+      showInteractionModeToggle: false,
+      supportsImageAttachments: false,
+    });
+    expect(
+      getUnsupportedProviderAttachmentReason({ config, selection, attachmentCount: 1 }),
+    ).toContain("Remove the images");
+    expect(
+      getUnsupportedProviderAttachmentReason({ config, selection, attachmentCount: 0 }),
+    ).toBeNull();
+    expect(
+      getProviderSendBlockReason({
+        config,
+        selection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        attachmentCount: 1,
+      }),
+    ).toContain("Remove the images");
   });
 
   it("keeps legacy models out of implicit defaults", () => {

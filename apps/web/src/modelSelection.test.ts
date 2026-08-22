@@ -3,7 +3,9 @@ import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@t3tools/contrac
 import { describe, expect, it } from "vite-plus/test";
 import { createModelSelection } from "@t3tools/shared/model";
 import { deriveProviderInstanceEntries } from "./providerInstances";
+import { getDefaultServerModel } from "./providerModels";
 import {
+  getAppModelOptions,
   getAppModelOptionsForInstance,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
@@ -58,6 +60,44 @@ function settingsWithProviderInstances(): UnifiedSettings {
 }
 
 describe("instance-scoped model selection", () => {
+  it("does not synthesize Codex's default for an empty Cline catalog", () => {
+    const cline = ProviderDriverKind.make("cline");
+    expect(
+      getDefaultServerModel(
+        [provider({ provider: cline, instanceId: "cline", models: [] })],
+        cline,
+      ),
+    ).toBe("");
+
+    expect(
+      resolveAppModelSelectionState(DEFAULT_UNIFIED_SETTINGS, [
+        provider({ provider: cline, instanceId: "cline", models: [] }),
+      ]),
+    ).toEqual({ instanceId: "t3code_no_provider", model: "" });
+  });
+
+  it("ignores authored Cline model IDs that ACP did not advertise", () => {
+    const cline = ProviderDriverKind.make("cline");
+    const providers = [provider({ provider: cline, instanceId: "cline", models: ["advertised"] })];
+    const settings: UnifiedSettings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [ProviderInstanceId.make("cline")]: {
+          driver: cline,
+          config: { customModels: ["unadvertised"] },
+        },
+      },
+    };
+    const entry = deriveProviderInstanceEntries(providers)[0]!;
+
+    expect(getAppModelOptions(settings, providers, cline).map((option) => option.slug)).toEqual([
+      "advertised",
+    ]);
+    expect(getAppModelOptionsForInstance(settings, entry).map((option) => option.slug)).toEqual([
+      "advertised",
+    ]);
+  });
+
   it("preserves server-provided legacy model metadata", () => {
     const baseProvider = provider({
       instanceId: "claudeAgent",
@@ -321,6 +361,35 @@ describe("instance-scoped model selection", () => {
     expect(resolveAppModelSelectionState(settings, providers)).toEqual({
       instanceId: ProviderInstanceId.make("claude_openrouter"),
       model: "openai/gpt-5.5",
+    });
+  });
+
+  it("returns no background selection when Cline is the only usable provider", () => {
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("cline"),
+        instanceId: "cline",
+        models: ["advertised-interactive-model"],
+      }),
+    ];
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      providerInstances: {
+        [ProviderInstanceId.make("cline")]: {
+          driver: ProviderDriverKind.make("cline"),
+          enabled: true,
+          config: {},
+        },
+      },
+      textGenerationModelSelection: {
+        instanceId: ProviderInstanceId.make("cline"),
+        model: "advertised-interactive-model",
+      },
+    };
+
+    expect(resolveAppModelSelectionState(settings, providers)).toEqual({
+      instanceId: "t3code_no_provider",
+      model: "",
     });
   });
 });

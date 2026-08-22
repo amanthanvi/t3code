@@ -7,12 +7,13 @@ orchestration layer does not know which one is behind a thread.
 
 ## Built-in drivers
 
-[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with five entries:
+[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with six entries:
 
 | Driver kind   | Driver source                           |
 | ------------- | --------------------------------------- |
 | `codex`       | [`Drivers/CodexDriver.ts`][codex]       |
 | `claudeAgent` | [`Drivers/ClaudeDriver.ts`][claude]     |
+| `cline`       | [`Drivers/ClineDriver.ts`][cline]       |
 | `cursor`      | [`Drivers/CursorDriver.ts`][cursor]     |
 | `grok`        | [`Drivers/GrokDriver.ts`][grok]         |
 | `opencode`    | [`Drivers/OpenCodeDriver.ts`][opencode] |
@@ -38,6 +39,24 @@ directory to route session and turn operations for a thread, so callers name a t
 
 Adding a driver means writing the driver plus adapter and adding it to `BUILT_IN_DRIVERS`. No
 orchestration, contract, or client change is required for the common case.
+
+### Current Cline ACP limitations
+
+Cline ACP accepts per-session `mcpServers` during setup but does not currently consume them. The
+provider service therefore withholds T3 MCP credentials for Cline, and agent browser/preview tools
+are unsupported in Cline sessions. Do not work around this by writing Cline's global configuration:
+provider processes may run on remote hosts and multiple configured instances may share that state.
+
+Cline also omits the optional `ProviderInstance.textGeneration` capability. Current ACP creates its
+normal local runtime with default config extensions, which can execute project/account lifecycle
+hooks before any ACP tool-permission request. Until ACP exposes a verified extension-disable
+boundary, server settings must never select Cline for background title, branch, commit, or pull
+request text generation.
+
+The same extension boundary means only `full-access` interactive sessions are currently truthful.
+`ClineAdapter` rejects every narrower runtime mode before spawning the CLI, and the provider
+snapshot does not advertise the plan/build interaction toggle. Do not describe ACP permission
+responses as supervising workspace/account hooks; they are separate execution paths.
 
 ## How provider work is requested
 
@@ -78,6 +97,7 @@ when a request opens (approval) or user input is requested, via
 [drivers]: ../../apps/server/src/provider/builtInDrivers.ts
 [codex]: ../../apps/server/src/provider/Drivers/CodexDriver.ts
 [claude]: ../../apps/server/src/provider/Drivers/ClaudeDriver.ts
+[cline]: ../../apps/server/src/provider/Drivers/ClineDriver.ts
 [cursor]: ../../apps/server/src/provider/Drivers/CursorDriver.ts
 [grok]: ../../apps/server/src/provider/Drivers/GrokDriver.ts
 [opencode]: ../../apps/server/src/provider/Drivers/OpenCodeDriver.ts

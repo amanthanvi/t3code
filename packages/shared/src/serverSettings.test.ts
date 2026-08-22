@@ -264,6 +264,36 @@ describe("serverSettings helpers", () => {
     expect(settings.sourceControlWriterModelSelection).toBe(sourceControlWriterModelSelection);
   });
 
+  it("falls back from built-in and custom Cline source control writer selections", () => {
+    const customClineId = ProviderInstanceId.make("cline_work");
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providers: {
+        ...DEFAULT_SERVER_SETTINGS.providers,
+        cline: { ...DEFAULT_SERVER_SETTINGS.providers.cline, enabled: true },
+      },
+      providerInstances: {
+        [customClineId]: {
+          driver: ProviderDriverKind.make("cline"),
+          enabled: true,
+          config: {},
+        },
+      },
+    };
+
+    for (const instanceId of [ProviderInstanceId.make("cline"), customClineId]) {
+      expect(
+        resolveSourceControlWriterModelSelection({
+          ...settings,
+          sourceControlWriterModelSelection: createModelSelection(
+            instanceId,
+            "advertised-interactive-model",
+          ),
+        }),
+      ).toBe(settings.textGenerationModelSelection);
+    }
+  });
+
   it("replaces providerInstances maps so omitted instance fields are cleared", () => {
     const codexId = ProviderInstanceId.make("codex");
     const current = {

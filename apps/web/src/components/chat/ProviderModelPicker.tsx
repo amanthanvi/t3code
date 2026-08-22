@@ -18,6 +18,7 @@ import {
 } from "./providerIconUtils";
 import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
 import { ComposerControl, ComposerControlChevron } from "./ComposerControl";
+import { getFallbackProviderModelLabel } from "./ProviderModelPicker.logic";
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   /**
@@ -65,8 +66,13 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const selectedModel =
     selectedInstanceOptions.find((option) => option.slug === props.model) ??
     selectedInstanceOptions[0];
-  const triggerTitle = selectedModel ? getTriggerDisplayModelName(selectedModel) : props.model;
-  const triggerLabel = selectedModel ? getTriggerDisplayModelLabel(selectedModel) : props.model;
+  const fallbackModelLabel = getFallbackProviderModelLabel(props.model);
+  const triggerTitle = selectedModel
+    ? getTriggerDisplayModelName(selectedModel)
+    : fallbackModelLabel;
+  const triggerLabel = selectedModel
+    ? getTriggerDisplayModelLabel(selectedModel)
+    : fallbackModelLabel;
   const showInstanceBadge =
     activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);
 

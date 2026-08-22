@@ -32,6 +32,11 @@ import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import { buildThreadFeed } from "../lib/threadActivity";
+import {
+  getUnsupportedProviderAttachmentReason,
+  getUnsupportedProviderModeReason,
+  getUnavailableProviderModelReason,
+} from "../lib/modelOptions";
 import { appAtomRegistry } from "../state/atom-registry";
 import {
   appendComposerDraftAttachments,
@@ -175,6 +180,36 @@ export function useThreadComposerState() {
     const provider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
       (entry) => entry.instanceId === thread.modelSelection.instanceId,
     );
+    const modelSelection = draft.modelSelection ?? thread.modelSelection;
+    const runtimeMode = draft.runtimeMode ?? thread.runtimeMode;
+    const interactionMode = draft.interactionMode ?? thread.interactionMode;
+    const unavailableModelReason = getUnavailableProviderModelReason({
+      config: selectedEnvironmentRuntime?.serverConfig,
+      selection: modelSelection,
+    });
+    if (unavailableModelReason !== null) {
+      Alert.alert("Provider still checking", unavailableModelReason);
+      return null;
+    }
+    const unsupportedProviderModeReason = getUnsupportedProviderModeReason({
+      config: selectedEnvironmentRuntime?.serverConfig,
+      selection: modelSelection,
+      runtimeMode,
+      interactionMode,
+    });
+    if (unsupportedProviderModeReason !== null) {
+      Alert.alert("Change provider mode", unsupportedProviderModeReason);
+      return null;
+    }
+    const unsupportedAttachmentReason = getUnsupportedProviderAttachmentReason({
+      config: selectedEnvironmentRuntime?.serverConfig,
+      selection: modelSelection,
+      attachmentCount: attachments.length,
+    });
+    if (unsupportedAttachmentReason !== null) {
+      Alert.alert("Remove attachments", unsupportedAttachmentReason);
+      return null;
+    }
     const feedbackCommand =
       attachments.length === 0 &&
       (provider?.driver === "codex" || thread.session?.providerName === "codex")
@@ -250,9 +285,9 @@ export function useThreadComposerState() {
       commandId: CommandId.make(metadata.commandId),
       text,
       attachments,
-      modelSelection: draft.modelSelection ?? thread.modelSelection,
-      runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
-      interactionMode: draft.interactionMode ?? thread.interactionMode,
+      modelSelection,
+      runtimeMode,
+      interactionMode,
       createdAt: metadata.createdAt,
     });
     clearComposerDraftContent(threadKey);

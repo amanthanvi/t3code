@@ -1,6 +1,7 @@
 import type {
   ProviderDriverKind,
   ModelCapabilities,
+  RuntimeMode,
   ServerProvider,
   ServerProviderAuth,
   ServerProviderSkill,
@@ -56,6 +57,8 @@ export interface ServerProviderPresentation {
   readonly displayName: string;
   readonly badgeLabel?: string;
   readonly showInteractionModeToggle?: boolean;
+  readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode>;
+  readonly supportsImageAttachments?: boolean;
   readonly requiresNewThreadForModelChange?: boolean;
 }
 
@@ -235,6 +238,12 @@ export function buildServerProvider(input: {
     ...(input.presentation.badgeLabel ? { badgeLabel: input.presentation.badgeLabel } : {}),
     ...(typeof input.presentation.showInteractionModeToggle === "boolean"
       ? { showInteractionModeToggle: input.presentation.showInteractionModeToggle }
+      : {}),
+    ...(input.presentation.supportedRuntimeModes
+      ? { supportedRuntimeModes: [...input.presentation.supportedRuntimeModes] }
+      : {}),
+    ...(typeof input.presentation.supportsImageAttachments === "boolean"
+      ? { supportsImageAttachments: input.presentation.supportsImageAttachments }
       : {}),
     ...(typeof input.presentation.requiresNewThreadForModelChange === "boolean"
       ? { requiresNewThreadForModelChange: input.presentation.requiresNewThreadForModelChange }

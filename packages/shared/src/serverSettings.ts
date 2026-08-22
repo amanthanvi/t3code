@@ -46,12 +46,24 @@ export function isModelSelectionProviderEnabled(
   );
 }
 
+function isTextGenerationModelSelectionSupported(
+  settings: ServerSettings,
+  selection: ModelSelection,
+): boolean {
+  const driver = settings.providerInstances[selection.instanceId]?.driver ?? selection.instanceId;
+  return driver !== "cline";
+}
+
 export function resolveSourceControlWriterModelSelection(
   settings: ServerSettings,
   providers?: ReadonlyArray<ServerProvider>,
 ): ModelSelection {
   const selection = settings.sourceControlWriterModelSelection;
-  if (!selection || !isModelSelectionProviderEnabled(settings, selection)) {
+  if (
+    !selection ||
+    !isModelSelectionProviderEnabled(settings, selection) ||
+    !isTextGenerationModelSelectionSupported(settings, selection)
+  ) {
     return settings.textGenerationModelSelection;
   }
   if (providers === undefined) {

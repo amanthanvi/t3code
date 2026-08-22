@@ -20,6 +20,7 @@ import {
   type ProviderInstanceEnvironmentVariable,
   ProviderDriverKind,
   ProviderInstanceId,
+  resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsError,
   type ServerSettingsPatch,
@@ -232,27 +233,58 @@ const ServerSettingsJson = fromLenientJson(ServerSettings);
 const decodeServerSettingsJsonExit = Schema.decodeUnknownExit(ServerSettingsJson);
 
 function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings {
-  return isModelSelectionProviderEnabled(settings, settings.textGenerationModelSelection)
+  return isModelSelectionProviderEnabled(settings, settings.textGenerationModelSelection) &&
+    textGenerationSelectionIsSupported(settings, settings.textGenerationModelSelection)
     ? settings
     : fallbackTextGenerationProvider(settings);
 }
 
+function textGenerationSelectionIsSupported(
+  settings: ServerSettings,
+  selection: ModelSelection,
+): boolean {
+  const configuredDriver = settings.providerInstances[selection.instanceId]?.driver;
+  const driver = configuredDriver ?? selection.instanceId;
+  return driver !== "cline";
+}
+
 function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
-  const fallbackEntry = Object.entries(settings.providers).find(([, provider]) => provider.enabled);
-  const fallback = fallbackEntry ? ProviderDriverKind.make(fallbackEntry[0]) : undefined;
-  if (!fallback) {
+  const fallbackEntry = Object.entries(settings.providers).find(
+    ([driver]) =>
+      driver !== "cline" &&
+      isModelSelectionProviderEnabled(settings, {
+        instanceId: ProviderInstanceId.make(driver),
+        model: DEFAULT_TEXT_GENERATION_MODEL,
+      }),
+  );
+  const legacyDriver = fallbackEntry ? ProviderDriverKind.make(fallbackEntry[0]) : undefined;
+  const instanceFallback = legacyDriver
+    ? undefined
+    : Object.entries(settings.providerInstances).find(
+        ([, instance]) => instance.driver !== "cline" && resolveProviderInstanceEnabled(instance),
+      );
+  const instanceId = instanceFallback
+    ? ProviderInstanceId.make(instanceFallback[0])
+    : legacyDriver
+      ? ProviderInstanceId.make(legacyDriver)
+      : undefined;
+  const driver = instanceFallback?.[1].driver ?? legacyDriver;
+  if (!instanceId || !driver) {
     return settings;
   }
+  const model =
+    DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[driver] ??
+    DEFAULT_MODEL_BY_PROVIDER[driver] ??
+    DEFAULT_TEXT_GENERATION_MODEL;
+  const selection =
+    instanceId === DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.instanceId &&
+    model === DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.model
+      ? DEFAULT_SERVER_SETTINGS.textGenerationModelSelection
+      : ({ instanceId, model } satisfies ModelSelection);
 
   return {
     ...settings,
-    textGenerationModelSelection: {
-      instanceId: ProviderInstanceId.make(fallback),
-      model:
-        DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[fallback] ??
-        DEFAULT_MODEL_BY_PROVIDER[fallback] ??
-        DEFAULT_TEXT_GENERATION_MODEL,
-    } satisfies ModelSelection,
+    textGenerationModelSelection: selection,
   };
 }
 

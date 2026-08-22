@@ -5,6 +5,7 @@ import {
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  type ServerConfig,
   ThreadId,
 } from "@t3tools/contracts";
 import { AtomRegistry } from "effect/unstable/reactivity";
@@ -13,6 +14,7 @@ import {
   decodeQueuedThreadMessage,
   encodeQueuedThreadMessage,
   groupQueuedThreadMessages,
+  getQueuedDeliveryUnsupportedProviderInputReason,
   isQueuedThreadCreationSendable,
   modelSelectionsEqual,
   resolveThreadOutboxDeliveryAction,
@@ -43,6 +45,61 @@ function queuedMessage(input: {
 }
 
 describe("thread outbox", () => {
+  it("keeps queued input blocked when the provider rejects its mode or attachments", () => {
+    const message = {
+      ...queuedMessage({ messageId: "message-cline", createdAt: "2026-08-23T00:00:00.000Z" }),
+      attachments: [
+        {
+          id: "image-1",
+          previewUri: "file:///image.png",
+          type: "image",
+          name: "image.png",
+          mimeType: "image/png",
+          sizeBytes: 4,
+          dataUrl: "data:image/png;base64,AAAA",
+        },
+      ],
+    } satisfies QueuedThreadMessage;
+    const modelSelection = {
+      instanceId: ProviderInstanceId.make("cline"),
+      model: "current-account-model",
+    };
+    const config = {
+      providers: [
+        {
+          instanceId: "cline",
+          driver: "cline",
+          displayName: "Cline",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          supportedRuntimeModes: ["full-access"],
+          supportsImageAttachments: false,
+          models: [],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    expect(
+      getQueuedDeliveryUnsupportedProviderInputReason({
+        config,
+        message,
+        modelSelection,
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+      }),
+    ).toContain("Full access");
+    expect(
+      getQueuedDeliveryUnsupportedProviderInputReason({
+        config,
+        message,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      }),
+    ).toContain("Remove the images");
+  });
+
   it("groups messages by scoped thread and preserves creation order", () => {
     const later = queuedMessage({
       messageId: "message-2",

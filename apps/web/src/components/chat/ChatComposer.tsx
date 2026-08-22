@@ -95,6 +95,7 @@ import {
 } from "../composerFooterLayout";
 import { type ComposerPromptEditorHandle, ComposerPromptEditor } from "../ComposerPromptEditor";
 import { ProviderModelPicker } from "./ProviderModelPicker";
+import { hasSelectableProviderModel } from "./ProviderModelPicker.logic";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
@@ -236,7 +237,12 @@ import {
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
-import { getProviderInteractionModeToggle } from "../../providerModels";
+import {
+  canUseProviderInteractionModeShortcut,
+  getUnsupportedProviderAttachmentReason,
+  getProviderInteractionModeToggle,
+  getProviderSupportedRuntimeModes,
+} from "../../providerModels";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -287,7 +293,6 @@ const runtimeModeConfig: Record<
   },
 };
 
-const runtimeModeOptions = Object.keys(runtimeModeConfig) as RuntimeMode[];
 const COMPOSER_FLOATING_LAYER_SELECTOR = [
   '[data-composer-drawer-layer="true"]',
   '[data-slot="popover-popup"]',
@@ -333,6 +338,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   showInteractionModeToggle: boolean;
   interactionMode: ProviderInteractionMode;
   runtimeMode: RuntimeMode;
+  supportedRuntimeModes: ReadonlyArray<RuntimeMode>;
   onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
@@ -392,7 +398,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
             <SelectValue>{runtimeModeOption.label}</SelectValue>
           </TooltipTrigger>
           <SelectPopup alignItemWithTrigger={false}>
-            {runtimeModeOptions.map((mode) => {
+            {props.supportedRuntimeModes.map((mode) => {
               const option = runtimeModeConfig[mode];
               const OptionIcon = option.icon;
               return (
@@ -711,8 +717,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setThreadError,
     onExpandImage,
   } = props;
-  const isSendDisabled = sendDisabledReason !== null;
-
   // ------------------------------------------------------------------
   // Store subscriptions (prompt / images / terminal contexts)
   // ------------------------------------------------------------------
@@ -870,7 +874,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () => providerInstanceEntries.find((entry) => entry.instanceId === selectedInstanceId),
     [providerInstanceEntries, selectedInstanceId],
   );
-  const noProviderAvailable = selectedProviderEntry === undefined;
+  const noProviderEntryAvailable = selectedProviderEntry === undefined;
   // The driver kind follows the instance that will actually run the turn,
   // which can differ from the persisted selection when that selection is
   // disabled.
@@ -886,10 +890,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectModelSelection: activeProjectDefaultModelSelection,
     settings,
   });
+  const noProviderAvailable =
+    noProviderEntryAvailable || !hasSelectableProviderModel(selectedModel);
   const selectedProviderStatus = useMemo(
     () => selectedProviderEntry?.snapshot ?? null,
     [selectedProviderEntry],
   );
+  const effectiveSendDisabledReason =
+    sendDisabledReason ??
+    getUnsupportedProviderAttachmentReason(selectedProviderStatus, composerImages.length);
+  const isSendDisabled = effectiveSendDisabledReason !== null;
   const selectedProviderModels = useMemo<ReadonlyArray<ServerProvider["models"][number]>>(
     () => selectedProviderEntry?.models ?? [],
     [selectedProviderEntry],
@@ -923,15 +933,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const selectedPromptEffort = composerProviderState.promptEffort;
   const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
   // Plan mode is a legacy feature behind Settings → Beta. With the flag off,
-  // ChatView forces the effective mode to "default", so hiding the toggle
-  // can't trap anyone in plan mode.
+  // Keep the Build escape visible for a carried Plan draft. Entering Plan is
+  // hidden when the selected provider does not advertise that interaction.
   const planModeUiEnabled = settings.planModeEnabled;
   const composerProviderControls = useMemo(
     () => ({
       showInteractionModeToggle:
-        planModeUiEnabled && getProviderInteractionModeToggle(providerStatuses, selectedProvider),
+        planModeUiEnabled &&
+        (interactionMode === "plan" ||
+          getProviderInteractionModeToggle(providerStatuses, selectedProvider)),
+      supportedRuntimeModes: getProviderSupportedRuntimeModes(selectedProviderStatus),
     }),
-    [planModeUiEnabled, providerStatuses, selectedProvider],
+    [
+      interactionMode,
+      planModeUiEnabled,
+      providerStatuses,
+      selectedProvider,
+      selectedProviderStatus,
+    ],
   );
   const selectedModelSelection = useMemo<ModelSelection>(
     () => createModelSelection(selectedInstanceId, selectedModel, selectedModelOptionsForDispatch),
@@ -1092,7 +1111,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           label: "/model",
           description: "Switch response model for this thread",
         },
-        ...(planModeUiEnabled
+        ...(planModeUiEnabled && selectedProviderStatus?.showInteractionModeToggle !== false
           ? ([
               {
                 id: "slash:plan",
@@ -1101,6 +1120,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 label: "/plan",
                 description: "Switch this thread into plan mode",
               },
+            ] as const)
+          : []),
+        ...(planModeUiEnabled &&
+        (selectedProviderStatus?.showInteractionModeToggle !== false || interactionMode === "plan")
+          ? ([
               {
                 id: "slash:default",
                 type: "slash-command",
@@ -1163,6 +1187,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return [];
   }, [
     composerTrigger,
+    interactionMode,
     planModeUiEnabled,
     selectedProvider,
     selectedProviderStatus,
@@ -1973,7 +1998,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     event: KeyboardEvent,
   ) => {
     if (key === "Tab" && event.shiftKey) {
-      if (!planModeUiEnabled) return false;
+      if (
+        !canUseProviderInteractionModeShortcut({
+          planModeUiEnabled,
+          showInteractionModeToggle: composerProviderControls.showInteractionModeToggle,
+          interactionMode,
+        })
+      ) {
+        return false;
+      }
       toggleInteractionMode();
       return true;
     }
@@ -2474,6 +2507,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   const addComposerImages = async (files: File[]) => {
     if (!activeThreadId || files.length === 0) return;
+    const unsupportedAttachmentReason = getUnsupportedProviderAttachmentReason(
+      selectedProviderStatus,
+      files.length,
+    );
+    if (unsupportedAttachmentReason !== null) {
+      toastManager.add({
+        type: "error",
+        title: unsupportedAttachmentReason,
+      });
+      return;
+    }
     if (pendingUserInputs.length > 0) {
       toastManager.add({
         type: "error",
@@ -2946,7 +2990,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       showPlanFollowUpPrompt={false}
                       promptHasText={false}
                       isSendBusy={isSendBusy}
-                      sendDisabledReason={sendDisabledReason}
+                      sendDisabledReason={effectiveSendDisabledReason}
                       isConnecting={isConnecting}
                       isEnvironmentUnavailable={
                         environmentUnavailable !== null ||
@@ -3273,7 +3317,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       showPlanFollowUpPrompt={false}
                       promptHasText={false}
                       isSendBusy={isSendBusy}
-                      sendDisabledReason={sendDisabledReason}
+                      sendDisabledReason={effectiveSendDisabledReason}
                       isConnecting={isConnecting}
                       isEnvironmentUnavailable={
                         environmentUnavailable !== null ||
@@ -3352,6 +3396,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     <CompactComposerControlsMenu
                       interactionMode={interactionMode}
                       runtimeMode={runtimeMode}
+                      supportedRuntimeModes={composerProviderControls.supportedRuntimeModes}
                       showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
                       traitsMenuContent={providerTraitsMenuContent}
                       onToggleInteractionMode={toggleInteractionMode}
@@ -3374,6 +3419,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         }
                         interactionMode={interactionMode}
                         runtimeMode={runtimeMode}
+                        supportedRuntimeModes={composerProviderControls.supportedRuntimeModes}
                         onToggleInteractionMode={toggleInteractionMode}
                         onRuntimeModeChange={handleRuntimeModeChange}
                       />
@@ -3402,7 +3448,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     }
                     promptHasText={prompt.trim().length > 0}
                     isSendBusy={isSendBusy}
-                    sendDisabledReason={sendDisabledReason}
+                    sendDisabledReason={effectiveSendDisabledReason}
                     isConnecting={isConnecting}
                     isEnvironmentUnavailable={
                       environmentUnavailable !== null ||

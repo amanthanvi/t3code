@@ -55,7 +55,12 @@ import {
 import { ControlPill } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
-import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
+import {
+  buildModelOptions,
+  getProviderSendBlockReason,
+  groupByProvider,
+  providerSupportsImageAttachments,
+} from "../../lib/modelOptions";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { RemoteClientConnectionState } from "../../lib/connection";
@@ -294,7 +299,15 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   // Opening and presentation count as active so the composer stays expanded
   // while focus moves between its native editor and the settings picker.
   const isExpanded = isFocused || settingsSheetPresentation.isActive;
-  const canSend = hasContent;
+  const canSend =
+    hasContent &&
+    getProviderSendBlockReason({
+      config: props.serverConfig,
+      selection: props.selectedThread.modelSelection,
+      runtimeMode: props.selectedThread.runtimeMode,
+      interactionMode: props.selectedThread.interactionMode,
+      attachmentCount: props.draftAttachments.length,
+    }) === null;
 
   // Notify the parent from the derived value, not focus events: the parent
   // sizes the feed inset from this, and blur-during-sheet would otherwise
@@ -417,7 +430,19 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           description: "Switch to default mode",
         },
       ];
-      const builtIn = allBuiltIn.filter((item) => item.command.includes(q));
+      const builtIn = allBuiltIn.filter((item) => {
+        if (!item.command.includes(q)) return false;
+        if (item.command === "plan") {
+          return selectedProviderStatus?.showInteractionModeToggle !== false;
+        }
+        if (item.command === "default") {
+          return (
+            selectedProviderStatus?.showInteractionModeToggle !== false ||
+            props.selectedThread.interactionMode === "plan"
+          );
+        }
+        return true;
+      });
 
       const providerCommands: ComposerCommandItem[] = [];
       for (const cmd of selectedProviderStatus?.slashCommands ?? []) {
@@ -542,7 +567,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
 
     return [];
-  }, [composerTrigger, pathSearch.entries, selectedProviderStatus]);
+  }, [
+    composerTrigger,
+    pathSearch.entries,
+    props.selectedThread.interactionMode,
+    selectedProviderStatus,
+  ]);
 
   // ── Handle command selection ──────────────────────────────
   const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;
@@ -870,12 +900,17 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 fadeTransparent={toolbarFadeTransparent}
                 contentPaddingRight={8}
               >
-                <ComposerToolbarButton
-                  accessibilityLabel="Add attachment"
-                  icon="plus"
-                  onPress={() => void props.onPickDraftImages()}
-                  showChevron={false}
-                />
+                {providerSupportsImageAttachments({
+                  config: props.serverConfig,
+                  selection: currentModelSelection,
+                }) ? (
+                  <ComposerToolbarButton
+                    accessibilityLabel="Add attachment"
+                    icon="plus"
+                    onPress={() => void props.onPickDraftImages()}
+                    showChevron={false}
+                  />
+                ) : null}
                 <ComposerInlineControl
                   accessibilityLabel="Model and reasoning settings"
                   emphasized

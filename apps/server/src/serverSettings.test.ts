@@ -266,6 +266,120 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("does not select Cline when it is the only enabled fallback", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+
+      const next = yield* serverSettings.updateSettings({
+        providers: {
+          codex: { enabled: false },
+          claudeAgent: { enabled: false },
+          cursor: { enabled: false },
+          grok: { enabled: false },
+          opencode: { enabled: false },
+          cline: { enabled: true },
+        },
+      });
+
+      assert.deepEqual(
+        next.textGenerationModelSelection,
+        DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("heals an explicit Cline text-generation selection to a safe provider", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+
+      const next = yield* serverSettings.updateSettings({
+        providers: { cline: { enabled: true } },
+        textGenerationModelSelection: {
+          instanceId: ProviderInstanceId.make("cline"),
+          model: "advertised-interactive-model",
+        },
+      });
+
+      assert.deepEqual(
+        next.textGenerationModelSelection,
+        DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("falls back to an enabled custom provider instance when built-ins are disabled", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const customCodexId = ProviderInstanceId.make("codex_work");
+
+      const next = yield* serverSettings.updateSettings({
+        providers: {
+          codex: { enabled: false },
+          claudeAgent: { enabled: false },
+          cursor: { enabled: false },
+          grok: { enabled: false },
+          opencode: { enabled: false },
+          cline: { enabled: true },
+        },
+        providerInstances: {
+          [customCodexId]: {
+            driver: ProviderDriverKind.make("codex"),
+            enabled: true,
+            config: {},
+          },
+        },
+        textGenerationModelSelection: {
+          instanceId: ProviderInstanceId.make("cline"),
+          model: "advertised-interactive-model",
+        },
+      });
+
+      assert.deepEqual(next.textGenerationModelSelection, {
+        instanceId: customCodexId,
+        model: "gpt-5.6-luna",
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("honors an explicit disabled default instance when choosing a fallback", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const customClaudeId = ProviderInstanceId.make("claude_work");
+
+      const next = yield* serverSettings.updateSettings({
+        providers: {
+          codex: { enabled: true },
+          claudeAgent: { enabled: false },
+          cursor: { enabled: false },
+          grok: { enabled: false },
+          opencode: { enabled: false },
+          cline: { enabled: true },
+        },
+        providerInstances: {
+          [ProviderInstanceId.make("codex")]: {
+            driver: ProviderDriverKind.make("codex"),
+            enabled: false,
+            config: {},
+          },
+          [customClaudeId]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: true,
+            config: {},
+          },
+        },
+        textGenerationModelSelection: {
+          instanceId: ProviderInstanceId.make("cline"),
+          model: "advertised-interactive-model",
+        },
+      });
+
+      assert.deepEqual(next.textGenerationModelSelection, {
+        instanceId: customClaudeId,
+        model: "claude-haiku-4-5",
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("preserves custom provider instance text generation selections", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;

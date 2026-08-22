@@ -334,6 +334,7 @@ export function useExistingThreadSettingsRoutePresentation() {
 type ThreadSettingsSessionValue = {
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly runtimeMode: RuntimeMode;
+  readonly supportedRuntimeModes: ReadonlyArray<RuntimeMode>;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
   readonly displayedDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
   readonly providerExpansionOverrides: ReadonlySet<string>;
@@ -405,6 +406,12 @@ function ThreadSettingsSessionProvider(
       props.onSelectModel(pendingModel);
     }
   }, [pendingModel, props.onSelectModel]);
+  const activeProviderGroup = props.providerGroups.find(
+    (group) =>
+      group.providerKey === (pendingModel?.selection.instanceId ?? props.selectedModel?.instanceId),
+  );
+  const supportedRuntimeModes =
+    activeProviderGroup?.supportedRuntimeModes ?? RUNTIME_MODE_CHOICES.map((choice) => choice.mode);
 
   const applyOptionChange = useCallback(
     (id: string, value: string | boolean) => {
@@ -452,6 +459,7 @@ function ThreadSettingsSessionProvider(
     () => ({
       providerGroups: props.providerGroups,
       runtimeMode: props.runtimeMode,
+      supportedRuntimeModes,
       onUpdateRuntimeMode: props.onUpdateRuntimeMode,
       displayedDescriptors,
       providerExpansionOverrides,
@@ -484,6 +492,7 @@ function ThreadSettingsSessionProvider(
       props.onUpdateRuntimeMode,
       props.providerGroups,
       props.runtimeMode,
+      supportedRuntimeModes,
       searchQuery,
       showLegacyToggle,
       toggleProvider,
@@ -858,7 +867,9 @@ function ThreadSettingsChoiceContent(props: {
   const submenuContent =
     props.submenu.kind === "runtime"
       ? {
-          rows: RUNTIME_MODE_CHOICES.map((choice) => ({
+          rows: RUNTIME_MODE_CHOICES.filter((choice) =>
+            session.supportedRuntimeModes.includes(choice.mode),
+          ).map((choice) => ({
             id: choice.mode,
             label: choice.label,
             description: choice.description,

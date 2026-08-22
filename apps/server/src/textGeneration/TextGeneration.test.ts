@@ -26,7 +26,8 @@ const makeStubTextGeneration = (
 
 const makeStubInstance = (
   instanceId: ProviderInstanceId,
-  textGeneration: TextGeneration.TextGeneration["Service"],
+  textGeneration?: TextGeneration.TextGeneration["Service"],
+  enabled = true,
 ): ProviderInstance =>
   ({
     instanceId,
@@ -36,10 +37,10 @@ const makeStubInstance = (
       continuationKey: `${instanceId}:test`,
     },
     displayName: undefined,
-    enabled: true,
+    enabled,
     snapshot: {} as ProviderInstance["snapshot"],
     adapter: {} as ProviderInstance["adapter"],
-    textGeneration,
+    ...(textGeneration ? { textGeneration } : {}),
   }) satisfies ProviderInstance;
 
 const makeStubRegistry = (
@@ -116,6 +117,69 @@ describe("makeTextGenerationFromRegistry", () => {
         expect(result.failure.operation).toBe("generateBranchName");
         expect(result.failure.detail).toContain("missing_instance");
       }
+    }),
+  );
+
+  it.effect("fails before dispatch when an instance has no text-generation backend", () =>
+    Effect.gen(function* () {
+      const clineId = ProviderInstanceId.make("cline");
+      const tg = TextGeneration.makeTextGenerationFromRegistry(
+        makeStubRegistry([makeStubInstance(clineId)]),
+      );
+
+      const result = yield* tg
+        .generateThreadTitle({
+          cwd: process.cwd(),
+          message: "must not start Cline ACP hooks",
+          modelSelection: createModelSelection(clineId, "advertised-model"),
+        })
+        .pipe(Effect.result);
+
+      expect(Result.isFailure(result)).toBe(true);
+      if (Result.isFailure(result)) {
+        expect(result.failure.detail).toContain("does not support background text generation");
+      }
+    }),
+  );
+
+  it.effect("never dispatches title or source-control generation to a disabled instance", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("codex");
+      let calls = 0;
+      const backend = makeStubTextGeneration({
+        generateThreadTitle: () => {
+          calls += 1;
+          return Effect.succeed({ title: "must not run" });
+        },
+        generateCommitMessage: () => {
+          calls += 1;
+          return Effect.succeed({ subject: "must not run", body: "" });
+        },
+      });
+      const tg = TextGeneration.makeTextGenerationFromRegistry(
+        makeStubRegistry([makeStubInstance(instanceId, backend, false)]),
+      );
+
+      const title = yield* tg
+        .generateThreadTitle({
+          cwd: process.cwd(),
+          message: "title",
+          modelSelection: createModelSelection(instanceId, "gpt-5"),
+        })
+        .pipe(Effect.result);
+      const commit = yield* tg
+        .generateCommitMessage({
+          cwd: process.cwd(),
+          branch: null,
+          stagedSummary: "summary",
+          stagedPatch: "patch",
+          modelSelection: createModelSelection(instanceId, "gpt-5"),
+        })
+        .pipe(Effect.result);
+
+      expect(Result.isFailure(title)).toBe(true);
+      expect(Result.isFailure(commit)).toBe(true);
+      expect(calls).toBe(0);
     }),
   );
 });

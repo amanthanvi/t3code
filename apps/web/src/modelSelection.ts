@@ -23,7 +23,11 @@ import {
   resolveSelectableProvider,
 } from "./providerModels";
 import { ModelEsque } from "./components/chat/providerIconUtils";
-import { type ProviderInstanceEntry, deriveProviderInstanceEntries } from "./providerInstances";
+import {
+  type ProviderInstanceEntry,
+  deriveProviderInstanceEntries,
+  NO_PROVIDER_MODEL_SELECTION,
+} from "./providerInstances";
 import { sortModelsForProviderInstance } from "./modelOrdering";
 
 const MAX_CUSTOM_MODEL_COUNT = 32;
@@ -166,7 +170,8 @@ export function getAppModelOptions(
   // settings and the initial render before the first write both still
   // see the user's authored custom models.
   const defaultInstanceId = defaultInstanceIdForDriver(provider);
-  const customModels = readInstanceCustomModels(settings, defaultInstanceId, provider);
+  const customModels =
+    provider === "cline" ? [] : readInstanceCustomModels(settings, defaultInstanceId, provider);
   for (const slug of normalizeCustomModelSlugs(customModels, builtInModelSlugs)) {
     if (seen.has(slug)) {
       continue;
@@ -209,7 +214,10 @@ export function getAppModelOptionsForInstance(
     ),
   );
 
-  const customModels = readInstanceCustomModels(settings, entry.instanceId, entry.driverKind);
+  const customModels =
+    entry.driverKind === "cline"
+      ? []
+      : readInstanceCustomModels(settings, entry.instanceId, entry.driverKind);
   for (const slug of normalizeCustomModelSlugs(customModels, builtInModelSlugs)) {
     if (seen.has(slug)) {
       continue;
@@ -331,13 +339,18 @@ export function resolveAppModelSelectionState(
     instanceId: DEFAULT_TEXT_GENERATION_INSTANCE_ID,
     model: DEFAULT_TEXT_GENERATION_MODEL,
   };
-  const entries = deriveProviderInstanceEntries(providers);
+  const entries = deriveProviderInstanceEntries(providers).filter(
+    (entry) => entry.driverKind !== "cline",
+  );
   const selectedEntry = entries.find(
     (entry) => entry.instanceId === selection.instanceId && entry.enabled && entry.isAvailable,
   );
   const entry =
     selectedEntry ?? entries.find((candidate) => candidate.enabled && candidate.isAvailable);
   if (entry) {
+    if (entry.driverKind === "cline" && entry.models.length === 0) {
+      return createModelSelection(entry.instanceId, "", []);
+    }
     // When the instance changed due to fallback (e.g. selected instance was disabled),
     // don't carry over the old instance's model — use the fallback instance's default.
     const selectedModel = selectedEntry ? selection.model : null;
@@ -360,7 +373,14 @@ export function resolveAppModelSelectionState(
     return createModelSelection(entry.instanceId, model, modelOptionsForDispatch);
   }
 
-  const provider = resolveSelectableProvider(providers, null);
+  if (entries.length === 0) {
+    return NO_PROVIDER_MODEL_SELECTION;
+  }
+
+  const provider = resolveSelectableProvider(
+    providers.filter((candidate) => candidate.driver !== "cline"),
+    null,
+  );
   const keptSelectedProvider = false;
 
   // When the provider changed due to fallback (e.g. selected provider was disabled),

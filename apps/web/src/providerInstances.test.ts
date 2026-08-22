@@ -4,6 +4,7 @@ import {
   applyProviderInstanceSettings,
   deriveProviderEntriesByEnvironment,
   deriveProviderInstanceEntries,
+  filterTextGenerationProviderInstanceEntries,
   getDefaultProviderInstanceModel,
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
@@ -84,6 +85,20 @@ describe("isProviderInstancePickerVisible", () => {
 
     expect(enabledEntry && isProviderInstancePickerVisible(enabledEntry)).toBe(true);
     expect(disabledEntry && isProviderInstancePickerVisible(disabledEntry)).toBe(false);
+  });
+});
+
+describe("filterTextGenerationProviderInstanceEntries", () => {
+  it("excludes built-in and custom Cline instances", () => {
+    const entries = deriveProviderInstanceEntries([
+      provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),
+      provider({ provider: ProviderDriverKind.make("cline"), instanceId: "cline" }),
+      provider({ provider: ProviderDriverKind.make("cline"), instanceId: "cline_work" }),
+    ]);
+
+    expect(
+      filterTextGenerationProviderInstanceEntries(entries).map((entry) => entry.instanceId),
+    ).toEqual(["codex"]);
   });
 });
 
@@ -418,6 +433,42 @@ describe("resolveDefaultProviderModelSelection", () => {
     };
 
     expect(resolveDefaultProviderModelSelection(providers, stored)).toBe(stored);
+  });
+
+  it("heals a stale Cline model against the current advertised catalog", () => {
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("cline"),
+        instanceId: "cline",
+        models: [model("current-account-model", false, true)],
+      }),
+    ];
+
+    expect(
+      resolveDefaultProviderModelSelection(providers, {
+        instanceId: ProviderInstanceId.make("cline"),
+        model: "retired-account-model",
+        options: [{ id: "unused", value: "stale" }],
+      }),
+    ).toEqual({ instanceId: "cline", model: "current-account-model" });
+  });
+
+  it("returns no project selection for a Cline instance with an empty catalog", () => {
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("cline"),
+        instanceId: "cline",
+        status: "error",
+        models: [],
+      }),
+    ];
+
+    expect(
+      resolveDefaultProviderModelSelection(providers, {
+        instanceId: ProviderInstanceId.make("cline"),
+        model: "retired-account-model",
+      }),
+    ).toBeNull();
   });
 
   it("replaces a stale stored instance with the first ready instance and its model", () => {

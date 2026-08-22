@@ -52,7 +52,13 @@ import {
   type ComposerDraft,
 } from "../../state/use-composer-drafts";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
-import { resolveSelectableModelSelection } from "../../lib/modelOptions";
+import {
+  getUnsupportedProviderAttachmentReason,
+  getUnsupportedProviderModeReason,
+  getUnavailableProviderModelReason,
+  providerSupportsImageAttachments,
+  resolveSelectableModelSelection,
+} from "../../lib/modelOptions";
 import { deriveThreadTitleFromPrompt } from "../../lib/projectThreadStartTurn";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { enqueueThreadOutboxMessage, removeThreadOutboxMessage } from "../../state/thread-outbox";
@@ -613,6 +619,15 @@ export function NewTaskDraftScreen(props: {
     if (isIncomingShareTransferPending) {
       return;
     }
+    const unsupportedAttachmentReason = getUnsupportedProviderAttachmentReason({
+      config: selectedEnvironmentServerConfig,
+      selection: flow.selectedModel,
+      attachmentCount: 1,
+    });
+    if (unsupportedAttachmentReason !== null) {
+      Alert.alert("Attachments unavailable", unsupportedAttachmentReason);
+      return;
+    }
     const result = await pickComposerImages({ existingCount: flow.attachments.length });
     if (result.images.length > 0) {
       flow.appendAttachments(result.images);
@@ -661,6 +676,33 @@ export function NewTaskDraftScreen(props: {
       ? (draft.interactionMode ?? flow.interactionMode)
       : "default";
     const initialMessageText = draft.text.trim();
+    const unavailableModelReason = getUnavailableProviderModelReason({
+      config: selectedEnvironmentServerConfig,
+      selection: modelSelection,
+    });
+    if (unavailableModelReason !== null) {
+      Alert.alert("Provider still checking", unavailableModelReason);
+      return;
+    }
+    const unsupportedProviderModeReason = getUnsupportedProviderModeReason({
+      config: selectedEnvironmentServerConfig,
+      selection: modelSelection,
+      runtimeMode,
+      interactionMode,
+    });
+    if (unsupportedProviderModeReason !== null) {
+      Alert.alert("Change provider mode", unsupportedProviderModeReason);
+      return;
+    }
+    const unsupportedAttachmentReason = getUnsupportedProviderAttachmentReason({
+      config: selectedEnvironmentServerConfig,
+      selection: modelSelection,
+      attachmentCount: draft.attachments.length,
+    });
+    if (unsupportedAttachmentReason !== null) {
+      Alert.alert("Remove attachments", unsupportedAttachmentReason);
+      return;
+    }
 
     if (
       !modelSelection ||
@@ -805,6 +847,7 @@ export function NewTaskDraftScreen(props: {
     isIncomingShareReady &&
     !isImportingShare &&
     !flow.submitting &&
+    flow.unsupportedProviderModeReason === null &&
     !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
   const promptEditor = (
     <ComposerEditor
@@ -989,13 +1032,18 @@ export function NewTaskDraftScreen(props: {
             fadeTransparent={sheetFadeTransparent}
             contentPaddingRight={8}
           >
-            <ComposerToolbarButton
-              accessibilityLabel="Add attachment"
-              disabled={isIncomingShareTransferPending}
-              icon="plus"
-              onPress={() => void handlePickImages()}
-              showChevron={false}
-            />
+            {providerSupportsImageAttachments({
+              config: selectedEnvironmentServerConfig,
+              selection: flow.selectedModel,
+            }) ? (
+              <ComposerToolbarButton
+                accessibilityLabel="Add attachment"
+                disabled={isIncomingShareTransferPending}
+                icon="plus"
+                onPress={() => void handlePickImages()}
+                showChevron={false}
+              />
+            ) : null}
             <ComposerInlineControl
               accessibilityLabel="Model and reasoning settings"
               disabled={isIncomingShareTransferPending}
@@ -1007,7 +1055,9 @@ export function NewTaskDraftScreen(props: {
               maxWidth={152}
               onPress={settingsSheetPresentation.open}
             />
-            {flow.planModeEnabled ? (
+            {flow.planModeEnabled &&
+            (flow.interactionMode === "plan" ||
+              flow.selectedModelOption?.showInteractionModeToggle !== false) ? (
               <ComposerInlineControl
                 accessibilityHint={`Switches to ${flow.interactionMode === "plan" ? "Build" : "Plan"} mode`}
                 accessibilityLabel={`Interaction mode: ${flow.interactionMode === "plan" ? "Plan" : "Build"}`}

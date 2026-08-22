@@ -14,12 +14,18 @@ import {
   type ProjectId as ProjectIdType,
   type ProviderInteractionMode as ProviderInteractionModeType,
   type RuntimeMode as RuntimeModeType,
+  type ServerConfig,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { DraftComposerImageAttachmentSchema } from "../lib/composer-image-schema";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
+import {
+  getUnsupportedProviderAttachmentReason,
+  getUnsupportedProviderModeReason,
+  getUnavailableProviderModelReason,
+} from "../lib/modelOptions";
 
 const THREAD_OUTBOX_SCHEMA_VERSION = 3;
 const THREAD_OUTBOX_MAX_RETRY_DELAY_MS = 16_000;
@@ -78,6 +84,32 @@ export interface QueuedThreadMessage {
   readonly interactionMode?: ProviderInteractionModeType;
   readonly creation?: QueuedThreadCreation;
   readonly createdAt: string;
+}
+
+export function getQueuedDeliveryUnsupportedProviderInputReason(input: {
+  readonly config: ServerConfig;
+  readonly message: QueuedThreadMessage;
+  readonly modelSelection: ModelSelectionType | undefined;
+  readonly runtimeMode: RuntimeModeType;
+  readonly interactionMode: ProviderInteractionModeType;
+}): string | null {
+  return (
+    getUnavailableProviderModelReason({
+      config: input.config,
+      selection: input.modelSelection,
+    }) ??
+    getUnsupportedProviderModeReason({
+      config: input.config,
+      selection: input.modelSelection,
+      runtimeMode: input.runtimeMode,
+      interactionMode: input.interactionMode,
+    }) ??
+    getUnsupportedProviderAttachmentReason({
+      config: input.config,
+      selection: input.modelSelection,
+      attachmentCount: input.message.attachments.length,
+    })
+  );
 }
 
 export interface ThreadSettingsSnapshot {

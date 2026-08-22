@@ -1,5 +1,6 @@
 import {
   ClaudeSettings,
+  ClineSettings,
   CodexSettings,
   CursorSettings,
   GrokSettings,
@@ -7,7 +8,15 @@ import {
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
-import { ClaudeAI, CursorIcon, GrokIcon, type Icon, OpenAI, OpenCodeIcon } from "../Icons";
+import {
+  ClaudeAI,
+  ClineIcon,
+  CursorIcon,
+  GrokIcon,
+  type Icon,
+  OpenAI,
+  OpenCodeIcon,
+} from "../Icons";
 
 type ProviderSettingsSchema = {
   readonly fields: Readonly<Record<string, Schema.Top>>;
@@ -32,6 +41,8 @@ export interface ProviderClientDefinition {
    * built-in default or custom — advertises the same marker.
    */
   readonly badgeLabel?: string;
+  /** Whether Settings may author model IDs not advertised by the provider. */
+  readonly supportsCustomModels?: boolean;
 }
 
 export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
@@ -60,6 +71,14 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
     icon: GrokIcon,
     badgeLabel: "Early Access",
     settingsSchema: GrokSettings,
+  },
+  {
+    value: ProviderDriverKind.make("cline"),
+    label: "Cline",
+    icon: ClineIcon,
+    badgeLabel: "Early Access",
+    supportsCustomModels: false,
+    settingsSchema: ClineSettings,
   },
   {
     value: ProviderDriverKind.make("opencode"),

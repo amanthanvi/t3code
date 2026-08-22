@@ -54,19 +54,37 @@ yay -S t3code-nightly-bin
 T3 Code drives provider CLIs; it does not ship them. Install the CLI for each provider you want
 to use, then authenticate it.
 
-| Provider   | CLI                                                   | Default binary | Log in with           |
-| ---------- | ----------------------------------------------------- | -------------- | --------------------- |
-| Codex      | [Codex CLI](https://developers.openai.com/codex/cli)  | `codex`        | `codex login`         |
-| Claude     | [Claude Code](https://claude.com/product/claude-code) | `claude`       | `claude auth login`   |
-| Cursor     | [Cursor CLI](https://cursor.com/cli)                  | `cursor-agent` | `agent login`         |
-| Grok Build | [Grok Build CLI](https://x.ai/cli)                    | `grok`         | `grok login`          |
-| OpenCode   | [OpenCode](https://opencode.ai)                       | `opencode`     | `opencode auth login` |
+| Provider   | CLI                                                    | Default binary | Log in with           |
+| ---------- | ------------------------------------------------------ | -------------- | --------------------- |
+| Codex      | [Codex CLI](https://developers.openai.com/codex/cli)   | `codex`        | `codex login`         |
+| Claude     | [Claude Code](https://claude.com/product/claude-code)  | `claude`       | `claude auth login`   |
+| Cline      | [Cline CLI](https://docs.cline.bot/usage/cli-overview) | `cline`        | `cline auth`          |
+| Cursor     | [Cursor CLI](https://cursor.com/cli)                   | `cursor-agent` | `agent login`         |
+| Grok Build | [Grok Build CLI](https://x.ai/cli)                     | `grok`         | `grok login`          |
+| OpenCode   | [OpenCode](https://opencode.ai)                        | `opencode`     | `opencode auth login` |
 
-Codex and Claude are on by default. Cursor, Grok Build, and OpenCode are off by default; turn
-them on in **Settings** → the provider's card when you want to use them.
+Codex, Claude, and Cursor are on by default. Grok Build, OpenCode, and Cline are off by default;
+turn them on in **Settings** → the provider's card when you want to use them.
 
 Cursor is the one to watch: install Cursor CLI, which provides the `cursor-agent` binary that
 T3 Code looks for, but authenticate with `agent login`, not `cursor-agent login`.
+
+Cline reuses credentials saved by `cline auth`. T3 Code does not launch Cline's interactive ACP
+sign-in flow, so authenticate it on the server machine before enabling it.
+
+Image attachments are currently unavailable with Cline. T3 Code rejects Cline turns that contain
+images because the current Cline CLI drops image input over ACP instead of sending it to the model.
+
+T3 Code's agent browser and preview tools are also unavailable in Cline sessions. Current Cline ACP
+does not consume per-session MCP servers, so T3 Code withholds the otherwise unused MCP credential.
+
+Cline is not used for T3 Code's background title, branch, commit, or pull-request text generation.
+Current Cline ACP loads workspace and account extensions, including executable lifecycle hooks, and
+does not expose a way for T3 Code to disable them for non-interactive metadata generation.
+
+Cline sessions currently require **Full access**. Supervised and auto-accept modes cannot cover
+extensions that run outside ACP tool-permission requests, so T3 Code rejects those modes before it
+starts Cline. Plan mode is not advertised for the same reason.
 
 Run the login command on the machine running the T3 Code server, not on the device you browse
 from.

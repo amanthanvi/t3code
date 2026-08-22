@@ -1,6 +1,8 @@
 import type {
   ModelCapabilities,
   ModelSelection,
+  ProviderInteractionMode,
+  RuntimeMode,
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
 import {
@@ -18,14 +20,102 @@ export type ModelOption = {
   readonly isDefault: boolean;
   readonly isLegacy: boolean;
   readonly capabilities: ModelCapabilities | null;
+  readonly supportedRuntimeModes: ReadonlyArray<RuntimeMode>;
+  readonly showInteractionModeToggle: boolean;
+  readonly supportsImageAttachments: boolean;
   readonly selection: ModelSelection;
 };
 
 export type ProviderGroup = {
   readonly providerKey: string;
   readonly providerLabel: string;
+  readonly supportedRuntimeModes: ReadonlyArray<RuntimeMode>;
+  readonly showInteractionModeToggle: boolean;
+  readonly supportsImageAttachments: boolean;
   readonly models: ReadonlyArray<ModelOption>;
 };
+
+export const ALL_RUNTIME_MODES: ReadonlyArray<RuntimeMode> = [
+  "approval-required",
+  "auto-accept-edits",
+  "auto",
+  "full-access",
+];
+
+export function getUnsupportedProviderModeReason(input: {
+  readonly config: T3ServerConfig | null | undefined;
+  readonly selection: ModelSelection | null | undefined;
+  readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: ProviderInteractionMode;
+}): string | null {
+  const provider = input.config?.providers.find(
+    (candidate) => candidate.instanceId === input.selection?.instanceId,
+  );
+  if (!provider) return null;
+  const supported = provider.supportedRuntimeModes ?? ALL_RUNTIME_MODES;
+  if (!supported.includes(input.runtimeMode)) {
+    return `${providerDisplayLabel(provider)} does not support the selected access mode. Choose Full access to continue.`;
+  }
+  if (input.interactionMode === "plan" && provider.showInteractionModeToggle === false) {
+    return `${providerDisplayLabel(provider)} does not support Plan mode. Choose Build to continue.`;
+  }
+  return null;
+}
+
+export function getUnsupportedProviderAttachmentReason(input: {
+  readonly config: T3ServerConfig | null | undefined;
+  readonly selection: ModelSelection | null | undefined;
+  readonly attachmentCount: number;
+}): string | null {
+  if (input.attachmentCount === 0) return null;
+  const provider = input.config?.providers.find(
+    (candidate) => candidate.instanceId === input.selection?.instanceId,
+  );
+  if (provider?.supportsImageAttachments !== false) return null;
+  return `${providerDisplayLabel(provider)} does not support image attachments. Remove the images to continue.`;
+}
+
+export function providerSupportsImageAttachments(input: {
+  readonly config: T3ServerConfig | null | undefined;
+  readonly selection: ModelSelection | null | undefined;
+}): boolean {
+  const provider = input.config?.providers.find(
+    (candidate) => candidate.instanceId === input.selection?.instanceId,
+  );
+  return provider?.supportsImageAttachments !== false;
+}
+
+export function getProviderSendBlockReason(input: {
+  readonly config: T3ServerConfig | null | undefined;
+  readonly selection: ModelSelection | null | undefined;
+  readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: ProviderInteractionMode;
+  readonly attachmentCount: number;
+}): string | null {
+  return (
+    getUnavailableProviderModelReason(input) ??
+    getUnsupportedProviderModeReason(input) ??
+    getUnsupportedProviderAttachmentReason(input)
+  );
+}
+
+export function getUnavailableProviderModelReason(input: {
+  readonly config: T3ServerConfig | null | undefined;
+  readonly selection: ModelSelection | null | undefined;
+}): string | null {
+  const provider = input.config?.providers.find(
+    (candidate) => candidate.instanceId === input.selection?.instanceId,
+  );
+  if (
+    provider?.driver === "cline" &&
+    provider.status === "warning" &&
+    provider.auth.status === "unknown" &&
+    !provider.models.some((candidate) => candidate.slug === input.selection?.model)
+  ) {
+    return `${providerDisplayLabel(provider)} is still checking its model catalog. Wait for the provider check to finish.`;
+  }
+  return null;
+}
 
 function providerDisplayLabel(provider: {
   readonly displayName?: string | undefined;
@@ -59,6 +149,20 @@ function normalizeSelectionOptions(
       };
 }
 
+function hasUnadvertisedClineSelection(
+  config: T3ServerConfig | null | undefined,
+  selection: ModelSelection,
+): boolean {
+  const provider = config?.providers.find(
+    (candidate) => candidate.instanceId === selection.instanceId,
+  );
+  return (
+    provider?.driver === "cline" &&
+    !(provider.status === "warning" && provider.auth.status === "unknown") &&
+    !provider.models.some((candidate) => candidate.slug === selection.model)
+  );
+}
+
 /**
  * A stored model selection is only usable when its provider instance is
  * currently enabled, installed, and authenticated on the server. Returns the
@@ -76,6 +180,9 @@ export function resolveSelectableModelSelection(
   const provider = config.providers.find(
     (candidate) => candidate.instanceId === selection.instanceId,
   );
+  if (hasUnadvertisedClineSelection(config, selection)) {
+    return null;
+  }
   return provider &&
     provider.enabled &&
     provider.installed &&
@@ -128,6 +235,9 @@ export function buildModelOptions(
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
         capabilities: model.capabilities,
+        supportedRuntimeModes: provider.supportedRuntimeModes ?? ALL_RUNTIME_MODES,
+        showInteractionModeToggle: provider.showInteractionModeToggle ?? true,
+        supportsImageAttachments: provider.supportsImageAttachments ?? true,
         selection: normalizeSelectionOptions(
           {
             instanceId: provider.instanceId,
@@ -139,7 +249,17 @@ export function buildModelOptions(
     }
   }
 
-  if (fallbackModelSelection) {
+  const fallbackProvider = config?.providers.find(
+    (provider) => provider.instanceId === fallbackModelSelection?.instanceId,
+  );
+  const canInjectFallback =
+    fallbackProvider?.driver !== "cline" ||
+    fallbackProvider.models.some((model) => model.slug === fallbackModelSelection?.model);
+  if (
+    fallbackModelSelection &&
+    canInjectFallback &&
+    !hasUnadvertisedClineSelection(config, fallbackModelSelection)
+  ) {
     const key = `${fallbackModelSelection.instanceId}:${fallbackModelSelection.model}`;
     const existing = options.get(key);
     if (existing) {
@@ -159,6 +279,9 @@ export function buildModelOptions(
         isDefault: false,
         isLegacy: false,
         capabilities: null,
+        supportedRuntimeModes: ALL_RUNTIME_MODES,
+        showInteractionModeToggle: true,
+        supportsImageAttachments: true,
         selection: fallbackModelSelection,
       });
     }
@@ -168,7 +291,16 @@ export function buildModelOptions(
 }
 
 export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyArray<ProviderGroup> {
-  const groups = new Map<string, { providerLabel: string; models: ModelOption[] }>();
+  const groups = new Map<
+    string,
+    {
+      providerLabel: string;
+      supportedRuntimeModes: ReadonlyArray<RuntimeMode>;
+      showInteractionModeToggle: boolean;
+      supportsImageAttachments: boolean;
+      models: ModelOption[];
+    }
+  >();
   for (const option of options) {
     const existing = groups.get(option.providerKey);
     if (existing) {
@@ -176,6 +308,9 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
     } else {
       groups.set(option.providerKey, {
         providerLabel: option.providerLabel,
+        supportedRuntimeModes: option.supportedRuntimeModes,
+        showInteractionModeToggle: option.showInteractionModeToggle,
+        supportsImageAttachments: option.supportsImageAttachments,
         models: [option],
       });
     }
@@ -184,6 +319,9 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
   return [...groups.entries()].map(([providerKey, group]) => ({
     providerKey,
     providerLabel: group.providerLabel,
+    supportedRuntimeModes: group.supportedRuntimeModes,
+    showInteractionModeToggle: group.showInteractionModeToggle,
+    supportsImageAttachments: group.supportsImageAttachments,
     models: group.models,
   }));
 }

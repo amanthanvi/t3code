@@ -31,6 +31,9 @@ import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import {
   buildModelOptions,
+  getUnsupportedProviderAttachmentReason,
+  getUnsupportedProviderModeReason,
+  getUnavailableProviderModelReason,
   groupByProvider,
   resolveDefaultableModelSelection,
   resolveSelectableModelSelection,
@@ -143,6 +146,7 @@ type NewTaskFlowContextValue = {
   readonly currentCheckoutBranchName: string | null;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
+  readonly unsupportedProviderModeReason: string | null;
   readonly planModeEnabled: boolean;
   readonly expandedProvider: string | null;
   readonly environments: ReadonlyArray<{
@@ -433,6 +437,22 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     modelOptions.find((option) => option.isDefault)?.selection ??
     modelOptions[0]?.selection ??
     null;
+  const unsupportedProviderModeReason =
+    getUnavailableProviderModelReason({
+      config: selectedEnvironmentServerConfig,
+      selection: selectedModel,
+    }) ??
+    getUnsupportedProviderModeReason({
+      config: selectedEnvironmentServerConfig,
+      selection: selectedModel,
+      runtimeMode,
+      interactionMode,
+    }) ??
+    getUnsupportedProviderAttachmentReason({
+      config: selectedEnvironmentServerConfig,
+      selection: selectedModel,
+      attachmentCount: attachments.length,
+    });
   const selectedModelKey = selectedModel
     ? `${selectedModel.instanceId}:${selectedModel.model}`
     : null;
@@ -846,6 +866,32 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       // Fall back to the resolved mode (server default) so queued tasks drain
       // with the same mode the composer displayed.
       const mode = workspaceSelection?.mode ?? workspaceMode;
+      const draftRuntimeMode = draft.runtimeMode ?? DEFAULT_RUNTIME_MODE;
+      const draftInteractionMode = resolvePendingTaskInteractionMode({
+        preferenceLoaded: planModePreferenceLoaded,
+        planModeEnabled,
+        draftInteractionMode: draft.interactionMode,
+        queuedInteractionMode: editingPendingTask?.interactionMode,
+      });
+      if (
+        getUnavailableProviderModelReason({
+          config: selectedEnvironmentServerConfig,
+          selection: draftModelSelection,
+        }) !== null ||
+        getUnsupportedProviderModeReason({
+          config: selectedEnvironmentServerConfig,
+          selection: draftModelSelection,
+          runtimeMode: draftRuntimeMode,
+          interactionMode: draftInteractionMode,
+        }) !== null ||
+        getUnsupportedProviderAttachmentReason({
+          config: selectedEnvironmentServerConfig,
+          selection: draftModelSelection,
+          attachmentCount: draft.attachments.length,
+        }) !== null
+      ) {
+        return null;
+      }
       // When the selection is the stand-in built from the queued snapshot,
       // persist the original (possibly absent) snapshot values — the
       // stand-in's placeholder title/workspaceRoot must never be written back
@@ -865,13 +911,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         text,
         attachments: draft.attachments,
         modelSelection: draftModelSelection,
-        runtimeMode: draft.runtimeMode ?? DEFAULT_RUNTIME_MODE,
-        interactionMode: resolvePendingTaskInteractionMode({
-          preferenceLoaded: planModePreferenceLoaded,
-          planModeEnabled,
-          draftInteractionMode: draft.interactionMode,
-          queuedInteractionMode: editingPendingTask?.interactionMode,
-        }),
+        runtimeMode: draftRuntimeMode,
+        interactionMode: draftInteractionMode,
         creation: {
           projectId: selectedProject.id,
           ...(projectTitle !== undefined ? { projectTitle } : {}),
@@ -1021,6 +1062,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       currentCheckoutBranchName,
       runtimeMode,
       interactionMode,
+      unsupportedProviderModeReason,
       planModeEnabled,
       expandedProvider,
       environments,
@@ -1073,6 +1115,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       filteredBranches,
       finishEditingPendingTask,
       interactionMode,
+      unsupportedProviderModeReason,
       planModeEnabled,
       loadBranches,
       loadMoreBranches,

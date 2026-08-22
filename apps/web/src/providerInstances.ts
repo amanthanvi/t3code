@@ -288,6 +288,13 @@ export function sortProviderInstanceEntries(
   return sorted;
 }
 
+/** Background text generation must not offer drivers without a safe backend. */
+export function filterTextGenerationProviderInstanceEntries(
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+): ReadonlyArray<ProviderInstanceEntry> {
+  return entries.filter((entry) => entry.driverKind !== "cline");
+}
+
 /**
  * Look up a single instance entry by exact `instanceId`. Missing snapshots
  * are not inferred from driver kind in UI routing code.
@@ -383,7 +390,17 @@ export function resolveDefaultProviderModelSelection(
 ): ModelSelection | null {
   const instanceId = resolveSelectableProviderInstance(providers, selection?.instanceId);
   if (instanceId === undefined) return null;
-  if (selection?.instanceId === instanceId) return selection;
+  if (selection?.instanceId === instanceId) {
+    const entry = deriveProviderInstanceEntries(providers).find(
+      (candidate) => candidate.instanceId === instanceId,
+    );
+    if (
+      entry?.driverKind !== "cline" ||
+      entry.models.some((model) => model.slug === selection.model)
+    ) {
+      return selection;
+    }
+  }
   const model = getDefaultProviderInstanceModel(providers, instanceId);
   return model ? { instanceId, model } : null;
 }

@@ -5,6 +5,7 @@ import {
   ProviderDriverKind,
   type ModelCapabilities,
   type ProviderInstanceId,
+  type RuntimeMode,
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
@@ -14,6 +15,12 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
+export const ALL_RUNTIME_MODES: ReadonlyArray<RuntimeMode> = [
+  "approval-required",
+  "auto-accept-edits",
+  "auto",
+  "full-access",
+];
 
 export function formatProviderDriverKindLabel(provider: ProviderDriverKind): string {
   return provider
@@ -51,6 +58,50 @@ export function getProviderInteractionModeToggle(
   provider: ProviderDriverKind,
 ): boolean {
   return getProviderSnapshot(providers, provider)?.showInteractionModeToggle ?? true;
+}
+
+export function getProviderSupportedRuntimeModes(
+  provider: ServerProvider | null | undefined,
+): ReadonlyArray<RuntimeMode> {
+  return provider?.supportedRuntimeModes ?? ALL_RUNTIME_MODES;
+}
+
+export function getUnsupportedProviderModeReason(input: {
+  readonly provider: ServerProvider | null | undefined;
+  readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: "default" | "plan";
+}): string | null {
+  const label =
+    input.provider?.displayName?.trim() ||
+    (input.provider ? formatProviderDriverKindLabel(input.provider.driver) : "This provider");
+  if (!getProviderSupportedRuntimeModes(input.provider).includes(input.runtimeMode)) {
+    return `${label} does not support the selected access mode. Choose Full access to continue.`;
+  }
+  if (input.interactionMode === "plan" && input.provider?.showInteractionModeToggle === false) {
+    return `${label} does not support Plan mode. Choose Build to continue.`;
+  }
+  return null;
+}
+
+export function canUseProviderInteractionModeShortcut(input: {
+  readonly planModeUiEnabled: boolean;
+  readonly showInteractionModeToggle: boolean;
+  readonly interactionMode: "default" | "plan";
+}): boolean {
+  return (
+    input.planModeUiEnabled && (input.showInteractionModeToggle || input.interactionMode === "plan")
+  );
+}
+
+export function getUnsupportedProviderAttachmentReason(
+  provider: ServerProvider | null | undefined,
+  attachmentCount: number,
+): string | null {
+  if (attachmentCount === 0 || provider?.supportsImageAttachments !== false) {
+    return null;
+  }
+  const label = provider.displayName?.trim() || formatProviderDriverKindLabel(provider.driver);
+  return `${label} does not support image attachments. Remove the images to continue.`;
 }
 
 export function isProviderEnabled(
@@ -122,6 +173,11 @@ export function getDefaultServerModel(
   provider: ProviderDriverKind,
 ): string {
   const models = getProviderModels(providers, provider);
+  if (provider === "cline" && models.length === 0) {
+    // Cline's model catalog is account-scoped. An empty catalog is an
+    // actionable provider error, not a reason to synthesize a Codex model.
+    return "";
+  }
   return (
     models.find((model) => model.isDefault && !model.isCustom)?.slug ??
     models.find((model) => !model.isCustom)?.slug ??

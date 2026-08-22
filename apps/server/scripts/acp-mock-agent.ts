@@ -13,7 +13,16 @@ import type * as AcpSchema from "effect-acp/schema";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
+const ignoreSigterm = process.env.T3_ACP_IGNORE_SIGTERM === "1";
+const hangInitializeForever = process.env.T3_ACP_HANG_INITIALIZE_FOREVER === "1";
+const hangCreateSessionForever = process.env.T3_ACP_HANG_CREATE_SESSION_FOREVER === "1";
+const requireAuthentication = process.env.T3_ACP_REQUIRE_AUTHENTICATION === "1";
+const advertiseImagePromptCapability = process.env.T3_ACP_ADVERTISE_IMAGE_PROMPT === "1";
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
+const alternatePermissionTool = process.env.T3_ACP_ALTERNATE_PERMISSION_TOOL === "1";
+const cycleEditPermissionKinds = process.env.T3_ACP_CYCLE_EDIT_PERMISSION_KINDS === "1";
+const omitAllowPermissionOptions = process.env.T3_ACP_NO_ALLOW_OPTIONS === "1";
+const emptyModelCatalog = process.env.T3_ACP_EMPTY_MODEL_CATALOG === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
@@ -54,6 +63,7 @@ let currentReasoning = "medium";
 let currentContext = "272k";
 let currentFast = false;
 let promptCount = 0;
+let authenticated = !requireAuthentication;
 let overlappingFirstPromptId: string | undefined;
 const cancelledSessions = new Set<string>();
 
@@ -81,7 +91,9 @@ function writeJsonRpcNotification(method: string, params: unknown): void {
 
 process.once("SIGTERM", () => {
   logExit("SIGTERM");
-  process.exit(0);
+  if (!ignoreSigterm) {
+    process.exit(0);
+  }
 });
 
 process.once("SIGINT", () => {
@@ -94,6 +106,18 @@ process.once("exit", (code) => {
 });
 
 function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
+  if (emptyModelCatalog) {
+    return [
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: "",
+        options: [],
+      },
+    ];
+  }
   if (parameterizedModelPicker) {
     const baseOptions: Array<AcpSchema.SessionConfigOption> = [
       {
@@ -297,26 +321,52 @@ const program = Effect.gen(function* () {
   const agent = yield* EffectAcpAgent.AcpAgent;
 
   yield* agent.handleInitialize((request) =>
+    hangInitializeForever
+      ? Effect.never
+      : Effect.sync(() => {
+          parameterizedModelPicker =
+            request.clientCapabilities?._meta?.parameterizedModelPicker === true;
+          return {
+            protocolVersion: 1,
+            agentCapabilities: {
+              loadSession: true,
+              ...(advertiseImagePromptCapability
+                ? {
+                    promptCapabilities: {
+                      image: true,
+                      audio: false,
+                      embeddedContext: false,
+                    },
+                  }
+                : {}),
+            },
+          };
+        }),
+  );
+
+  yield* agent.handleAuthenticate(() =>
     Effect.sync(() => {
-      parameterizedModelPicker =
-        request.clientCapabilities?._meta?.parameterizedModelPicker === true;
-      return {
-        protocolVersion: 1,
-        agentCapabilities: { loadSession: true },
-      };
+      authenticated = true;
+      return {};
     }),
   );
 
-  yield* agent.handleAuthenticate(() => Effect.succeed({}));
-
-  yield* agent.handleCreateSession(() =>
-    Effect.succeed({
+  yield* agent.handleCreateSession(() => {
+    if (hangCreateSessionForever) {
+      return Effect.never;
+    }
+    if (!authenticated) {
+      return Effect.fail(
+        AcpError.AcpRequestError.authRequired("Call authenticate before starting a session"),
+      );
+    }
+    return Effect.succeed({
       sessionId,
       modes: modeState(),
       models: modelState(),
       configOptions: configOptions(),
-    }),
-  );
+    });
+  });
 
   const emitLoadReplayNotifications = (requestedSessionId: string) => {
     writeJsonRpcNotification("session/update", {
@@ -518,7 +568,18 @@ const program = Effect.gen(function* () {
         return yield* Effect.never;
       }
 
-      if (hangPromptForever || (hangFirstPromptForever && promptCount === 1)) {
+      if (hangFirstPromptForever && promptCount === 1) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "first prompt started" },
+          },
+        });
+        return yield* Effect.never;
+      }
+
+      if (hangPromptForever) {
         return yield* Effect.never;
       }
 
@@ -631,15 +692,29 @@ const program = Effect.gen(function* () {
       }
 
       if (emitToolCalls) {
-        const toolCallId = "tool-call-1";
+        const toolCallId = `tool-call-${promptCount}`;
+        const cycledPermission = [
+          { kind: "edit" as const, toolName: "Write" },
+          { kind: "delete" as const, toolName: "Delete" },
+          { kind: "move" as const, toolName: "Move" },
+          { kind: "execute" as const, toolName: "Bash" },
+        ][(promptCount - 1) % 4];
+        const permissionKind = cycleEditPermissionKinds
+          ? (cycledPermission?.kind ?? "execute")
+          : "execute";
+        const permissionToolName = cycleEditPermissionKinds
+          ? (cycledPermission?.toolName ?? "Bash")
+          : alternatePermissionTool && promptCount >= 3
+            ? "run_commands"
+            : "Bash";
 
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
           update: {
             sessionUpdate: "tool_call",
             toolCallId,
-            title: "Terminal",
-            kind: "execute",
+            title: permissionToolName,
+            kind: permissionKind,
             status: "pending",
             rawInput: {
               command: ["cat", "server/package.json"],
@@ -660,8 +735,8 @@ const program = Effect.gen(function* () {
           sessionId: requestedSessionId,
           toolCall: {
             toolCallId,
-            title: "`cat server/package.json`",
-            kind: "execute",
+            title: `${permissionToolName}: cat server/package.json`,
+            kind: permissionKind,
             status: "pending",
             content: [
               {
@@ -674,12 +749,20 @@ const program = Effect.gen(function* () {
             ],
           },
           options: [
-            { optionId: permissionOptionIds.allowOnce, name: "Allow once", kind: "allow_once" },
-            {
-              optionId: permissionOptionIds.allowAlways,
-              name: "Allow always",
-              kind: "allow_always",
-            },
+            ...(omitAllowPermissionOptions
+              ? []
+              : [
+                  {
+                    optionId: permissionOptionIds.allowOnce,
+                    name: "Allow once",
+                    kind: "allow_once" as const,
+                  },
+                  {
+                    optionId: permissionOptionIds.allowAlways,
+                    name: "Allow always",
+                    kind: "allow_always" as const,
+                  },
+                ]),
             { optionId: permissionOptionIds.rejectOnce, name: "Reject", kind: "reject_once" },
           ],
         });

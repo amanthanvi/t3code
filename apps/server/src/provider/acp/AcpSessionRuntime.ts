@@ -55,6 +55,7 @@ export interface AcpSpawnInput {
   readonly args: ReadonlyArray<string>;
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
+  readonly forceKillAfter?: Duration.Input;
 }
 
 export interface AcpSessionRuntimeOptions {
@@ -68,7 +69,12 @@ export interface AcpSessionRuntimeOptions {
     readonly name: string;
     readonly version: string;
   };
-  readonly authMethodId: string;
+  /**
+   * ACP authentication is an active operation and may launch an interactive
+   * OAuth flow. Providers that restore credentials during session setup should
+   * omit this instead of authenticating as part of every runtime start.
+   */
+  readonly authMethodId?: string;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
@@ -175,10 +181,20 @@ export class AcpSessionRuntime extends Context.Service<
      */
     readonly handleExtNotification: EffectAcpClient.AcpClient["Service"]["handleExtNotification"];
     /**
-     * Initializes the ACP connection, authenticates, and loads, resumes, or creates the session.
-     * Concurrent calls share the same in-flight startup and a failed startup may be retried.
+     * Initializes the ACP connection, optionally authenticates when an auth
+     * method was configured, and loads, resumes, or creates the session.
+     * Concurrent calls share the same in-flight startup and a failed startup
+     * may be retried.
      */
     readonly start: () => Effect.Effect<AcpSessionRuntimeStartResult, EffectAcpErrors.AcpError>;
+    /**
+     * Terminates the exact child process owned by this runtime. This is used
+     * when a peer stops responding before its surrounding scope can close
+     * cleanly.
+     */
+    readonly terminate: (
+      forceKillAfter: Duration.Input,
+    ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
     /** Stream of parsed ACP session events emitted after startup. */
     readonly getEvents: () => Stream.Stream<AcpSessionRuntimeEvent, never>;
     /** Waits until the current event consumer has processed every queued event. */
@@ -293,6 +309,7 @@ export const make = (
     const configOptionsRef = yield* Ref.make(sessionConfigOptionsFromSetup(undefined));
     const startStateRef = yield* Ref.make<AcpStartState>({ _tag: "NotStarted" });
     const promptSerializationSemaphore = yield* Semaphore.make(1);
+    const promptCancellationGenerationRef = yield* Ref.make(0);
     const activePromptFiberRef = yield* Ref.make<
       Option.Option<Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>>
     >(Option.none());
@@ -339,6 +356,7 @@ export const make = (
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
           ...(options.spawn.cwd ? { cwd: options.spawn.cwd } : {}),
           ...(options.spawn.env ? { env: options.spawn.env, extendEnv: true } : {}),
+          ...(options.spawn.forceKillAfter ? { forceKillAfter: options.spawn.forceKillAfter } : {}),
           shell: spawnCommand.shell,
         }),
       )
@@ -541,15 +559,17 @@ export const make = (
         acp.agent.initialize(initializePayload),
       );
 
-      const authenticatePayload = {
-        methodId: options.authMethodId,
-      } satisfies EffectAcpSchema.AuthenticateRequest;
+      if (options.authMethodId !== undefined) {
+        const authenticatePayload = {
+          methodId: options.authMethodId,
+        } satisfies EffectAcpSchema.AuthenticateRequest;
 
-      yield* runLoggedRequest(
-        "authenticate",
-        authenticatePayload,
-        acp.agent.authenticate(authenticatePayload),
-      );
+        yield* runLoggedRequest(
+          "authenticate",
+          authenticatePayload,
+          acp.agent.authenticate(authenticatePayload),
+        );
+      }
 
       let sessionId: string;
       let sessionSetupResult:
@@ -705,6 +725,16 @@ export const make = (
       handleExtRequest: acp.handleExtRequest,
       handleExtNotification: acp.handleExtNotification,
       start: () => start,
+      terminate: (forceKillAfter) =>
+        child.kill({ forceKillAfter }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new EffectAcpErrors.AcpTransportError({
+                detail: "Failed to terminate the ACP child process",
+                cause,
+              }),
+          ),
+        ),
       getEvents: () => Stream.fromQueue(eventQueue),
       drainEvents: Effect.gen(function* () {
         const acknowledge = yield* Deferred.make<void>();
@@ -717,50 +747,57 @@ export const make = (
       getModeState: Ref.get(modeStateRef),
       getConfigOptions: Ref.get(configOptionsRef),
       prompt: (payload) =>
-        promptSerializationSemaphore.withPermit(
-          Effect.gen(function* () {
-            const started = yield* getStartedState;
-            yield* closeActiveAssistantSegment({
-              queue: eventQueue,
-              assistantSegmentRef,
-            });
-            const requestPayload = {
-              sessionId: started.sessionId,
-              ...payload,
-            } satisfies EffectAcpSchema.PromptRequest;
-            const cancelledResponse = {
-              stopReason: "cancelled",
-            } satisfies EffectAcpSchema.PromptResponse;
-            const promptRpcFiber = yield* runLoggedRequest(
-              "session/prompt",
-              requestPayload,
-              acp.agent.prompt(requestPayload),
-            ).pipe(Effect.forkIn(runtimeScope));
-            yield* Ref.set(activePromptFiberRef, Option.some(promptRpcFiber));
-            return yield* Fiber.join(promptRpcFiber).pipe(
-              Effect.catchCause((cause) =>
-                Cause.hasInterruptsOnly(cause)
-                  ? Effect.succeed(cancelledResponse)
-                  : Effect.failCause(cause),
-              ),
-              Effect.ensuring(
-                Effect.gen(function* () {
-                  yield* Fiber.interrupt(promptRpcFiber).pipe(Effect.ignore);
-                  yield* Ref.set(activePromptFiberRef, Option.none());
-                }),
-              ),
-              Effect.tap(() =>
-                closeActiveAssistantSegment({
-                  queue: eventQueue,
-                  assistantSegmentRef,
-                }),
-              ),
-            );
-          }),
-        ),
+        Effect.gen(function* () {
+          const cancellationGeneration = yield* Ref.get(promptCancellationGenerationRef);
+          return yield* promptSerializationSemaphore.withPermit(
+            Effect.gen(function* () {
+              const cancelledResponse = {
+                stopReason: "cancelled",
+              } satisfies EffectAcpSchema.PromptResponse;
+              if ((yield* Ref.get(promptCancellationGenerationRef)) !== cancellationGeneration) {
+                return cancelledResponse;
+              }
+              const started = yield* getStartedState;
+              yield* closeActiveAssistantSegment({
+                queue: eventQueue,
+                assistantSegmentRef,
+              });
+              const requestPayload = {
+                sessionId: started.sessionId,
+                ...payload,
+              } satisfies EffectAcpSchema.PromptRequest;
+              const promptRpcFiber = yield* runLoggedRequest(
+                "session/prompt",
+                requestPayload,
+                acp.agent.prompt(requestPayload),
+              ).pipe(Effect.forkIn(runtimeScope));
+              yield* Ref.set(activePromptFiberRef, Option.some(promptRpcFiber));
+              return yield* Fiber.join(promptRpcFiber).pipe(
+                Effect.catchCause((cause) =>
+                  Cause.hasInterruptsOnly(cause)
+                    ? Effect.succeed(cancelledResponse)
+                    : Effect.failCause(cause),
+                ),
+                Effect.ensuring(
+                  Effect.gen(function* () {
+                    yield* Fiber.interrupt(promptRpcFiber).pipe(Effect.ignore);
+                    yield* Ref.set(activePromptFiberRef, Option.none());
+                  }),
+                ),
+                Effect.tap(() =>
+                  closeActiveAssistantSegment({
+                    queue: eventQueue,
+                    assistantSegmentRef,
+                  }),
+                ),
+              );
+            }),
+          );
+        }),
       cancel: getStartedState.pipe(
         Effect.flatMap((started) =>
           Effect.gen(function* () {
+            yield* Ref.update(promptCancellationGenerationRef, (generation) => generation + 1);
             const activePromptFiber = yield* Ref.get(activePromptFiberRef);
             if (Option.isSome(activePromptFiber)) {
               yield* Fiber.interrupt(activePromptFiber.value).pipe(Effect.ignore);

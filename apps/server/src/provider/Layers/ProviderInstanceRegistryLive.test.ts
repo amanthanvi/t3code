@@ -10,7 +10,7 @@
  *
  *  2. **Many drivers, one registry** — the "all drivers slice" describe
  *     block below configures one instance of every shipped driver
- *     (`codex`, `claudeAgent`, `cursor`, `grok`, `opencode`) in a single
+ *     (`codex`, `claudeAgent`, `cline`, `cursor`, `grok`, `opencode`) in a single
  *     `ProviderInstanceConfigMap` and asserts the registry boots them all
  *     without cross-contamination. This proves the driver SPI is uniform
  *     across every provider — any driver plugs into the registry through
@@ -18,7 +18,7 @@
  *
  * Every instance in these tests is configured with `enabled: false` so the
  * provider-status checks short-circuit to pending/disabled snapshots
- * without trying to spawn real `codex` / `claude` / `agent` / `grok` / `opencode`
+ * without trying to spawn real `codex` / `claude` / `cline` / `agent` / `grok` / `opencode`
  * binaries. That keeps the assertions focused on registry routing
  * behaviour rather than the runtime details of each provider.
  */
@@ -26,6 +26,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   type ClaudeSettings,
+  type ClineSettings,
   type CodexSettings,
   type CursorSettings,
   type GrokSettings,
@@ -44,6 +45,7 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ClaudeDriver } from "../Drivers/ClaudeDriver.ts";
+import { ClineDriver } from "../Drivers/ClineDriver.ts";
 import { CodexDriver } from "../Drivers/CodexDriver.ts";
 import { CursorDriver } from "../Drivers/CursorDriver.ts";
 import { GrokDriver } from "../Drivers/GrokDriver.ts";
@@ -113,6 +115,13 @@ const makeCursorConfig = (overrides: Partial<CursorSettings>): CursorSettings =>
   enabled: false,
   binaryPath: "cursor-agent",
   apiEndpoint: "",
+  customModels: [],
+  ...overrides,
+});
+
+const makeClineConfig = (overrides: Partial<ClineSettings>): ClineSettings => ({
+  enabled: false,
+  binaryPath: "cline",
   customModels: [],
   ...overrides,
 });
@@ -318,12 +327,14 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
     Effect.gen(function* () {
       const codexId = ProviderInstanceId.make("codex_default");
       const claudeId = ProviderInstanceId.make("claude_default");
+      const clineId = ProviderInstanceId.make("cline_default");
       const cursorId = ProviderInstanceId.make("cursor_default");
       const grokId = ProviderInstanceId.make("grok_default");
       const openCodeId = ProviderInstanceId.make("opencode_default");
 
       const codexDriverKind = ProviderDriverKind.make("codex");
       const claudeDriverKind = ProviderDriverKind.make("claudeAgent");
+      const clineDriverKind = ProviderDriverKind.make("cline");
       const cursorDriverKind = ProviderDriverKind.make("cursor");
       const grokDriverKind = ProviderDriverKind.make("grok");
       const openCodeDriverKind = ProviderDriverKind.make("opencode");
@@ -343,6 +354,12 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
             homePath: "/home/julius/.claude-work",
             launchArgs: "--verbose",
           }),
+        },
+        [clineId]: {
+          driver: clineDriverKind,
+          displayName: "Cline",
+          enabled: false,
+          config: makeClineConfig({}),
         },
         [cursorId]: {
           driver: cursorDriverKind,
@@ -365,7 +382,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       };
 
       const { registry } = yield* makeProviderInstanceRegistry({
-        drivers: [CodexDriver, ClaudeDriver, CursorDriver, GrokDriver, OpenCodeDriver],
+        drivers: [CodexDriver, ClaudeDriver, ClineDriver, CursorDriver, GrokDriver, OpenCodeDriver],
         configMap,
       });
 
@@ -375,9 +392,9 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(unavailable).toEqual([]);
 
       const instances = yield* registry.listInstances;
-      expect(instances).toHaveLength(5);
+      expect(instances).toHaveLength(6);
       expect(instances.map((instance) => instance.instanceId).toSorted()).toEqual(
-        [codexId, claudeId, cursorId, grokId, openCodeId].toSorted(),
+        [codexId, claudeId, clineId, cursorId, grokId, openCodeId].toSorted(),
       );
 
       // Instance lookup by id resolves each instance to its own bundle —
@@ -385,28 +402,30 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       // model. Each driver's bundle carries its advertised `driverKind`.
       const codex = yield* registry.getInstance(codexId);
       const claude = yield* registry.getInstance(claudeId);
+      const cline = yield* registry.getInstance(clineId);
       const cursor = yield* registry.getInstance(cursorId);
       const grok = yield* registry.getInstance(grokId);
       const openCode = yield* registry.getInstance(openCodeId);
       expect(codex?.driverKind).toBe(codexDriverKind);
       expect(claude?.driverKind).toBe(claudeDriverKind);
+      expect(cline?.driverKind).toBe(clineDriverKind);
       expect(cursor?.driverKind).toBe(cursorDriverKind);
       expect(grok?.driverKind).toBe(grokDriverKind);
       expect(openCode?.driverKind).toBe(openCodeDriverKind);
       expect(codex?.displayName).toBe("Codex");
       expect(claude?.displayName).toBe("Claude");
+      expect(cline?.displayName).toBe("Cline");
       expect(cursor?.displayName).toBe("Cursor");
       expect(grok?.displayName).toBe("Grok");
       expect(openCode?.displayName).toBe("OpenCode");
 
-      // Every instance owns its own set of closures — no sharing across
-      // drivers. `adapter` / `textGeneration` / `snapshot` are all
-      // distinct references even when two instances happen to share a
-      // trait (e.g. Cursor + others all use a stub-or-real
-      // `textGeneration`; they must still be different object values).
+      // Every instance owns its own adapter and snapshot closures. Providers
+      // with safe background text generation own distinct closures too;
+      // Cline intentionally omits one because ACP loads executable hooks.
       const adapters = [
         codex!.adapter,
         claude!.adapter,
+        cline!.adapter,
         cursor!.adapter,
         grok!.adapter,
         openCode!.adapter,
@@ -420,9 +439,11 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         openCode!.textGeneration,
       ];
       expect(new Set(textGenerations).size).toBe(textGenerations.length);
+      expect(cline!.textGeneration).toBeUndefined();
       const snapshots = [
         codex!.snapshot,
         claude!.snapshot,
+        cline!.snapshot,
         cursor!.snapshot,
         grok!.snapshot,
         openCode!.snapshot,
@@ -446,6 +467,12 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(claudeSnapshot.driver).toBe(claudeDriverKind);
       expect(claudeSnapshot.enabled).toBe(false);
       expect(claudeSnapshot.continuation?.groupKey).toBe("claude:home:/home/julius/.claude-work");
+
+      const clineSnapshot = yield* cline!.snapshot.getSnapshot;
+      expect(clineSnapshot.instanceId).toBe(clineId);
+      expect(clineSnapshot.driver).toBe(clineDriverKind);
+      expect(clineSnapshot.enabled).toBe(false);
+      expect(clineSnapshot.continuation?.groupKey).toBe(`${clineDriverKind}:instance:${clineId}`);
 
       const cursorSnapshot = yield* cursor!.snapshot.getSnapshot;
       expect(cursorSnapshot.instanceId).toBe(cursorId);

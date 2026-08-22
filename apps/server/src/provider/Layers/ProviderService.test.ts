@@ -14,7 +14,6 @@ import type {
 } from "@t3tools/contracts";
 import {
   ApprovalRequestId,
-  EnvironmentId,
   EventId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -77,6 +76,7 @@ const claudeAgentInstanceId = ProviderInstanceId.make("claudeAgent");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
+const CLINE_DRIVER = ProviderDriverKind.make("cline");
 
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
@@ -2122,13 +2122,17 @@ validation.layer("ProviderServiceLive validation", (it) => {
 describe("agent browser access", () => {
   const revokedThreads: Array<ThreadId> = [];
 
-  const startSessionWith = (enableAgentBrowserAccess: boolean, threadId: ThreadId) =>
+  const startSessionWith = (
+    enableAgentBrowserAccess: boolean,
+    threadId: ThreadId,
+    driver: ProviderDriverKind = CODEX_DRIVER,
+  ) =>
     Effect.gen(function* () {
       const issued: Array<ThreadId> = [];
-      const codex = makeFakeCodexAdapter();
+      const adapter = makeFakeCodexAdapter(driver);
       const providerAdapterLayer = Layer.succeed(
         ProviderAdapterRegistry.ProviderAdapterRegistry,
-        makeAdapterRegistryMock({ [CODEX_DRIVER]: codex.adapter }),
+        makeAdapterRegistryMock({ [driver]: adapter.adapter }),
       );
       const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
         Layer.provide(SqlitePersistenceMemory),
@@ -2160,8 +2164,8 @@ describe("agent browser access", () => {
       yield* Effect.gen(function* () {
         const provider = yield* ProviderService.ProviderService;
         return yield* provider.startSession(threadId, {
-          provider: CODEX_DRIVER,
-          providerInstanceId: codexInstanceId,
+          provider: driver,
+          providerInstanceId: ProviderInstanceId.make(driver),
           threadId,
           runtimeMode: "full-access",
         });
@@ -2202,6 +2206,18 @@ describe("agent browser access", () => {
       const issued = yield* startSessionWith(true, threadId);
 
       assert.deepEqual(issued, [threadId]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("withholds and revokes MCP credentials for Cline even when browser access is on", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-browser-cline-unsupported");
+      revokedThreads.length = 0;
+
+      const issued = yield* startSessionWith(true, threadId, CLINE_DRIVER);
+
+      assert.deepEqual(issued, []);
+      assert.deepEqual(revokedThreads, [threadId]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

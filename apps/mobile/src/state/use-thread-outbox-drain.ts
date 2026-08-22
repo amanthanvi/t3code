@@ -14,13 +14,14 @@ import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Alert } from "react-native";
 
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn";
 import { toUploadChatImageAttachments } from "../lib/composerImages";
 import { randomHex } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
-import { useProjects, useThreadShells } from "./entities";
+import { useProjects, useServerConfigs, useThreadShells } from "./entities";
 import {
   confirmThreadOutboxMessageQueued,
   ensureThreadOutboxLoaded,
@@ -28,6 +29,7 @@ import {
 } from "./thread-outbox";
 import {
   isQueuedThreadCreationSendable,
+  getQueuedDeliveryUnsupportedProviderInputReason,
   modelSelectionsEqual,
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxFailureAction,
@@ -102,11 +104,13 @@ export function useThreadOutboxDrain(): void {
   const shellStatuses = useThreadOutboxShellStatuses();
   const threads = useThreadShells();
   const projects = useProjects();
+  const serverConfigs = useServerConfigs();
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const [retryTick, setRetryTick] = useState(0);
   const retryAttemptRef = useRef(new Map<MessageId, number>());
   const retryNotBeforeRef = useRef(new Map<MessageId, number>());
   const retryTimersRef = useRef(new Map<MessageId, ReturnType<typeof setTimeout>>());
+  const modeWarningShownRef = useRef(new Set<MessageId>());
 
   useEffect(() => {
     ensureThreadOutboxLoaded();
@@ -319,6 +323,35 @@ export function useThreadOutboxDrain(): void {
       if (deliveryAction === "wait") {
         continue;
       }
+      if (deliveryAction === "send") {
+        const serverConfig = serverConfigs.get(nextQueuedMessage.environmentId);
+        if (!serverConfig) {
+          continue;
+        }
+        const queuedSettings = thread
+          ? resolveQueuedThreadSettings(nextQueuedMessage, thread)
+          : {
+              modelSelection: nextQueuedMessage.modelSelection,
+              runtimeMode: nextQueuedMessage.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+              interactionMode:
+                nextQueuedMessage.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
+            };
+        const unsupportedReason = getQueuedDeliveryUnsupportedProviderInputReason({
+          config: serverConfig,
+          message: nextQueuedMessage,
+          modelSelection: queuedSettings.modelSelection,
+          runtimeMode: queuedSettings.runtimeMode,
+          interactionMode: queuedSettings.interactionMode,
+        });
+        if (unsupportedReason !== null) {
+          if (!modeWarningShownRef.current.has(nextQueuedMessage.messageId)) {
+            modeWarningShownRef.current.add(nextQueuedMessage.messageId);
+            Alert.alert("Change provider mode", unsupportedReason);
+          }
+          continue;
+        }
+        modeWarningShownRef.current.delete(nextQueuedMessage.messageId);
+      }
       // The live project shell is preferred for the workspace path, with the
       // snapshot taken at enqueue time as the fallback so a task never dies
       // just because its project shell is not loaded.
@@ -419,6 +452,7 @@ export function useThreadOutboxDrain(): void {
     retryTick,
     sendQueuedCreation,
     sendQueuedMessage,
+    serverConfigs,
     shellStatuses,
     threads,
   ]);
