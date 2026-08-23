@@ -194,6 +194,9 @@ export class TerminalManager extends Context.Service<
     readonly subscribeMetadata: (
       listener: (event: TerminalMetadataStreamEvent) => Effect.Effect<void>,
     ) => Effect.Effect<() => void>;
+
+    /** Read current in-memory summaries for safety-sensitive host operations. */
+    readonly listSummaries?: Effect.Effect<ReadonlyArray<TerminalSummary>>;
   }
 >()("t3/terminal/Manager/TerminalManager") {}
 
@@ -2663,6 +2666,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     close,
     subscribe,
     subscribeMetadata,
+    listSummaries: readManagerState.pipe(
+      Effect.map((state) => [...state.sessions.values()].map(summary)),
+    ),
   });
 });
 

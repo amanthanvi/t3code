@@ -817,7 +817,25 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         thread.branch !== command.expectedBranch
           ? thread.branch
           : command.branch;
+      const worktreePath =
+        command.worktreePath !== undefined &&
+        command.expectedWorktreePath !== undefined &&
+        thread.worktreePath !== command.expectedWorktreePath
+          ? undefined
+          : command.worktreePath;
       const occurredAt = yield* nowIso;
+      // Worktree pruning uses expected-path metadata updates as an internal
+      // reservation/restore CAS. That bookkeeping must not count as durable
+      // user activity for inactivity-based pruning.
+      const isWorktreePathOnlyCas =
+        command.worktreePath !== undefined &&
+        command.expectedWorktreePath !== undefined &&
+        command.title === undefined &&
+        command.regenerateTitle === undefined &&
+        command.modelSelection === undefined &&
+        command.branch === undefined &&
+        command.expectedBranch === undefined;
+      const updatedAt = isWorktreePathOnlyCas ? thread.updatedAt : occurredAt;
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -846,8 +864,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             ? { modelSelection: command.modelSelection }
             : {}),
           ...(branch !== undefined ? { branch } : {}),
-          ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
-          updatedAt: occurredAt,
+          ...(worktreePath !== undefined ? { worktreePath } : {}),
+          updatedAt,
         },
       };
     }

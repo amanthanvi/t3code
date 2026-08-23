@@ -7,6 +7,7 @@ export type SettingsPath =
   | "/settings/providers"
   | "/settings/integrations"
   | "/settings/source-control"
+  | "/settings/worktree-storage"
   | "/settings/connections"
   | "/settings/archived";
 
@@ -31,6 +32,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/providers": "Providers",
   "/settings/integrations": "Integrations",
   "/settings/source-control": "Source Control",
+  "/settings/worktree-storage": "Worktree Storage",
   "/settings/connections": "Connections",
   "/settings/archived": "Archive",
 };
@@ -242,6 +244,22 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "source-control",
     title: "Source control",
     to: "/settings/source-control",
+  },
+  {
+    id: "worktree-storage-overview",
+    title: "Worktree storage",
+    to: "/settings/worktree-storage",
+  },
+  {
+    id: "worktree-pruning",
+    title: "Prune stale worktrees",
+    to: "/settings/worktree-storage",
+  },
+  {
+    id: "automatic-worktree-pruning",
+    title: "Automatic worktree pruning",
+    to: "/settings/worktree-storage",
+    targetId: "worktree-storage-overview",
   },
   {
     id: "remote-environments",

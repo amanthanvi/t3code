@@ -56,6 +56,7 @@ import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteSc
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
 import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRouteScreen";
 import { SettingsProjectGroupingRouteScreen } from "./features/settings/SettingsProjectGroupingRouteScreen";
+import { SettingsWorktreeStorageRouteScreen } from "./features/settings/SettingsWorktreeStorageRouteScreen";
 import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
 import { ShowcaseCaptureCoordinator } from "./features/showcase/ShowcaseCaptureCoordinator";
@@ -189,6 +190,13 @@ const SettingsContentStack = createNativeStackNavigator({
       linking: "client-storage",
       options: {
         title: "Client Storage",
+      },
+    }),
+    SettingsWorktreeStorage: createNativeStackScreen({
+      screen: SettingsWorktreeStorageRouteScreen,
+      linking: "worktree-storage",
+      options: {
+        title: "Worktree Storage",
       },
     }),
     SettingsUsage: createNativeStackScreen({

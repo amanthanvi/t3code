@@ -112,6 +112,7 @@ import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as UsageService from "./usage/UsageService.ts";
+import * as WorktreeStorage from "./worktree/WorktreeStorage.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
@@ -482,6 +483,7 @@ const makeWsRpcLayer = (
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const usage = yield* UsageService.UsageService;
+      const worktreeStorage = yield* WorktreeStorage.WorktreeStorage;
       const relayClient = yield* RelayClient.RelayClient;
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
@@ -1628,6 +1630,14 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.worktreeStorageGetReport]: (_input) =>
+          observeRpcEffect(WS_METHODS.worktreeStorageGetReport, worktreeStorage.getReport, {
+            "rpc.aggregate": "worktree-storage",
+          }),
+        [WS_METHODS.worktreeStoragePruneStale]: (_input) =>
+          observeRpcEffect(WS_METHODS.worktreeStoragePruneStale, worktreeStorage.pruneStale, {
+            "rpc.aggregate": "worktree-storage",
+          }),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverDiscoverSourceControl,

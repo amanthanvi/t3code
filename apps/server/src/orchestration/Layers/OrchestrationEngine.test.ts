@@ -620,6 +620,93 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
+  it("persists an observable no-op event when a worktree path CAS mismatches", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-worktree-cas-project-create"),
+        projectId: asProjectId("project-worktree-cas"),
+        title: "Worktree CAS Project",
+        workspaceRoot: "/tmp/project-worktree-cas",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-worktree-cas-thread-create"),
+        threadId: ThreadId.make("thread-worktree-cas"),
+        projectId: asProjectId("project-worktree-cas"),
+        title: "Worktree CAS Thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: "feature",
+        worktreePath: "/tmp/rebound-worktree",
+        createdAt,
+      }),
+    );
+
+    const beforeMismatch = await system.run(engine.latestSequence);
+    const mismatch = await system.run(
+      engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-worktree-cas-mismatch"),
+        threadId: ThreadId.make("thread-worktree-cas"),
+        worktreePath: null,
+        expectedWorktreePath: "/tmp/original-worktree",
+      }),
+    );
+    const mismatchEvents = await system.run(
+      Stream.runCollect(engine.readEvents(beforeMismatch, 1)).pipe(
+        Effect.map((events) => Array.from(events)),
+      ),
+    );
+    expect(mismatch.sequence).toBe(beforeMismatch + 1);
+    expect(mismatchEvents).toHaveLength(1);
+    expect(mismatchEvents[0]?.sequence).toBe(mismatch.sequence);
+    expect(mismatchEvents[0]?.type).toBe("thread.meta-updated");
+    if (mismatchEvents[0]?.type === "thread.meta-updated") {
+      expect(mismatchEvents[0].payload).not.toHaveProperty("worktreePath");
+      expect(mismatchEvents[0].payload.updatedAt).toBe(createdAt);
+    }
+    expect((await system.readModel()).threads[0]?.worktreePath).toBe("/tmp/rebound-worktree");
+
+    const applied = await system.run(
+      engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-worktree-cas-applied"),
+        threadId: ThreadId.make("thread-worktree-cas"),
+        worktreePath: null,
+        expectedWorktreePath: "/tmp/rebound-worktree",
+      }),
+    );
+    const appliedEvents = await system.run(
+      Stream.runCollect(engine.readEvents(mismatch.sequence, 1)).pipe(
+        Effect.map((events) => Array.from(events)),
+      ),
+    );
+    expect(appliedEvents[0]?.sequence).toBe(applied.sequence);
+    if (appliedEvents[0]?.type === "thread.meta-updated") {
+      expect(appliedEvents[0].payload.worktreePath).toBeNull();
+      expect(appliedEvents[0].payload.updatedAt).toBe(createdAt);
+    }
+    expect((await system.readModel()).threads[0]?.worktreePath).toBeNull();
+
+    await system.dispose();
+  });
+
   it("records command ack duration using the first committed event type", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;

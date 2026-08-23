@@ -23,6 +23,7 @@ import {
   ProviderInstanceId,
   type ProviderDriverKind,
 } from "./providerInstance.ts";
+import { DEFAULT_WORKTREE_AUTO_PRUNE_POLICY, WorktreeAutoPrunePolicy } from "./worktreeStorage.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -639,6 +640,9 @@ export const ServerSettings = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
+  worktreeAutoPrunePolicy: WorktreeAutoPrunePolicy.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_WORKTREE_AUTO_PRUNE_POLICY)),
+  ),
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
@@ -838,6 +842,7 @@ export const ServerSettingsPatch = Schema.Struct({
   backgroundActivityProfile: Schema.optionalKey(BackgroundActivityProfile),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
+  worktreeAutoPrunePolicy: Schema.optionalKey(WorktreeAutoPrunePolicy),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   sourceControlWritingStyle: Schema.optionalKey(

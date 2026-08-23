@@ -70,6 +70,21 @@ describe("searchSettings", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
+  it("indexes the dedicated Worktree Storage route and actions", () => {
+    expect(searchSettings("worktree storage")[0]).toMatchObject({
+      id: "worktree-storage-overview",
+      to: "/settings/worktree-storage",
+    });
+    expect(searchSettings("prune stale")[0]).toMatchObject({
+      id: "worktree-pruning",
+      to: "/settings/worktree-storage",
+    });
+    expect(searchSettings("automatic worktree")[0]).toMatchObject({
+      id: "automatic-worktree-pruning",
+      to: "/settings/worktree-storage",
+    });
+  });
+
   it("serves anchor props to panels from the catalog", () => {
     expect(searchableSetting("word-wrap")).toEqual({ id: "word-wrap", title: "Word wrap" });
     expect(searchableSetting("archive")).toEqual({ id: "archive", title: "Archived threads" });

@@ -26,4 +26,14 @@ describe("ExecutionEnvironmentDescriptor", () => {
       }).capabilities.pullRequests,
     ).toBe(true);
   });
+
+  it("treats worktree storage as an optional version-skew capability", () => {
+    expect(decodeDescriptor(descriptor).capabilities.worktreeStorage).toBeUndefined();
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, worktreeStorage: true },
+      }).capabilities.worktreeStorage,
+    ).toBe(true);
+  });
 });

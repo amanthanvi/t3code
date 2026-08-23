@@ -197,6 +197,12 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
+import {
+  WorktreeStorageError,
+  WorktreeStoragePruneResult,
+  WorktreeStorageReport,
+  WorktreeStorageRequest,
+} from "./worktreeStorage.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -278,6 +284,10 @@ export const WS_METHODS = {
   serverRetryResourceTelemetry: "server.retryResourceTelemetry",
   serverSignalProcess: "server.signalProcess",
   serverReportClientActivity: "server.reportClientActivity",
+
+  // Environment-local worktree storage
+  worktreeStorageGetReport: "worktreeStorage.getReport",
+  worktreeStoragePruneStale: "worktreeStorage.pruneStale",
   serverReportHostPowerState: "server.reportHostPowerState",
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
   serverGetUsageSummary: "server.getUsageSummary",
@@ -387,6 +397,19 @@ export const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
   payload: Schema.Struct({}),
   success: ServerSettings,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorktreeStorageGetReportRpc = Rpc.make(WS_METHODS.worktreeStorageGetReport, {
+  payload: WorktreeStorageRequest,
+  success: WorktreeStorageReport,
+  error: Schema.Union([WorktreeStorageError, EnvironmentAuthorizationError]),
+});
+
+export const WsWorktreeStoragePruneStaleRpc = Rpc.make(WS_METHODS.worktreeStoragePruneStale, {
+  // Deliberately path-free. The server discovers and revalidates every candidate.
+  payload: WorktreeStorageRequest,
+  success: WorktreeStoragePruneResult,
+  error: Schema.Union([WorktreeStorageError, EnvironmentAuthorizationError]),
 });
 
 export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
@@ -1007,6 +1030,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsWorktreeStorageGetReportRpc,
+  WsWorktreeStoragePruneStaleRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,

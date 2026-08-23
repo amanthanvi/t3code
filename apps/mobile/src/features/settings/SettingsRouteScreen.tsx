@@ -47,6 +47,7 @@ import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen.logic";
+import { MOBILE_WORKTREE_STORAGE_ROUTE } from "./SettingsWorktreeStorage.logic";
 
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
 type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
@@ -122,6 +123,11 @@ function LocalSettingsRouteScreen() {
             label="Environments"
             value={`${environmentCount}`}
             target="SettingsEnvironments"
+          />
+          <SettingsRow
+            icon="externaldrive"
+            label={MOBILE_WORKTREE_STORAGE_ROUTE.label}
+            target={MOBILE_WORKTREE_STORAGE_ROUTE.target}
           />
         </SettingsSection>
 
@@ -470,6 +476,11 @@ function ConfiguredSettingsRouteScreen() {
             label="Environments"
             value={`${environmentCount}`}
             target="SettingsEnvironments"
+          />
+          <SettingsRow
+            icon="externaldrive"
+            label={MOBILE_WORKTREE_STORAGE_ROUTE.label}
+            target={MOBILE_WORKTREE_STORAGE_ROUTE.target}
           />
           <SettingsSwitchRow
             icon="bell.badge"

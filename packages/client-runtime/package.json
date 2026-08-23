@@ -154,6 +154,10 @@
     "./state/vcs": {
       "types": "./src/state/vcs.ts",
       "default": "./src/state/vcs.ts"
+    },
+    "./state/worktree-storage": {
+      "types": "./src/state/worktreeStorage.ts",
+      "default": "./src/state/worktreeStorage.ts"
     }
   },
   "scripts": {
