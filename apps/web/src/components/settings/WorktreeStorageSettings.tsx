@@ -25,6 +25,7 @@ import {
 import { HardDriveIcon, RefreshCwIcon, ShieldCheckIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { cn } from "../../lib/utils";
 import { serverEnvironment, worktreeStorageEnvironment } from "../../state/server";
 import {
   useWorktreeStorage,
@@ -478,6 +479,12 @@ export function WorktreeStorageSettings() {
   const canRefresh = environments.some(
     (environment) => environment.connectionPhase === "connected" && environment.capable,
   );
+  const isRefreshPending = environments.some(
+    (environment) =>
+      environment.connectionPhase === "connected" &&
+      environment.capable &&
+      (environment.state === "loading" || environment.isRefreshing),
+  );
 
   return (
     <SettingsPageContainer width="wide">
@@ -486,13 +493,13 @@ export function WorktreeStorageSettings() {
         icon={<HardDriveIcon className="size-4.5 text-muted-foreground" />}
         headerAction={
           <Button
-            size="icon-sm"
-            variant="ghost"
-            disabled={!canRefresh}
+            size="icon-micro"
+            variant="ghost-muted"
+            disabled={!canRefresh || isRefreshPending}
             onClick={refresh}
             aria-label="Refresh worktree storage"
           >
-            <RefreshCwIcon className="size-3.5" />
+            <RefreshCwIcon className={cn("size-3", isRefreshPending && "animate-spin")} />
           </Button>
         }
       >
@@ -570,6 +577,7 @@ export function WorktreeStorageSettings() {
               <div className="flex justify-end border-t border-border/60 py-3">
                 <Button
                   variant="destructive-outline"
+                  className="h-auto min-h-9 w-full max-w-full whitespace-normal py-1.5 leading-snug sm:h-auto sm:min-h-8 sm:w-auto"
                   disabled={
                     isPruning || environment.connectionPhase !== "connected" || !environment.capable
                   }
@@ -599,6 +607,7 @@ export function WorktreeStorageSettings() {
           control={
             <Button
               variant="destructive-outline"
+              className="h-auto min-h-9 w-full max-w-full whitespace-normal py-1.5 leading-snug sm:h-auto sm:min-h-8 sm:w-auto"
               disabled={isPruning || plan.targets.length === 0}
               onClick={() => openPruneConfirmation("across")}
             >
