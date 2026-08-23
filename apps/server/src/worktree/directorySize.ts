@@ -107,6 +107,13 @@ export async function measureDirectoryNoFollowPromise(
         );
         break;
       }
+      if (Date.now() >= deadlineAtMs) {
+        reportBudget(
+          "time-budget",
+          `Worktree scan exceeded ${options.maxDurationMs} milliseconds.`,
+        );
+        break;
+      }
       stats = result;
     } catch (cause) {
       if (failures.length < options.maxFailures) {
@@ -198,6 +205,13 @@ export async function discoverWorktreeDirectoriesNoFollowPromise(
     try {
       const result = await runBeforeDeadline(() => fileSystem.lstat(current), deadlineAtMs);
       if (result === deadlineExceeded) {
+        reportBudget(
+          "time-budget",
+          `Worktree discovery exceeded ${options.maxDurationMs} milliseconds.`,
+        );
+        break;
+      }
+      if (Date.now() >= deadlineAtMs) {
         reportBudget(
           "time-budget",
           `Worktree discovery exceeded ${options.maxDurationMs} milliseconds.`,

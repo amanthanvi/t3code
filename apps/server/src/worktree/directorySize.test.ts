@@ -18,6 +18,7 @@ async function makeTemporaryDirectory() {
 
 afterEach(async () => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
   for (const directory of temporaryDirectories.splice(0)) {
     await NodeFSP.rm(directory, { recursive: true, force: true });
   }
@@ -139,4 +140,33 @@ describe("worktree directory sizing", () => {
       expect(result.failures[0]?.operation).toBe("time-budget");
     },
   );
+
+  it.each([
+    ["measurement", measureDirectoryNoFollowPromise],
+    ["discovery", discoverWorktreeDirectoriesNoFollowPromise],
+  ] as const)("reports a late %s lstat result at the deadline", async (_scanKind, scan) => {
+    vi.spyOn(Date, "now")
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0)
+      .mockReturnValue(100);
+    const fileSystem = {
+      lstat: () =>
+        Promise.resolve({
+          size: 1,
+          isSymbolicLink: () => false,
+          isDirectory: () => false,
+        }),
+      readdir: () => Promise.resolve([]),
+    };
+    const resultPromise = scan(
+      "/late",
+      { maxEntries: 10, maxDurationMs: 100, maxFailures: 10 },
+      fileSystem,
+    );
+
+    const result = await resultPromise;
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.operation).toBe("time-budget");
+  });
 });
