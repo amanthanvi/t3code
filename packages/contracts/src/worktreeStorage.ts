@@ -45,7 +45,9 @@ export const DEFAULT_WORKTREE_AUTO_PRUNE_POLICY: WorktreeAutoPrunePolicy = { mod
 /** Path-free trigger payload. Unknown runtime fields are rejected instead of preserved. */
 export const WorktreeStorageRequest = Schema.Struct({}).check(
   Schema.makeFilter(
-    (input) => Object.keys(input).length === 0 || "worktree storage requests accept no fields",
+    (input) =>
+      (!Array.isArray(input) && Object.keys(input).length === 0) ||
+      "worktree storage requests accept no fields",
   ),
 );
 export type WorktreeStorageRequest = typeof WorktreeStorageRequest.Type;

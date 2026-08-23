@@ -24,6 +24,7 @@ import {
   automaticPolicyKey,
   automaticScanMode,
   decodeWorktreePorcelain,
+  gitOutputSafetyError,
   hasLivePathUse,
   isAppliedThreadPathEvent,
   isCanonicallyContained,
@@ -294,9 +295,22 @@ it.layer(NodeServices.layer)("worktree storage safety decisions", (it) => {
       { path: "/prunable", locked: false, prunable: true, detached: false },
     ]);
     expect("entries" in decodeWorktreePorcelain(validOutput)).toBe(true);
+    expect(decodeWorktreePorcelain("worktree /bare.git\0bare\0\0")).toEqual({
+      entries: [{ path: "/bare.git", locked: false, prunable: false, detached: false }],
+    });
 
     expect("error" in decodeWorktreePorcelain("worktree /detached\0HEAD def\0")).toBe(true);
     expect("error" in decodeWorktreePorcelain("worktree /detached\0HEAD def\0\0")).toBe(true);
+    expect(
+      "error" in
+        decodeWorktreePorcelain("worktree /bare.git\0bare\0HEAD abc\0branch refs/heads/main\0\0"),
+    ).toBe(true);
+    expect("error" in decodeWorktreePorcelain("worktree /checkout\0HEAD abc\0branch \0\0")).toBe(
+      true,
+    );
+    expect("error" in decodeWorktreePorcelain("worktree /bare.git\0bare\0locked reason\0\0")).toBe(
+      true,
+    );
     expect(worktreeListOutputError({ stdoutTruncated: true })).toContain("safety limit");
     expect(worktreeListOutputError({ stdoutTruncated: false, stdoutInvalidUtf8: true })).toContain(
       "UTF-8",
@@ -304,6 +318,18 @@ it.layer(NodeServices.layer)("worktree storage safety decisions", (it) => {
     expect(
       worktreeListOutputError({ stdoutTruncated: false, stdoutInvalidUtf8: false }),
     ).toBeNull();
+    expect(
+      gitOutputSafetyError("Git status", {
+        stdoutTruncated: false,
+        stderrTruncated: true,
+      }),
+    ).toContain("safety limit");
+    expect(
+      gitOutputSafetyError("Git ahead inspection", {
+        stdoutTruncated: false,
+        stdoutInvalidUtf8: true,
+      }),
+    ).toContain("UTF-8");
   });
 
   it("uses stable ranking tie-breakers and a non-force removal command", () => {

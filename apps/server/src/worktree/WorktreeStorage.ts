@@ -216,17 +216,52 @@ export function decodeWorktreePorcelain(
     const headFields = fields.filter((field) => field.startsWith("HEAD "));
     const branchFields = fields.filter((field) => field.startsWith("branch "));
     const detachedFields = fields.filter((field) => field === "detached");
+    const bareFields = fields.filter((field) => field === "bare");
+    const lockedFields = fields.filter(
+      (field) => field === "locked" || field.startsWith("locked "),
+    );
+    const prunableFields = fields.filter(
+      (field) => field === "prunable" || field.startsWith("prunable "),
+    );
     const worktreeField = worktreeFields[0];
     const headField = headFields[0];
+    const branchField = branchFields[0];
+    const hasOnlyKnownFields = fields.every(
+      (field) =>
+        field.startsWith("worktree ") ||
+        field.startsWith("HEAD ") ||
+        field.startsWith("branch ") ||
+        field === "detached" ||
+        field === "bare" ||
+        field === "locked" ||
+        field.startsWith("locked ") ||
+        field === "prunable" ||
+        field.startsWith("prunable "),
+    );
+    const isBare =
+      fields.length === 2 &&
+      bareFields.length === 1 &&
+      headFields.length === 0 &&
+      branchFields.length === 0 &&
+      detachedFields.length === 0 &&
+      lockedFields.length === 0 &&
+      prunableFields.length === 0;
+    const isCheckout =
+      bareFields.length === 0 &&
+      headFields.length === 1 &&
+      headField !== undefined &&
+      headField.slice("HEAD ".length).length > 0 &&
+      branchFields.length + detachedFields.length === 1 &&
+      (branchField === undefined || branchField.slice("branch ".length).length > 0) &&
+      lockedFields.length <= 1 &&
+      prunableFields.length <= 1;
     if (
       fields[0]?.startsWith("worktree ") !== true ||
       worktreeFields.length !== 1 ||
       worktreeField === undefined ||
       worktreeField.slice("worktree ".length).length === 0 ||
-      headFields.length !== 1 ||
-      headField === undefined ||
-      headField.slice("HEAD ".length).length === 0 ||
-      branchFields.length + detachedFields.length !== 1
+      !hasOnlyKnownFields ||
+      (!isBare && !isCheckout)
     ) {
       return { error: "Git worktree porcelain output contained a malformed record." };
     }
@@ -242,17 +277,31 @@ export function decodeWorktreePorcelain(
     : { entries };
 }
 
-export function worktreeListOutputError(output: {
-  readonly stdoutTruncated: boolean;
-  readonly stdoutInvalidUtf8?: boolean;
-}): string | null {
-  if (output.stdoutTruncated) {
-    return "Git worktree porcelain output exceeded the safety limit.";
+export function gitOutputSafetyError(
+  operation: string,
+  output: {
+    readonly stdoutTruncated: boolean;
+    readonly stderrTruncated?: boolean;
+    readonly stdoutInvalidUtf8?: boolean;
+    readonly stderrInvalidUtf8?: boolean;
+  },
+): string | null {
+  if (output.stdoutTruncated || output.stderrTruncated === true) {
+    return `${operation} output exceeded the safety limit.`;
   }
-  if (output.stdoutInvalidUtf8 === true) {
-    return "Git worktree porcelain output was not valid UTF-8.";
+  if (output.stdoutInvalidUtf8 === true || output.stderrInvalidUtf8 === true) {
+    return `${operation} output was not valid UTF-8.`;
   }
   return null;
+}
+
+export function worktreeListOutputError(output: {
+  readonly stdoutTruncated: boolean;
+  readonly stderrTruncated?: boolean;
+  readonly stdoutInvalidUtf8?: boolean;
+  readonly stderrInvalidUtf8?: boolean;
+}): string | null {
+  return gitOutputSafetyError("Git worktree porcelain", output);
 }
 
 export function isAppliedThreadPathEvent(input: {
@@ -489,23 +538,8 @@ export interface WorktreeStorageService {
   readonly pruneStale: Effect.Effect<WorktreeStoragePruneResult, WorktreeStorageError>;
 }
 
-const unavailable = (operation: "report" | "prune") =>
-  Effect.fail(
-    new WorktreeStorageError({
-      operation,
-      message: "Worktree storage is not available on this environment.",
-    }),
-  );
-
-/** Defaulting keeps older test/server layer compositions version-skew safe. */
-export class WorktreeStorage extends Context.Reference<WorktreeStorageService>(
+export class WorktreeStorage extends Context.Service<WorktreeStorage, WorktreeStorageService>()(
   "t3/worktree/WorktreeStorage",
-  {
-    defaultValue: () => ({
-      getReport: unavailable("report"),
-      pruneStale: unavailable("prune"),
-    }),
-  },
 ) {}
 
 export const make = Effect.gen(function* () {
@@ -601,12 +635,25 @@ export const make = Effect.gen(function* () {
     }
 
     const statusResult = yield* Effect.result(
-      runGit(candidatePath, ["status", "--porcelain=v1", "--untracked-files=normal"]),
+      runGit(candidatePath, [
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=normal",
+        "--ignored=matching",
+      ]),
     );
-    if (Result.isFailure(statusResult) || statusResult.success.exitCode !== 0) {
+    const statusOutputError = Result.isSuccess(statusResult)
+      ? gitOutputSafetyError("Git status", statusResult.success)
+      : null;
+    if (
+      Result.isFailure(statusResult) ||
+      statusResult.success.exitCode !== 0 ||
+      statusOutputError !== null
+    ) {
       const cause = Result.isFailure(statusResult)
         ? statusResult.failure
-        : statusResult.success.stderr || `git exited ${statusResult.success.exitCode}`;
+        : (statusOutputError ??
+          (statusResult.success.stderr || `git exited ${statusResult.success.exitCode}`));
       reasons.add("inspection-error");
       errors.push(scanError("git-status", cause, candidatePath));
     } else if (statusResult.success.stdout.trim().length > 0) {
@@ -619,37 +666,69 @@ export const make = Effect.gen(function* () {
     if (Result.isFailure(upstreamResult)) {
       reasons.add("inspection-error");
       errors.push(scanError("git-upstream", upstreamResult.failure, candidatePath));
+    } else if (gitOutputSafetyError("Git upstream inspection", upstreamResult.success) !== null) {
+      reasons.add("inspection-error");
+      errors.push(
+        scanError(
+          "git-upstream",
+          gitOutputSafetyError("Git upstream inspection", upstreamResult.success),
+          candidatePath,
+        ),
+      );
     } else if (upstreamResult.success.exitCode === 0) {
       const aheadResult = yield* Effect.result(
         runGit(candidatePath, ["rev-list", "--count", "@{upstream}..HEAD"]),
       );
-      if (Result.isFailure(aheadResult) || aheadResult.success.exitCode !== 0) {
+      const aheadOutputError = Result.isSuccess(aheadResult)
+        ? gitOutputSafetyError("Git ahead inspection", aheadResult.success)
+        : null;
+      const aheadCount = Result.isSuccess(aheadResult) ? aheadResult.success.stdout.trim() : "";
+      if (
+        Result.isFailure(aheadResult) ||
+        aheadResult.success.exitCode !== 0 ||
+        aheadOutputError !== null ||
+        !/^\d+$/.test(aheadCount)
+      ) {
         reasons.add("inspection-error");
         errors.push(
           scanError(
             "git-ahead",
             Result.isFailure(aheadResult)
               ? aheadResult.failure
-              : aheadResult.success.stderr || `git exited ${aheadResult.success.exitCode}`,
+              : (aheadOutputError ??
+                  (aheadResult.success.stderr ||
+                    (!/^\d+$/.test(aheadCount)
+                      ? "Git ahead inspection returned a malformed count."
+                      : `git exited ${aheadResult.success.exitCode}`))),
             candidatePath,
           ),
         );
-      } else if (Number.parseInt(aheadResult.success.stdout.trim(), 10) > 0) {
+      } else if (Number.parseInt(aheadCount, 10) > 0) {
         reasons.add("ahead-or-unpushed");
       }
     } else {
       const remoteContainsResult = yield* Effect.result(
         runGit(candidatePath, ["branch", "-r", "--contains", "HEAD", "--format=%(refname)"]),
       );
+      const remoteOutputError = Result.isSuccess(remoteContainsResult)
+        ? gitOutputSafetyError("Git remote containment inspection", remoteContainsResult.success)
+        : null;
       if (
         Result.isFailure(remoteContainsResult) ||
         remoteContainsResult.success.exitCode !== 0 ||
+        remoteOutputError !== null ||
         remoteContainsResult.success.stdout.trim().length === 0
       ) {
         reasons.add("ahead-or-unpushed");
-        if (Result.isFailure(remoteContainsResult)) {
+        if (Result.isFailure(remoteContainsResult) || remoteOutputError !== null) {
           errors.push(
-            scanError("git-remote-contains", remoteContainsResult.failure, candidatePath),
+            scanError(
+              "git-remote-contains",
+              Result.isFailure(remoteContainsResult)
+                ? remoteContainsResult.failure
+                : remoteOutputError,
+              candidatePath,
+            ),
           );
         }
       }
@@ -658,154 +737,151 @@ export const make = Effect.gen(function* () {
     return { reasons: [...reasons].sort(), errors, mainWorktreePath, targetWorktreePath };
   });
 
-  const loadScanContext = Effect.fn("WorktreeStorage.loadScanContext")(
-    function* (): Effect.fn.Return<ScanContext, WorktreeStorageError> {
-      const snapshots = yield* Effect.all({
-        active: projection.getShellSnapshot(),
-        archived: projection.getArchivedShellSnapshot(),
-        providerSessions: providers.listSessions(),
-        terminalSummaries:
-          terminals.listSummaries ?? Effect.fail("Terminal summary inspection is unavailable."),
-        inventory: Effect.promise(() =>
-          discoverWorktreeDirectoriesNoFollowPromise(config.worktreesDir, {
-            maxEntries: 10_000,
-            maxDurationMs: 5_000,
-            maxFailures: WORKTREE_STORAGE_MAX_ERRORS,
+  const loadScanContext = Effect.fn("WorktreeStorage.loadScanContext")(function* (
+    operation: "report" | "prune",
+  ): Effect.fn.Return<ScanContext, WorktreeStorageError> {
+    const snapshots = yield* Effect.all({
+      active: projection.getShellSnapshot(),
+      archived: projection.getArchivedShellSnapshot(),
+      providerSessions: providers.listSessions(),
+      terminalSummaries: terminals.listSummaries,
+      inventory: Effect.promise(() =>
+        discoverWorktreeDirectoriesNoFollowPromise(config.worktreesDir, {
+          maxEntries: 10_000,
+          maxDurationMs: 5_000,
+          maxFailures: WORKTREE_STORAGE_MAX_ERRORS,
+        }),
+      ),
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new WorktreeStorageError({
+            operation,
+            message: "Failed to load current thread state for worktree inspection.",
+            cause,
           }),
-        ),
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new WorktreeStorageError({
-              operation: "report",
-              message: "Failed to load current thread state for worktree inspection.",
-              cause,
-            }),
-        ),
-      );
-      const projectsById = new Map(
-        [...snapshots.active.projects, ...snapshots.archived.projects].map(
-          (project) => [project.id, project] as const,
-        ),
-      );
-      const associations = new Map<
-        string,
-        {
-          worktreePath: string;
-          projects: Map<ProjectId, OrchestrationProjectShell>;
-          threads: OrchestrationThreadShell[];
-        }
-      >();
-      const referencedThreads = yield* Effect.forEach(
-        [...snapshots.active.threads, ...snapshots.archived.threads],
-        (thread) =>
-          thread.worktreePath === null
-            ? Effect.succeed(null)
-            : fileSystem.realPath(thread.worktreePath).pipe(
-                Effect.orElseSucceed(() => path.resolve(thread.worktreePath!)),
-                Effect.map((key) => ({ key, thread, worktreePath: thread.worktreePath! })),
-              ),
-        { concurrency: SIZE_SCAN_CONCURRENCY },
-      );
-      for (const referenced of referencedThreads) {
-        if (referenced === null) continue;
-        const { key, thread, worktreePath } = referenced;
-        const project = projectsById.get(thread.projectId);
-        const existing = associations.get(key);
-        if (existing === undefined) {
-          associations.set(key, {
-            worktreePath,
-            projects: new Map(project === undefined ? [] : ([[project.id, project]] as const)),
-            threads: [thread],
-          });
-        } else {
-          if (project !== undefined) existing.projects.set(project.id, project);
-          existing.threads.push(thread);
-        }
+      ),
+    );
+    const projectsById = new Map(
+      [...snapshots.active.projects, ...snapshots.archived.projects].map(
+        (project) => [project.id, project] as const,
+      ),
+    );
+    const associations = new Map<
+      string,
+      {
+        worktreePath: string;
+        projects: Map<ProjectId, OrchestrationProjectShell>;
+        threads: OrchestrationThreadShell[];
       }
-      const discoveredPaths = yield* Effect.forEach(
-        snapshots.inventory.paths,
-        (worktreePath) =>
-          fileSystem.realPath(worktreePath).pipe(
-            Effect.orElseSucceed(() => path.resolve(worktreePath)),
-            Effect.map((key) => ({ key, worktreePath })),
-          ),
-        { concurrency: SIZE_SCAN_CONCURRENCY },
-      );
-      for (const discovered of discoveredPaths) {
-        if (!associations.has(discovered.key)) {
-          associations.set(discovered.key, {
-            worktreePath: discovered.worktreePath,
-            projects: new Map(),
-            threads: [],
-          });
-        }
-      }
-      const liveProviderSessions = snapshots.providerSessions.filter(
-        (session) =>
-          session.status === "connecting" ||
-          session.status === "ready" ||
-          session.status === "running",
-      );
-      const liveProviderThreadIds = new Set(
-        liveProviderSessions.map((session) => session.threadId),
-      );
-      const liveProviderPaths = yield* Effect.forEach(
-        liveProviderSessions,
-        (session) =>
-          session.cwd === undefined
-            ? Effect.succeed(null)
-            : fileSystem
-                .realPath(session.cwd)
-                .pipe(Effect.orElseSucceed(() => path.resolve(session.cwd!))),
-        { concurrency: SIZE_SCAN_CONCURRENCY },
-      );
-      const liveTerminals = snapshots.terminalSummaries.filter(
-        (terminal) =>
-          terminal.status === "starting" ||
-          terminal.status === "running" ||
-          terminal.hasRunningSubprocess,
-      );
-      const liveTerminalPaths = yield* Effect.forEach(
-        liveTerminals.flatMap((terminal) => [terminal.worktreePath, terminal.cwd]),
-        (terminalPath) =>
-          terminalPath === null
-            ? Effect.succeed(null)
-            : fileSystem
-                .realPath(terminalPath)
-                .pipe(Effect.orElseSucceed(() => path.resolve(terminalPath))),
-        { concurrency: SIZE_SCAN_CONCURRENCY },
-      );
-      return {
-        associations: [...associations.entries()]
-          .map(([key, value]) => ({
-            key,
-            worktreePath: value.worktreePath,
-            projects: [...value.projects.values()].sort((left, right) =>
-              left.id.localeCompare(right.id),
+    >();
+    const referencedThreads = yield* Effect.forEach(
+      [...snapshots.active.threads, ...snapshots.archived.threads],
+      (thread) =>
+        thread.worktreePath === null
+          ? Effect.succeed(null)
+          : fileSystem.realPath(thread.worktreePath).pipe(
+              Effect.orElseSucceed(() => path.resolve(thread.worktreePath!)),
+              Effect.map((key) => ({ key, thread, worktreePath: thread.worktreePath! })),
             ),
-            threads: [...value.threads].sort((left, right) => left.id.localeCompare(right.id)),
-          }))
-          .sort((left, right) => left.key.localeCompare(right.key)),
-        threadsById: new Map(
-          [...snapshots.active.threads, ...snapshots.archived.threads].map(
-            (thread) => [thread.id, thread] as const,
+      { concurrency: SIZE_SCAN_CONCURRENCY },
+    );
+    for (const referenced of referencedThreads) {
+      if (referenced === null) continue;
+      const { key, thread, worktreePath } = referenced;
+      const project = projectsById.get(thread.projectId);
+      const existing = associations.get(key);
+      if (existing === undefined) {
+        associations.set(key, {
+          worktreePath,
+          projects: new Map(project === undefined ? [] : ([[project.id, project]] as const)),
+          threads: [thread],
+        });
+      } else {
+        if (project !== undefined) existing.projects.set(project.id, project);
+        existing.threads.push(thread);
+      }
+    }
+    const discoveredPaths = yield* Effect.forEach(
+      snapshots.inventory.paths,
+      (worktreePath) =>
+        fileSystem.realPath(worktreePath).pipe(
+          Effect.orElseSucceed(() => path.resolve(worktreePath)),
+          Effect.map((key) => ({ key, worktreePath })),
+        ),
+      { concurrency: SIZE_SCAN_CONCURRENCY },
+    );
+    for (const discovered of discoveredPaths) {
+      if (!associations.has(discovered.key)) {
+        associations.set(discovered.key, {
+          worktreePath: discovered.worktreePath,
+          projects: new Map(),
+          threads: [],
+        });
+      }
+    }
+    const liveProviderSessions = snapshots.providerSessions.filter(
+      (session) =>
+        session.status === "connecting" ||
+        session.status === "ready" ||
+        session.status === "running",
+    );
+    const liveProviderThreadIds = new Set(liveProviderSessions.map((session) => session.threadId));
+    const liveProviderPaths = yield* Effect.forEach(
+      liveProviderSessions,
+      (session) =>
+        session.cwd === undefined
+          ? Effect.succeed(null)
+          : fileSystem
+              .realPath(session.cwd)
+              .pipe(Effect.orElseSucceed(() => path.resolve(session.cwd!))),
+      { concurrency: SIZE_SCAN_CONCURRENCY },
+    );
+    const liveTerminals = snapshots.terminalSummaries.filter(
+      (terminal) =>
+        terminal.status === "starting" ||
+        terminal.status === "running" ||
+        terminal.hasRunningSubprocess,
+    );
+    const liveTerminalPaths = yield* Effect.forEach(
+      liveTerminals.flatMap((terminal) => [terminal.worktreePath, terminal.cwd]),
+      (terminalPath) =>
+        terminalPath === null
+          ? Effect.succeed(null)
+          : fileSystem
+              .realPath(terminalPath)
+              .pipe(Effect.orElseSucceed(() => path.resolve(terminalPath))),
+      { concurrency: SIZE_SCAN_CONCURRENCY },
+    );
+    return {
+      associations: [...associations.entries()]
+        .map(([key, value]) => ({
+          key,
+          worktreePath: value.worktreePath,
+          projects: [...value.projects.values()].sort((left, right) =>
+            left.id.localeCompare(right.id),
           ),
+          threads: [...value.threads].sort((left, right) => left.id.localeCompare(right.id)),
+        }))
+        .sort((left, right) => left.key.localeCompare(right.key)),
+      threadsById: new Map(
+        [...snapshots.active.threads, ...snapshots.archived.threads].map(
+          (thread) => [thread.id, thread] as const,
         ),
-        liveProviderThreadIds,
-        liveProviderPaths: liveProviderPaths.filter(
-          (providerPath): providerPath is string => providerPath !== null,
-        ),
-        liveTerminalThreadIds: new Set(liveTerminals.map((terminal) => terminal.threadId)),
-        liveTerminalPaths: liveTerminalPaths.filter(
-          (worktreePath): worktreePath is string => worktreePath !== null,
-        ),
-        inventoryErrors: snapshots.inventory.failures.map((failure) =>
-          scanError(`inventory-${failure.operation}`, failure.cause, failure.path),
-        ),
-      };
-    },
-  );
+      ),
+      liveProviderThreadIds,
+      liveProviderPaths: liveProviderPaths.filter(
+        (providerPath): providerPath is string => providerPath !== null,
+      ),
+      liveTerminalThreadIds: new Set(liveTerminals.map((terminal) => terminal.threadId)),
+      liveTerminalPaths: liveTerminalPaths.filter(
+        (worktreePath): worktreePath is string => worktreePath !== null,
+      ),
+      inventoryErrors: snapshots.inventory.failures.map((failure) =>
+        scanError(`inventory-${failure.operation}`, failure.cause, failure.path),
+      ),
+    };
+  });
 
   const scanCandidate = Effect.fn("WorktreeStorage.scanCandidate")(function* (
     association: CandidateAssociation,
@@ -918,10 +994,11 @@ export const make = Effect.gen(function* () {
   });
 
   const scanAll = Effect.fn("WorktreeStorage.scanAll")(function* (
+    operation: "report" | "prune",
     mode: ScanMode,
     startIndex = 0,
   ): Effect.fn.Return<CandidateScanBatch, WorktreeStorageError> {
-    const context = yield* loadScanContext();
+    const context = yield* loadScanContext(operation);
     const window = selectCandidateWindow(context.associations, startIndex);
     const scans = yield* Effect.forEach(
       window.selected,
@@ -940,7 +1017,7 @@ export const make = Effect.gen(function* () {
     WorktreeStorageError
   > {
     const scannedAt = DateTime.formatIso(yield* DateTime.now);
-    const batch = yield* scanAll({ mode: "manual" });
+    const batch = yield* scanAll("report", { mode: "manual" });
     const scans = batch.scans;
     const aggregates = new Map<ProjectId, WorktreeStorageProjectAggregate>();
     for (const scan of scans) {
@@ -1141,7 +1218,7 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const startedAt = DateTime.formatIso(yield* DateTime.now);
         const cursor = yield* Ref.get(pruneCursor);
-        const initialBatch = yield* scanAll(mode, cursor);
+        const initialBatch = yield* scanAll("prune", mode, cursor);
         const initial = initialBatch.scans;
         yield* Ref.set(
           pruneCursor,
@@ -1167,7 +1244,7 @@ export const make = Effect.gen(function* () {
         for (const initialScan of [...initial].sort((left, right) =>
           left.key.localeCompare(right.key),
         )) {
-          const context = yield* loadScanContext();
+          const context = yield* loadScanContext("prune");
           const association = context.associations.find((item) => item.key === initialScan.key);
           if (association === undefined) {
             skippedCount += 1;
@@ -1232,7 +1309,7 @@ export const make = Effect.gen(function* () {
                 return { value: null, physicalRemovalSucceeded: false } as const;
               }
 
-              const reservedContext = yield* loadScanContext();
+              const reservedContext = yield* loadScanContext("prune");
               const reservedAssociation = reservedContext.associations.find(
                 (item) => item.key === fresh.key,
               );
@@ -1315,6 +1392,49 @@ export const make = Effect.gen(function* () {
               }
               const mainWorktreePath = verified.mainWorktreePath;
               const removalPath = verified.removalPath;
+
+              const finalStatusResult = yield* Effect.result(
+                runGit(removalPath, [
+                  "status",
+                  "--porcelain=v1",
+                  "--untracked-files=normal",
+                  "--ignored=matching",
+                ]),
+              );
+              const finalStatusOutputError = Result.isSuccess(finalStatusResult)
+                ? gitOutputSafetyError("Final Git status", finalStatusResult.success)
+                : null;
+              if (
+                Result.isFailure(finalStatusResult) ||
+                finalStatusResult.success.exitCode !== 0 ||
+                finalStatusOutputError !== null ||
+                finalStatusResult.success.stdout.trim().length > 0
+              ) {
+                const cause = Result.isFailure(finalStatusResult)
+                  ? finalStatusResult.failure
+                  : (finalStatusOutputError ??
+                    (finalStatusResult.success.stderr ||
+                      (finalStatusResult.success.stdout.trim().length > 0
+                        ? "The worktree gained local or ignored files before removal."
+                        : `git exited ${finalStatusResult.success.exitCode}`)));
+                if (errors.length < WORKTREE_STORAGE_MAX_ERRORS) {
+                  errors.push(scanError("git-status-final", cause, fresh.detail.worktreePath));
+                }
+                skippedCount += 1;
+                outcomes.push({
+                  worktreePath: fresh.detail.worktreePath,
+                  projectId: fresh.detail.projectId,
+                  bytes: verified.detail.bytes,
+                  status: "skipped",
+                  protectionReasons:
+                    Result.isSuccess(finalStatusResult) &&
+                    finalStatusOutputError === null &&
+                    finalStatusResult.success.exitCode === 0
+                      ? ["dirty-or-untracked"]
+                      : ["inspection-error"],
+                });
+                return { value: null, physicalRemovalSucceeded: false } as const;
+              }
 
               // Once Git removal begins, observe its bounded result before
               // deciding whether the reservation must be restored.

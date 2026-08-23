@@ -49,7 +49,11 @@ import {
 } from "../../state/worktree-storage";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "./components/SettingsSection";
-import { mobileProtectionLabel, summarizeMobilePrune } from "./SettingsWorktreeStorage.logic";
+import {
+  mobileProtectionLabel,
+  summarizeMobilePrune,
+  updatePendingEnvironmentIds,
+} from "./SettingsWorktreeStorage.logic";
 
 const PROJECT_LIMIT = 6;
 const WORKTREE_LIMIT_PER_PROJECT = 3;
@@ -267,7 +271,7 @@ function EnvironmentSection(props: {
         </View>
 
         {report?.partial || (report?.errors.length ?? 0) > 0 ? (
-          <Text className="border-t border-border-subtle px-4 py-3 text-sm leading-normal text-warning-foreground">
+          <Text className="border-t border-border-subtle px-4 py-3 text-sm leading-normal text-foreground-muted">
             Partial scan. Unknown storage stays protected and may not be included in the total.
           </Text>
         ) : null}
@@ -387,25 +391,44 @@ export function SettingsWorktreeStorageRouteScreen() {
     reportFailure: false,
   });
   const [pruning, setPruning] = useState(false);
-  const [savingPolicyEnvironmentId, setSavingPolicyEnvironmentId] = useState<EnvironmentId | null>(
-    null,
-  );
+  const [savingPolicyEnvironmentIds, setSavingPolicyEnvironmentIds] = useState<
+    ReadonlySet<EnvironmentId>
+  >(() => new Set());
   const [lastSummary, setLastSummary] = useState<string | null>(null);
   const mutationPending = useRef(false);
+  const savingPolicyEnvironmentIdsRef = useRef<ReadonlySet<EnvironmentId>>(new Set());
+  const environmentsRef = useRef(environments);
+  environmentsRef.current = environments;
 
   const updatePolicy = async (environmentId: EnvironmentId, policy: WorktreeAutoPrunePolicy) => {
-    setSavingPolicyEnvironmentId(environmentId);
-    const result = await updateSettings({
+    if (savingPolicyEnvironmentIdsRef.current.has(environmentId)) return;
+    const pending = updatePendingEnvironmentIds(
+      savingPolicyEnvironmentIdsRef.current,
       environmentId,
-      input: { patch: { worktreeAutoPrunePolicy: policy } },
-    });
-    setSavingPolicyEnvironmentId(null);
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      const cause = squashAtomCommandFailure(result);
-      Alert.alert(
-        "Policy update failed",
-        cause instanceof Error ? cause.message : "Try again when this system is connected.",
+      true,
+    );
+    savingPolicyEnvironmentIdsRef.current = pending;
+    setSavingPolicyEnvironmentIds(pending);
+    try {
+      const result = await updateSettings({
+        environmentId,
+        input: { patch: { worktreeAutoPrunePolicy: policy } },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const cause = squashAtomCommandFailure(result);
+        Alert.alert(
+          "Policy update failed",
+          cause instanceof Error ? cause.message : "Try again when this system is connected.",
+        );
+      }
+    } finally {
+      const remaining = updatePendingEnvironmentIds(
+        savingPolicyEnvironmentIdsRef.current,
+        environmentId,
+        false,
       );
+      savingPolicyEnvironmentIdsRef.current = remaining;
+      setSavingPolicyEnvironmentIds(remaining);
     }
   };
 
@@ -416,73 +439,79 @@ export function SettingsWorktreeStorageRouteScreen() {
     if (mutationPending.current) return;
     mutationPending.current = true;
     setPruning(true);
-    const currentPlan = resolveFrozenPrunePlan(
-      environments,
-      confirmedTargets.map((environment) => environment.environmentId),
-    );
-    const targets = currentPlan.targets;
-    const currentIds = new Set(environments.map((environment) => environment.environmentId));
-    const disconnectedTargets: FrozenMobileSkippedEnvironment[] = [
-      ...currentPlan.skipped.map((environment) => ({
-        environmentId: environment.environmentId,
-        label: environment.label,
-        reason: worktreeStorageSkippedReason(environment),
-      })),
-      ...confirmedTargets
-        .filter((environment) => !currentIds.has(environment.environmentId))
-        .map((environment) => ({ ...environment, reason: "unavailable" as const })),
-    ];
-    const skippedEnvironments = [...initiallySkipped, ...disconnectedTargets];
-    const results = await Promise.all(
-      targets.map(async (environment) => ({
-        environment,
-        result: await pruneStale({ environmentId: environment.environmentId, input: {} }),
-      })),
-    );
-    const resultOutcomes = results.map((entry): EnvironmentPruneOutcome => {
-      if (entry.result._tag === "Success") {
-        return successfulPruneOutcome(entry.environment, entry.result.value);
-      }
-      const cause = squashAtomCommandFailure(entry.result);
-      return {
-        environmentId: entry.environment.environmentId,
-        label: entry.environment.label,
-        status: "failure",
-        error: cause instanceof Error ? cause.message : "Prune request failed.",
-      };
-    });
-    const skippedOutcomes: readonly EnvironmentPruneOutcome[] = skippedEnvironments.map(
-      (environment) => ({ ...environment, status: "skipped" }),
-    );
-    const outcomes = [...resultOutcomes, ...skippedOutcomes];
-    const aggregate = summarizePruneOutcomes(outcomes);
-    const summary = summarizeMobilePrune(aggregate);
-    const skippedLabels = outcomes
-      .filter((outcome) => outcome.status === "skipped")
-      .map((outcome) => `${outcome.label} (${outcome.reason})`);
-    const failedLabels = outcomes
-      .filter((outcome) => outcome.status === "failure")
-      .map((outcome) => outcome.label);
-    const partialLabels = outcomes
-      .filter((outcome) => outcome.status === "success" && outcome.partial)
-      .map((outcome) => outcome.label);
-    const resultDetails = [
-      partialLabels.length > 0 ? `Partial: ${partialLabels.join(", ")}.` : null,
-      skippedLabels.length > 0 ? `Skipped: ${skippedLabels.join(", ")}.` : null,
-      failedLabels.length > 0 ? `Failed: ${failedLabels.join(", ")}.` : null,
-    ].filter((detail): detail is string => detail !== null);
-    const detailedSummary = [summary, ...resultDetails].join("\n");
-    setLastSummary(detailedSummary);
-    setPruning(false);
-    mutationPending.current = false;
-    Alert.alert(
-      aggregate.tone !== "success"
-        ? "Prune finished with exceptions"
-        : aggregate.removedCount > 0
-          ? "Prune finished"
-          : "No stale worktrees were pruned",
-      detailedSummary,
-    );
+    try {
+      const currentEnvironments = environmentsRef.current;
+      const currentPlan = resolveFrozenPrunePlan(
+        currentEnvironments,
+        confirmedTargets.map((environment) => environment.environmentId),
+      );
+      const targets = currentPlan.targets;
+      const currentIds = new Set(
+        currentEnvironments.map((environment) => environment.environmentId),
+      );
+      const disconnectedTargets: FrozenMobileSkippedEnvironment[] = [
+        ...currentPlan.skipped.map((environment) => ({
+          environmentId: environment.environmentId,
+          label: environment.label,
+          reason: worktreeStorageSkippedReason(environment),
+        })),
+        ...confirmedTargets
+          .filter((environment) => !currentIds.has(environment.environmentId))
+          .map((environment) => ({ ...environment, reason: "unavailable" as const })),
+      ];
+      const skippedEnvironments = [...initiallySkipped, ...disconnectedTargets];
+      const results = await Promise.all(
+        targets.map(async (environment) => ({
+          environment,
+          result: await pruneStale({ environmentId: environment.environmentId, input: {} }),
+        })),
+      );
+      const resultOutcomes = results.map((entry): EnvironmentPruneOutcome => {
+        if (entry.result._tag === "Success") {
+          return successfulPruneOutcome(entry.environment, entry.result.value);
+        }
+        const cause = squashAtomCommandFailure(entry.result);
+        return {
+          environmentId: entry.environment.environmentId,
+          label: entry.environment.label,
+          status: "failure",
+          error: cause instanceof Error ? cause.message : "Prune request failed.",
+        };
+      });
+      const skippedOutcomes: readonly EnvironmentPruneOutcome[] = skippedEnvironments.map(
+        (environment) => ({ ...environment, status: "skipped" }),
+      );
+      const outcomes = [...resultOutcomes, ...skippedOutcomes];
+      const aggregate = summarizePruneOutcomes(outcomes);
+      const summary = summarizeMobilePrune(aggregate);
+      const skippedLabels = outcomes
+        .filter((outcome) => outcome.status === "skipped")
+        .map((outcome) => `${outcome.label} (${outcome.reason})`);
+      const failedLabels = outcomes
+        .filter((outcome) => outcome.status === "failure")
+        .map((outcome) => outcome.label);
+      const partialLabels = outcomes
+        .filter((outcome) => outcome.status === "success" && outcome.partial)
+        .map((outcome) => outcome.label);
+      const resultDetails = [
+        partialLabels.length > 0 ? `Partial: ${partialLabels.join(", ")}.` : null,
+        skippedLabels.length > 0 ? `Skipped: ${skippedLabels.join(", ")}.` : null,
+        failedLabels.length > 0 ? `Failed: ${failedLabels.join(", ")}.` : null,
+      ].filter((detail): detail is string => detail !== null);
+      const detailedSummary = [summary, ...resultDetails].join("\n");
+      setLastSummary(detailedSummary);
+      Alert.alert(
+        aggregate.tone !== "success"
+          ? "Prune finished with exceptions"
+          : aggregate.removedCount > 0
+            ? "Prune finished"
+            : "No stale worktrees were pruned",
+        detailedSummary,
+      );
+    } finally {
+      setPruning(false);
+      mutationPending.current = false;
+    }
   };
 
   const confirmPrune = (environmentId: EnvironmentId | null) => {
@@ -575,7 +604,7 @@ export function SettingsWorktreeStorageRouteScreen() {
             key={environment.environmentId}
             environment={environment}
             pruning={pruning}
-            savingPolicy={savingPolicyEnvironmentId === environment.environmentId}
+            savingPolicy={savingPolicyEnvironmentIds.has(environment.environmentId)}
             onConfirmPrune={(environmentId) => confirmPrune(environmentId)}
             onUpdatePolicy={(environmentId, policy) => void updatePolicy(environmentId, policy)}
           />

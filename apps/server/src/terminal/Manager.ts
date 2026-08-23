@@ -196,7 +196,7 @@ export class TerminalManager extends Context.Service<
     ) => Effect.Effect<() => void>;
 
     /** Read current in-memory summaries for safety-sensitive host operations. */
-    readonly listSummaries?: Effect.Effect<ReadonlyArray<TerminalSummary>>;
+    readonly listSummaries: Effect.Effect<ReadonlyArray<TerminalSummary>>;
   }
 >()("t3/terminal/Manager/TerminalManager") {}
 

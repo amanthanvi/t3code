@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   discoverWorktreeDirectoriesNoFollowPromise,
@@ -17,6 +17,7 @@ async function makeTemporaryDirectory() {
 }
 
 afterEach(async () => {
+  vi.useRealTimers();
   for (const directory of temporaryDirectories.splice(0)) {
     await NodeFSP.rm(directory, { recursive: true, force: true });
   }
@@ -88,4 +89,54 @@ describe("worktree directory sizing", () => {
     expect(result.paths).toEqual([registered]);
     expect(result.failures).toEqual([]);
   });
+
+  it("reports discovery lstat failures as stat operations", async () => {
+    const missing = NodePath.join(await makeTemporaryDirectory(), "missing");
+    const result = await discoverWorktreeDirectoriesNoFollowPromise(missing, {
+      maxEntries: 10,
+      maxDurationMs: 5_000,
+      maxFailures: 10,
+    });
+
+    expect(result.paths).toEqual([]);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.operation).toBe("stat");
+  });
+
+  const deadlineCases = [
+    ["measurement", "lstat", measureDirectoryNoFollowPromise],
+    ["measurement", "readdir", measureDirectoryNoFollowPromise],
+    ["discovery", "lstat", discoverWorktreeDirectoriesNoFollowPromise],
+    ["discovery", "readdir", discoverWorktreeDirectoriesNoFollowPromise],
+  ] as const;
+
+  it.each(deadlineCases)(
+    "bounds a stalled %s %s operation by the time budget",
+    async (_scanKind, stalledOperation, scan) => {
+      vi.useFakeTimers();
+      const never = new Promise<never>(() => undefined);
+      const fileSystem = {
+        lstat: () =>
+          stalledOperation === "lstat"
+            ? never
+            : Promise.resolve({
+                size: 1,
+                isSymbolicLink: () => false,
+                isDirectory: () => true,
+              }),
+        readdir: () => (stalledOperation === "readdir" ? never : Promise.resolve([])),
+      };
+      const resultPromise = scan(
+        "/stalled",
+        { maxEntries: 10, maxDurationMs: 100, maxFailures: 10 },
+        fileSystem,
+      );
+
+      await vi.advanceTimersByTimeAsync(100);
+
+      const result = await resultPromise;
+      expect(result.failures).toHaveLength(1);
+      expect(result.failures[0]?.operation).toBe("time-budget");
+    },
+  );
 });

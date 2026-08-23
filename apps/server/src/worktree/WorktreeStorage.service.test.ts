@@ -25,6 +25,7 @@ import * as ServerConfig from "../config.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ProviderService from "../provider/Services/ProviderService.ts";
+import { PersistenceSqlError } from "../persistence/Errors.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -102,6 +103,9 @@ function makeThread(worktreePath: string | null): OrchestrationThreadShell {
 const makeHarness = Effect.fn("WorktreeStorage.serviceTest.makeHarness")(function* (input: {
   readonly remove: "success" | "failure" | "blocked-failure";
   readonly rebindBeforeReservation?: boolean;
+  readonly failProjectionLoad?: boolean;
+  readonly statusStdout?: string;
+  readonly statusStdouts?: ReadonlyArray<string>;
 }) {
   const root = yield* Effect.promise(() =>
     NodeFSP.mkdtemp(NodePath.join(process.cwd(), ".worktree-storage-service-test-")),
@@ -125,6 +129,8 @@ const makeHarness = Effect.fn("WorktreeStorage.serviceTest.makeHarness")(functio
   let lastEvent: OrchestrationEvent | null = null;
   let removeCallCount = 0;
   let worktreeListCallCount = 0;
+  let statusCallCount = 0;
+  let statusArgs: ReadonlyArray<string> = [];
   let shouldRebind = input.rebindBeforeReservation === true;
   const removeStarted = yield* Deferred.make<void>();
   const releaseRemove = yield* Deferred.make<void>();
@@ -176,12 +182,18 @@ const makeHarness = Effect.fn("WorktreeStorage.serviceTest.makeHarness")(functio
   });
   const projectionLayer = Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
     getShellSnapshot: () =>
-      Effect.sync(() => ({
-        snapshotSequence: sequence,
-        projects: [project],
-        threads: [makeThread(threadPath)],
-        updatedAt: OLD,
-      })),
+      input.failProjectionLoad === true
+        ? Effect.fail(
+            new PersistenceSqlError({
+              operation: "load-worktree-storage-test-snapshot",
+            }),
+          )
+        : Effect.sync(() => ({
+            snapshotSequence: sequence,
+            projects: [project],
+            threads: [makeThread(threadPath)],
+            updatedAt: OLD,
+          })),
     getArchivedShellSnapshot: () =>
       Effect.sync(() => ({
         snapshotSequence: sequence,
@@ -204,7 +216,12 @@ const makeHarness = Effect.fn("WorktreeStorage.serviceTest.makeHarness")(functio
           }),
         );
       }
-      if (first === "status") return Effect.succeed(processOutput());
+      if (first === "status") {
+        statusArgs = request.args;
+        const stdout = input.statusStdouts?.[statusCallCount] ?? input.statusStdout;
+        statusCallCount += 1;
+        return Effect.succeed(processOutput(stdout === undefined ? {} : { stdout }));
+      }
       if (first === "rev-parse") return Effect.succeed(processOutput({ exitCode: 1 }));
       if (first === "branch") {
         return Effect.succeed(processOutput({ stdout: "refs/remotes/origin/feature\n" }));
@@ -267,6 +284,9 @@ const makeHarness = Effect.fn("WorktreeStorage.serviceTest.makeHarness")(functio
     get worktreeListCallCount() {
       return worktreeListCallCount;
     },
+    get statusArgs() {
+      return statusArgs;
+    },
   };
 });
 
@@ -299,6 +319,56 @@ it.effect("runs reservation, removal, restoration, and fresh report service flow
       expect(mismatchResult.removedCount).toBe(0);
       expect(mismatch.threadPath).toBe(mismatch.reboundPath);
       expect(mismatch.removeCallCount).toBe(0);
+    }),
+  ),
+);
+
+it.effect("labels scan-context failures with the requested operation", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ remove: "success", failProjectionLoad: true });
+      const service = yield* harness.program;
+
+      const reportError = yield* Effect.flip(service.getReport);
+      expect(reportError.operation).toBe("report");
+
+      const pruneError = yield* Effect.flip(service.pruneStale);
+      expect(pruneError.operation).toBe("prune");
+    }),
+  ),
+);
+
+it.effect("protects ignored files from non-force worktree removal", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ remove: "success", statusStdout: "!! secret\n" });
+      const service = yield* harness.program;
+
+      const result = yield* service.pruneStale;
+
+      expect(result.removedCount).toBe(0);
+      expect(harness.removeCallCount).toBe(0);
+      expect(harness.statusArgs).toContain("--ignored=matching");
+    }),
+  ),
+);
+
+it.effect("rechecks ignored files immediately before worktree removal", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        remove: "success",
+        statusStdouts: ["", "", "", "!! late-secret\n"],
+      });
+      const service = yield* harness.program;
+
+      const result = yield* service.pruneStale;
+
+      expect(result.removedCount).toBe(0);
+      expect(result.skippedCount).toBe(1);
+      expect(result.outcomes[0]?.protectionReasons).toContain("dirty-or-untracked");
+      expect(harness.removeCallCount).toBe(0);
+      expect(harness.threadPath).toBe(harness.candidatePath);
     }),
   ),
 );

@@ -298,7 +298,7 @@ function EnvironmentInventory({
   return (
     <div className="mt-3 border-t border-border/60 pt-3">
       {report.partial || report.errors.length > 0 ? (
-        <p className="mb-3 rounded-lg bg-warning/8 px-3 py-2 text-xs text-warning-foreground">
+        <p className="mb-3 rounded-lg bg-warning-surface px-3 py-2 text-xs text-warning-foreground">
           This scan is partial. Unreadable or unknown storage remains protected and may not be in
           the total.
         </p>

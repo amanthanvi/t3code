@@ -150,5 +150,6 @@ describe("worktree storage contracts", () => {
         worktreePath: "/tmp/user-controlled",
       }),
     ).toThrow();
+    expect(() => decodePruneRequest([])).toThrow();
   });
 });

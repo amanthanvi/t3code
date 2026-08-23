@@ -43,6 +43,8 @@ change another system or create a device-wide setting. Available policies are:
 - **Off** — never prune automatically.
 - **When threads settle** — check for safely removable stale worktrees when their threads settle.
 - **After inactivity** — check after the selected number of inactive days, from 1 through 365.
+  This policy does not require the thread to be settled; worktrees with live sessions, pending work,
+  or any other protection reason still remain protected.
 
 Choose a mode, enter the inactivity period when needed, then select **Apply** or **Apply policy**.
 Changing the draft alone does not enable automatic pruning.

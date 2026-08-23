@@ -1,4 +1,4 @@
-import type { WorktreeStorageProtectionReason } from "@t3tools/contracts";
+import type { EnvironmentId, WorktreeStorageProtectionReason } from "@t3tools/contracts";
 import {
   formatWorktreeStorageBytes,
   type PruneOutcomeSummary,
@@ -8,6 +8,20 @@ export const MOBILE_WORKTREE_STORAGE_ROUTE = {
   label: "Worktree Storage",
   target: "SettingsWorktreeStorage",
 } as const;
+
+export function updatePendingEnvironmentIds(
+  current: ReadonlySet<EnvironmentId>,
+  environmentId: EnvironmentId,
+  pending: boolean,
+): ReadonlySet<EnvironmentId> {
+  const next = new Set(current);
+  if (pending) {
+    next.add(environmentId);
+  } else {
+    next.delete(environmentId);
+  }
+  return next;
+}
 
 const PROTECTION_LABELS: Readonly<Record<WorktreeStorageProtectionReason, string>> = {
   "outside-managed-root": "outside managed storage",

@@ -12,6 +12,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   MOBILE_WORKTREE_STORAGE_ROUTE,
+  updatePendingEnvironmentIds,
   mobileProtectionLabel,
   summarizeMobilePrune,
 } from "./SettingsWorktreeStorage.logic";
@@ -36,6 +37,33 @@ function environment(
 }
 
 describe("mobile worktree storage presentation", () => {
+  it("tracks overlapping policy updates independently when they finish out of order", () => {
+    const firstEnvironmentId = "first" as EnvironmentId;
+    const secondEnvironmentId = "second" as EnvironmentId;
+    let pendingEnvironmentIds: ReadonlySet<EnvironmentId> = new Set();
+
+    pendingEnvironmentIds = updatePendingEnvironmentIds(
+      pendingEnvironmentIds,
+      firstEnvironmentId,
+      true,
+    );
+    pendingEnvironmentIds = updatePendingEnvironmentIds(
+      pendingEnvironmentIds,
+      secondEnvironmentId,
+      true,
+    );
+    pendingEnvironmentIds = updatePendingEnvironmentIds(
+      pendingEnvironmentIds,
+      firstEnvironmentId,
+      false,
+    );
+
+    expect([...pendingEnvironmentIds]).toEqual([secondEnvironmentId]);
+    expect(
+      updatePendingEnvironmentIds(pendingEnvironmentIds, secondEnvironmentId, false).size,
+    ).toBe(0);
+  });
+
   it("keeps Worktree Storage distinct from Client Storage", () => {
     expect(MOBILE_WORKTREE_STORAGE_ROUTE).toEqual({
       label: "Worktree Storage",
