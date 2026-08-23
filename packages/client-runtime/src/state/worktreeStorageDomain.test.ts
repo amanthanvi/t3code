@@ -4,6 +4,9 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   computeWorktreeStorageCoverage,
   planAcrossEnvironmentPrune,
+  rankWorktreeEntries,
+  rankWorktreeEnvironments,
+  rankWorktreeProjects,
   resolveFrozenPrunePlan,
   successfulPruneOutcome,
   summarizePruneOutcomes,
@@ -25,6 +28,37 @@ function environment(
 }
 
 describe("worktree storage domain", () => {
+  it("ranks immutable inputs without relying on Array.prototype.toSorted", () => {
+    const environments = [
+      environment({ environmentId: "small", label: "Small", totalBytes: 10 }),
+      environment({ environmentId: "large", label: "Large", totalBytes: 20 }),
+    ];
+    const projects = [
+      { projectId: "small", projectTitle: "Small", bytes: 10 },
+      { projectId: "large", projectTitle: "Large", bytes: 20 },
+    ];
+    const entries = [
+      { worktreePath: "/small", projectTitle: "Small", bytes: 10 },
+      { worktreePath: "/large", projectTitle: "Large", bytes: 20 },
+    ];
+
+    expect(rankWorktreeEnvironments(environments).map((item) => item.environmentId)).toEqual([
+      "large",
+      "small",
+    ]);
+    expect(rankWorktreeProjects(projects).map((item) => item.projectId)).toEqual([
+      "large",
+      "small",
+    ]);
+    expect(rankWorktreeEntries(entries).map((item) => item.worktreePath)).toEqual([
+      "/large",
+      "/small",
+    ]);
+    expect(environments.map((item) => item.environmentId)).toEqual(["small", "large"]);
+    expect(projects.map((item) => item.projectId)).toEqual(["small", "large"]);
+    expect(entries.map((item) => item.worktreePath)).toEqual(["/small", "/large"]);
+  });
+
   it("qualifies partial and missing environment coverage", () => {
     expect(
       computeWorktreeStorageCoverage([

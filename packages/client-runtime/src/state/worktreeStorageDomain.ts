@@ -118,7 +118,8 @@ function compareNullableText(left: string | null, right: string | null): number 
 export function rankWorktreeEnvironments<T extends WorktreeStorageEnvironmentSummary>(
   environments: readonly T[],
 ): readonly T[] {
-  return environments.toSorted((left, right) => {
+  // Hermes does not ship Array.prototype.toSorted, so sort a copy for mobile portability.
+  return [...environments].sort((left, right) => {
     if (left.totalBytes === null && right.totalBytes !== null) return 1;
     if (left.totalBytes !== null && right.totalBytes === null) return -1;
     if (left.totalBytes !== null && right.totalBytes !== null) {
@@ -133,7 +134,7 @@ export function rankWorktreeEnvironments<T extends WorktreeStorageEnvironmentSum
 export function rankWorktreeProjects<T extends WorktreeStorageProjectLike>(
   projects: readonly T[],
 ): readonly T[] {
-  return projects.toSorted((left, right) => {
+  return [...projects].sort((left, right) => {
     const byteOrder = right.bytes - left.bytes;
     if (byteOrder !== 0) return byteOrder;
     const titleOrder = compareNullableText(left.projectTitle, right.projectTitle);
@@ -144,7 +145,7 @@ export function rankWorktreeProjects<T extends WorktreeStorageProjectLike>(
 export function rankWorktreeEntries<T extends WorktreeStorageEntryLike>(
   entries: readonly T[],
 ): readonly T[] {
-  return entries.toSorted((left, right) => {
+  return [...entries].sort((left, right) => {
     const byteOrder = right.bytes - left.bytes;
     if (byteOrder !== 0) return byteOrder;
     const titleOrder = compareText(left.projectTitle, right.projectTitle);
