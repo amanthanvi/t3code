@@ -21,6 +21,7 @@ import {
   type WorktreeStorageScanError,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -533,14 +534,13 @@ function aggregateLatestActivity(threads: ReadonlyArray<OrchestrationThreadShell
   return latest?.value ?? null;
 }
 
-export interface WorktreeStorageService {
-  readonly getReport: Effect.Effect<WorktreeStorageReport, WorktreeStorageError>;
-  readonly pruneStale: Effect.Effect<WorktreeStoragePruneResult, WorktreeStorageError>;
-}
-
-export class WorktreeStorage extends Context.Service<WorktreeStorage, WorktreeStorageService>()(
-  "t3/worktree/WorktreeStorage",
-) {}
+export class WorktreeStorage extends Context.Service<
+  WorktreeStorage,
+  {
+    readonly getReport: Effect.Effect<WorktreeStorageReport, WorktreeStorageError>;
+    readonly pruneStale: Effect.Effect<WorktreeStoragePruneResult, WorktreeStorageError>;
+  }
+>()("t3/worktree/WorktreeStorage") {}
 
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
@@ -1102,17 +1102,25 @@ export const make = Effect.gen(function* () {
       const errors: WorktreeStorageScanError[] = [];
       const reserved: ReservedThreadPath[] = [];
       for (const thread of association.threads) {
-        const uuidResult = yield* Effect.result(crypto.randomUUIDv4);
-        if (Result.isFailure(uuidResult)) {
+        const uuidExit = yield* Effect.exit(crypto.randomUUIDv4);
+        if (Exit.isFailure(uuidExit)) {
           if (errors.length < WORKTREE_STORAGE_MAX_ERRORS) {
             errors.push(
-              scanError("clear-thread-worktree", uuidResult.failure, association.worktreePath),
+              scanError(
+                "clear-thread-worktree",
+                Cause.squash(uuidExit.cause),
+                association.worktreePath,
+              ),
             );
           }
-          continue;
+          break;
         }
-        const clearCommandId = CommandId.make(`server:worktree-prune:${uuidResult.success}`);
-        const result = yield* Effect.result(
+        const clearCommandId = CommandId.make(`server:worktree-prune:${uuidExit.value}`);
+        const reservedThread = {
+          thread,
+          restoreCommandId: CommandId.make(`${clearCommandId}:restore`),
+        } satisfies ReservedThreadPath;
+        const dispatchExit = yield* Effect.exit(
           engine.dispatch({
             type: "thread.meta.update",
             commandId: clearCommandId,
@@ -1121,44 +1129,50 @@ export const make = Effect.gen(function* () {
             expectedWorktreePath: thread.worktreePath,
           }),
         );
-        if (Result.isFailure(result) && errors.length < WORKTREE_STORAGE_MAX_ERRORS) {
-          errors.push(scanError("clear-thread-worktree", result.failure, association.worktreePath));
-        } else if (Result.isSuccess(result)) {
-          const appliedResult = yield* Effect.result(
-            verifyPersistedThreadPathEvent({
-              sequence: result.success.sequence,
-              threadId: ThreadId.make(thread.id),
-              worktreePath: null,
-            }),
-          );
-          if (Result.isSuccess(appliedResult) && appliedResult.success) {
-            reserved.push({
-              thread,
-              restoreCommandId: CommandId.make(`${clearCommandId}:restore`),
-            });
-          } else {
-            // If the exact event cannot be read, conservatively include the
-            // path in cleanup. The expected-null restore CAS cannot overwrite
-            // a concurrent rebound path.
-            if (Result.isFailure(appliedResult)) {
-              reserved.push({
-                thread,
-                restoreCommandId: CommandId.make(`${clearCommandId}:restore`),
-              });
-            }
-            if (errors.length < WORKTREE_STORAGE_MAX_ERRORS) {
-              errors.push(
-                scanError(
-                  "clear-thread-worktree-cas",
-                  Result.isFailure(appliedResult)
-                    ? appliedResult.failure
-                    : "The persisted metadata event did not apply the expected worktree path.",
-                  association.worktreePath,
-                ),
-              );
-            }
+        if (Exit.isFailure(dispatchExit)) {
+          // A defect may occur after the command was durably applied. The
+          // expected-null restore CAS makes conservative cleanup safe.
+          reserved.push(reservedThread);
+          if (errors.length < WORKTREE_STORAGE_MAX_ERRORS) {
+            errors.push(
+              scanError(
+                "clear-thread-worktree",
+                Cause.squash(dispatchExit.cause),
+                association.worktreePath,
+              ),
+            );
           }
+          break;
         }
+        const appliedExit = yield* Effect.exit(
+          verifyPersistedThreadPathEvent({
+            sequence: dispatchExit.value.sequence,
+            threadId: ThreadId.make(thread.id),
+            worktreePath: null,
+          }),
+        );
+        if (Exit.isSuccess(appliedExit) && appliedExit.value) {
+          reserved.push(reservedThread);
+          continue;
+        }
+        if (Exit.isFailure(appliedExit)) {
+          // If the exact event cannot be read, conservatively include the
+          // path in cleanup. The expected-null restore CAS cannot overwrite
+          // a concurrent rebound path.
+          reserved.push(reservedThread);
+        }
+        if (errors.length < WORKTREE_STORAGE_MAX_ERRORS) {
+          errors.push(
+            scanError(
+              "clear-thread-worktree-cas",
+              Exit.isFailure(appliedExit)
+                ? Cause.squash(appliedExit.cause)
+                : "The persisted metadata event did not apply the expected worktree path.",
+              association.worktreePath,
+            ),
+          );
+        }
+        break;
       }
       return { threads: reserved, errors };
     },
@@ -1172,39 +1186,42 @@ export const make = Effect.gen(function* () {
       for (const reserved of threads) {
         const { thread } = reserved;
         if (thread.worktreePath === null) continue;
-        const result = yield* Effect.result(
-          engine.dispatch({
-            type: "thread.meta.update",
-            commandId: reserved.restoreCommandId,
-            threadId: ThreadId.make(thread.id),
-            worktreePath: thread.worktreePath,
-            expectedWorktreePath: null,
-          }),
-        );
-        if (Result.isFailure(result) && errors.length < WORKTREE_STORAGE_MAX_ERRORS) {
-          errors.push(scanError("restore-thread-worktree", result.failure, thread.worktreePath));
-        } else if (Result.isSuccess(result)) {
-          const appliedResult = yield* Effect.result(
-            verifyPersistedThreadPathEvent({
-              sequence: result.success.sequence,
+        const restoreExit = yield* Effect.exit(
+          Effect.gen(function* () {
+            const result = yield* engine.dispatch({
+              type: "thread.meta.update",
+              commandId: reserved.restoreCommandId,
               threadId: ThreadId.make(thread.id),
               worktreePath: thread.worktreePath,
-            }),
+              expectedWorktreePath: null,
+            });
+            return yield* verifyPersistedThreadPathEvent({
+              sequence: result.sequence,
+              threadId: ThreadId.make(thread.id),
+              worktreePath: thread.worktreePath,
+            });
+          }),
+        );
+        if (Exit.isFailure(restoreExit) && errors.length < WORKTREE_STORAGE_MAX_ERRORS) {
+          errors.push(
+            scanError(
+              "restore-thread-worktree",
+              Cause.squash(restoreExit.cause),
+              thread.worktreePath,
+            ),
           );
-          if (
-            (Result.isFailure(appliedResult) || !appliedResult.success) &&
-            errors.length < WORKTREE_STORAGE_MAX_ERRORS
-          ) {
-            errors.push(
-              scanError(
-                "restore-thread-worktree-cas",
-                Result.isFailure(appliedResult)
-                  ? appliedResult.failure
-                  : "The persisted metadata event did not restore the reserved worktree path.",
-                thread.worktreePath,
-              ),
-            );
-          }
+        } else if (
+          Exit.isSuccess(restoreExit) &&
+          !restoreExit.value &&
+          errors.length < WORKTREE_STORAGE_MAX_ERRORS
+        ) {
+          errors.push(
+            scanError(
+              "restore-thread-worktree-cas",
+              "The persisted metadata event did not restore the reserved worktree path.",
+              thread.worktreePath,
+            ),
+          );
         }
       }
       return errors;
@@ -1577,7 +1594,7 @@ export const make = Effect.gen(function* () {
   return {
     getReport: getReport(),
     pruneStale: pruneForMode({ mode: "manual" }),
-  } satisfies WorktreeStorageService;
+  } satisfies WorktreeStorage["Service"];
 });
 
 export const layer = Layer.effect(WorktreeStorage, make);

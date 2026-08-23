@@ -71,9 +71,12 @@ function makeProject(mainPath: string): OrchestrationProjectShell {
   };
 }
 
-function makeThread(worktreePath: string | null): OrchestrationThreadShell {
+function makeThread(
+  worktreePath: string | null,
+  id: ThreadId = ThreadId.make("thread-service"),
+): OrchestrationThreadShell {
   return {
-    id: ThreadId.make("thread-service"),
+    id,
     projectId: ProjectId.make("project-service"),
     title: "Thread",
     modelSelection: {
@@ -106,6 +109,9 @@ const makeHarness = Effect.fn("WorktreeStorage.serviceTest.makeHarness")(functio
   readonly failProjectionLoad?: boolean;
   readonly statusStdout?: string;
   readonly statusStdouts?: ReadonlyArray<string>;
+  readonly secondThread?: boolean;
+  readonly defectOnFirstRestore?: boolean;
+  readonly defectOnSecondClear?: boolean;
 }) {
   const root = yield* Effect.promise(() =>
     NodeFSP.mkdtemp(NodePath.join(process.cwd(), ".worktree-storage-service-test-")),
@@ -125,6 +131,9 @@ const makeHarness = Effect.fn("WorktreeStorage.serviceTest.makeHarness")(functio
   );
 
   let threadPath: string | null = candidatePath;
+  let secondThreadPath: string | null = input.secondThread === true ? candidatePath : null;
+  const firstThreadId = ThreadId.make("thread-service");
+  const secondThreadId = ThreadId.make("thread-service-2");
   let sequence = 0;
   let lastEvent: OrchestrationEvent | null = null;
   let removeCallCount = 0;
@@ -142,14 +151,35 @@ const makeHarness = Effect.fn("WorktreeStorage.serviceTest.makeHarness")(functio
         if (command.type !== "thread.meta.update") {
           throw new Error(`Unexpected command: ${command.type}`);
         }
-        if (shouldRebind && command.worktreePath === null) {
+        const isSecondThread = command.threadId === secondThreadId;
+        if (
+          input.defectOnFirstRestore === true &&
+          command.threadId === firstThreadId &&
+          command.commandId.endsWith(":restore")
+        ) {
+          throw new Error("first restore defect");
+        }
+        if (
+          input.defectOnSecondClear === true &&
+          command.threadId === secondThreadId &&
+          command.worktreePath === null
+        ) {
+          throw new Error("second clear defect");
+        }
+        if (shouldRebind && !isSecondThread && command.worktreePath === null) {
           shouldRebind = false;
           threadPath = reboundPath;
         }
+        const currentThreadPath = isSecondThread ? secondThreadPath : threadPath;
         const applied =
-          command.expectedWorktreePath === undefined || command.expectedWorktreePath === threadPath;
+          command.expectedWorktreePath === undefined ||
+          command.expectedWorktreePath === currentThreadPath;
         if (applied && command.worktreePath !== undefined) {
-          threadPath = command.worktreePath;
+          if (isSecondThread) {
+            secondThreadPath = command.worktreePath;
+          } else {
+            threadPath = command.worktreePath;
+          }
         }
         sequence += 1;
         lastEvent = {
@@ -191,7 +221,12 @@ const makeHarness = Effect.fn("WorktreeStorage.serviceTest.makeHarness")(functio
         : Effect.sync(() => ({
             snapshotSequence: sequence,
             projects: [project],
-            threads: [makeThread(threadPath)],
+            threads: [
+              makeThread(threadPath, firstThreadId),
+              ...(input.secondThread === true
+                ? [makeThread(secondThreadPath, secondThreadId)]
+                : []),
+            ],
             updatedAt: OLD,
           })),
     getArchivedShellSnapshot: () =>
@@ -201,7 +236,14 @@ const makeHarness = Effect.fn("WorktreeStorage.serviceTest.makeHarness")(functio
         threads: [],
         updatedAt: OLD,
       })),
-    getThreadShellById: () => Effect.sync(() => Option.some(makeThread(threadPath))),
+    getThreadShellById: (threadId) =>
+      Effect.sync(() =>
+        threadId === firstThreadId
+          ? Option.some(makeThread(threadPath, firstThreadId))
+          : input.secondThread === true && threadId === secondThreadId
+            ? Option.some(makeThread(secondThreadPath, secondThreadId))
+            : Option.none(),
+      ),
   });
   const vcsLayer = Layer.mock(VcsProcess.VcsProcess)({
     run: (request) => {
@@ -277,6 +319,9 @@ const makeHarness = Effect.fn("WorktreeStorage.serviceTest.makeHarness")(functio
     releaseRemove,
     get threadPath() {
       return threadPath;
+    },
+    get secondThreadPath() {
+      return secondThreadPath;
     },
     get removeCallCount() {
       return removeCallCount;
@@ -385,6 +430,49 @@ it.effect("restores a reservation when pruning is interrupted during bounded rem
       yield* Fiber.join(interruptFiber);
       expect(harness.threadPath).toBe(harness.candidatePath);
       expect(harness.removeCallCount).toBe(1);
+    }),
+  ),
+);
+
+it.effect("continues restoring later reservations after an earlier restore defects", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        remove: "failure",
+        secondThread: true,
+        defectOnFirstRestore: true,
+      });
+      const service = yield* harness.program;
+
+      const result = yield* service.pruneStale;
+
+      expect(result.failedCount).toBe(1);
+      expect(result.errors.some((error) => error.operation === "restore-thread-worktree")).toBe(
+        true,
+      );
+      expect(harness.threadPath).toBeNull();
+      expect(harness.secondThreadPath).toBe(harness.candidatePath);
+    }),
+  ),
+);
+
+it.effect("restores earlier reservations when a later reservation defects", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        remove: "success",
+        secondThread: true,
+        defectOnSecondClear: true,
+      });
+      const service = yield* harness.program;
+
+      const result = yield* service.pruneStale;
+
+      expect(result.removedCount).toBe(0);
+      expect(result.skippedCount).toBe(1);
+      expect(harness.removeCallCount).toBe(0);
+      expect(harness.threadPath).toBe(harness.candidatePath);
+      expect(harness.secondThreadPath).toBe(harness.candidatePath);
     }),
   ),
 );
