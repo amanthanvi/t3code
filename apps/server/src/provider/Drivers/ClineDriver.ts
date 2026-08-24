@@ -146,7 +146,7 @@ export const ClineDriver: ProviderDriver<ClineSettings, ClineDriverEnv> = {
           new ProviderDriverError({
             driver: DRIVER_KIND,
             instanceId,
-            detail: `Failed to build Cline snapshot: ${cause.message ?? String(cause)}`,
+            detail: "Failed to build Cline provider snapshot.",
             cause,
           }),
       ),

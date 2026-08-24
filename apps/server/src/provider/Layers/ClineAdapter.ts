@@ -589,7 +589,7 @@ export const makeClineAdapter = Effect.fn("makeClineAdapter")(function* (
                 new ProviderAdapterProcessError({
                   provider: PROVIDER,
                   threadId: input.threadId,
-                  detail: cause.message,
+                  detail: "Failed to create Cline ACP runtime.",
                   cause,
                 }),
             ),

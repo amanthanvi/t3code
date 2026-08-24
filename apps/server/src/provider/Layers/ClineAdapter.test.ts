@@ -14,6 +14,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as EffectAcpErrors from "effect-acp/errors";
 
 import {
   ApprovalRequestId,
@@ -35,6 +36,7 @@ const decodeClineSettings = Schema.decodeSync(ClineSettings);
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
 const mockAgentCommand = process.execPath;
+const isAcpSpawnError = Schema.is(EffectAcpErrors.AcpSpawnError);
 
 async function makeMockClineWrapper(extraEnv?: Record<string, string>) {
   const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cline-acp-mock-"));
@@ -618,6 +620,29 @@ it.layer(clineAdapterTestLayer)("ClineAdapterLive", (it) => {
         }),
       { discard: true },
     ),
+  );
+
+  it.effect("reports a stable ACP runtime creation stage and preserves the spawn cause", () =>
+    Effect.gen(function* () {
+      const adapter = yield* makeTestAdapter("/definitely/missing/cline");
+      const error = yield* Effect.flip(
+        adapter.startSession({
+          threadId: ThreadId.make("cline-missing-runtime"),
+          provider: ProviderDriverKind.make("cline"),
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+        }),
+      );
+
+      assert.equal(error._tag, "ProviderAdapterProcessError");
+      if (error._tag === "ProviderAdapterProcessError") {
+        assert.equal(error.detail, "Failed to create Cline ACP runtime.");
+        assert.isTrue(isAcpSpawnError(error.cause));
+        if (isAcpSpawnError(error.cause)) {
+          assert.equal(error.cause.command, "/definitely/missing/cline");
+        }
+      }
+    }),
   );
 
   it.effect("times out a hung ACP startup and force-closes its child", () =>

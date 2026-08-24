@@ -34,6 +34,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceConfigMap,
   ProviderInstanceId,
+  ServerSettingsError,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -321,6 +322,38 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(TestHttpClientLive),
     Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+  );
+
+  it.live("preserves the typed cause when Cline snapshot construction fails", () =>
+    Effect.gen(function* () {
+      const originalCause = new Error("simulated Cline snapshot settings failure");
+      const snapshotFailure = new ServerSettingsError({
+        settingsPath: "/test/settings.json",
+        operation: "read-file",
+        cause: originalCause,
+      });
+      const failingSettingsService = {
+        start: Effect.void,
+        ready: Effect.void,
+        getSettings: Effect.fail(snapshotFailure),
+        updateSettings: () => Effect.fail(snapshotFailure),
+        streamChanges: Stream.empty,
+        subscribeChanges: Effect.succeed(Stream.empty),
+      } satisfies ServerSettingsService["Service"];
+
+      const error = yield* ClineDriver.create({
+        instanceId: ProviderInstanceId.make("cline_snapshot_failure"),
+        displayName: "Cline",
+        environment: [],
+        enabled: false,
+        config: makeClineConfig({}),
+      }).pipe(Effect.provideService(ServerSettingsService, failingSettingsService), Effect.flip);
+
+      expect(error._tag).toBe("ProviderDriverError");
+      expect(error.detail).toBe("Failed to build Cline provider snapshot.");
+      expect(error.cause).toBe(snapshotFailure);
+      expect(snapshotFailure.cause).toBe(originalCause);
+    }).pipe(Effect.provide(testLayer)),
   );
 
   it.live("boots one instance of every shipped driver from a single config map", () =>
