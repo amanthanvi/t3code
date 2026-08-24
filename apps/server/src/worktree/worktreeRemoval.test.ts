@@ -4,11 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import {
-  decodeWorktreePorcelain,
-  parseWorktreePorcelain,
-  worktreeRemovalArgs,
-} from "./WorktreeStorage.ts";
+import { decodeWorktreePorcelain, worktreeRemovalArgs } from "./WorktreeStorage.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -41,10 +37,10 @@ describe("non-force worktree removal", () => {
 
     const listing = git(repository, ["worktree", "list", "--porcelain", "-z"]);
     expect(listing.status).toBe(0);
-    expect("entries" in decodeWorktreePorcelain(listing.stdout)).toBe(true);
-    expect(parseWorktreePorcelain(listing.stdout).some((entry) => entry.path === worktree)).toBe(
-      true,
-    );
+    const decoded = decodeWorktreePorcelain(listing.stdout);
+    expect("entries" in decoded).toBe(true);
+    if ("error" in decoded) throw new Error(decoded.error);
+    expect(decoded.entries.some((entry) => entry.path === worktree)).toBe(true);
 
     const removal = git(repository, worktreeRemovalArgs(worktree));
     expect(removal.status).not.toBe(0);

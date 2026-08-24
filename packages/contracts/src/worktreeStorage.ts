@@ -40,7 +40,9 @@ export const WorktreeAutoPrunePolicy = Schema.Union([
 ]);
 export type WorktreeAutoPrunePolicy = typeof WorktreeAutoPrunePolicy.Type;
 
-export const DEFAULT_WORKTREE_AUTO_PRUNE_POLICY: WorktreeAutoPrunePolicy = { mode: "off" };
+export const DEFAULT_WORKTREE_AUTO_PRUNE_POLICY = {
+  mode: "off",
+} as const satisfies WorktreeAutoPrunePolicy;
 
 /** Path-free trigger payload. Unknown runtime fields are rejected instead of preserved. */
 export const WorktreeStorageRequest = Schema.Struct({}).check(
@@ -163,7 +165,11 @@ export class WorktreeStorageError extends Schema.TaggedErrorClass<WorktreeStorag
   "WorktreeStorageError",
   {
     operation: Schema.Literals(["report", "prune"]),
-    message: WorktreeStorageMessage,
-    cause: Schema.optional(Schema.Defect()),
+    reason: Schema.Literal("state-load-failed"),
+    cause: Schema.Defect(),
   },
-) {}
+) {
+  override get message(): string {
+    return `Worktree storage ${this.operation} could not load current environment state.`;
+  }
+}

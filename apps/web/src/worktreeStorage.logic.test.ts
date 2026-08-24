@@ -7,7 +7,7 @@ import {
   rankWorktreeEntries,
   rankWorktreeEnvironments,
   rankWorktreeProjects,
-  resolveFrozenPrunePlan,
+  reconcileFrozenPrunePlan,
   skippedPruneOutcome,
   summarizePruneOutcomes,
   worktreeDisplayName,
@@ -176,7 +176,7 @@ describe("cross-environment pruning", () => {
   });
 
   it("never expands a confirmed prune to a newly connected system", () => {
-    const plan = resolveFrozenPrunePlan(
+    const plan = reconcileFrozenPrunePlan(
       [
         environment({ environmentId: "confirmed", label: "Confirmed" }),
         environment({ environmentId: "new", label: "New" }),
@@ -187,7 +187,10 @@ describe("cross-environment pruning", () => {
           state: "offline",
         }),
       ],
-      ["confirmed", "disconnected"],
+      [
+        { environmentId: "confirmed", label: "Confirmed" },
+        { environmentId: "disconnected", label: "Disconnected" },
+      ],
     );
 
     expect(plan.targets.map((item) => item.environmentId)).toEqual(["confirmed"]);

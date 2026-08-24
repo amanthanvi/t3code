@@ -30,6 +30,8 @@ export interface WorktreeDirectoryDiscovery {
 }
 
 interface DirectoryTraversalStats {
+  readonly dev: number;
+  readonly ino: number;
   readonly size: number;
   readonly isSymbolicLink: () => boolean;
   readonly isDirectory: () => boolean;
@@ -41,6 +43,15 @@ interface DirectoryTraversalFileSystem {
 }
 
 const deadlineExceeded = Symbol("deadlineExceeded");
+
+type ValidatedDirectoryRead =
+  | { readonly _tag: "Success"; readonly entries: ReadonlyArray<string> }
+  | { readonly _tag: "DeadlineExceeded" }
+  | {
+      readonly _tag: "Failure";
+      readonly operation: "read-directory" | "stat";
+      readonly cause: unknown;
+    };
 
 async function runBeforeDeadline<A>(
   operation: () => Promise<A>,
@@ -60,6 +71,47 @@ async function runBeforeDeadline<A>(
   } finally {
     if (timeout !== undefined) NodeTimers.clearTimeout(timeout);
   }
+}
+
+async function readValidatedDirectory(
+  fileSystem: DirectoryTraversalFileSystem,
+  current: string,
+  expected: DirectoryTraversalStats,
+  deadlineAtMs: number,
+): Promise<ValidatedDirectoryRead> {
+  let entries: ReadonlyArray<string>;
+  try {
+    const result = await runBeforeDeadline(() => fileSystem.readdir(current), deadlineAtMs);
+    if (result === deadlineExceeded || Date.now() >= deadlineAtMs) {
+      return { _tag: "DeadlineExceeded" };
+    }
+    entries = result;
+  } catch (cause) {
+    return { _tag: "Failure", operation: "read-directory", cause };
+  }
+
+  try {
+    const result = await runBeforeDeadline(() => fileSystem.lstat(current), deadlineAtMs);
+    if (result === deadlineExceeded || Date.now() >= deadlineAtMs) {
+      return { _tag: "DeadlineExceeded" };
+    }
+    if (
+      result.isSymbolicLink() ||
+      !result.isDirectory() ||
+      result.dev !== expected.dev ||
+      result.ino !== expected.ino
+    ) {
+      return {
+        _tag: "Failure",
+        operation: "stat",
+        cause: new Error("Directory identity changed while it was being read."),
+      };
+    }
+  } catch (cause) {
+    return { _tag: "Failure", operation: "stat", cause };
+  }
+
+  return { _tag: "Success", entries };
 }
 
 /** Measures directory entries without following symlinks and stops at explicit work budgets. */
@@ -125,38 +177,32 @@ export async function measureDirectoryNoFollowPromise(
     bytes = Math.min(Number.MAX_SAFE_INTEGER, bytes + Math.max(0, stats.size));
     if (stats.isSymbolicLink() || !stats.isDirectory()) continue;
 
-    try {
-      const result = await runBeforeDeadline(() => fileSystem.readdir(current), deadlineAtMs);
-      if (result === deadlineExceeded) {
-        reportBudget(
-          "time-budget",
-          `Worktree scan exceeded ${options.maxDurationMs} milliseconds.`,
-        );
-        break traversal;
-      }
-      if (Date.now() >= deadlineAtMs) {
-        reportBudget(
-          "time-budget",
-          `Worktree scan exceeded ${options.maxDurationMs} milliseconds.`,
-        );
-        break traversal;
-      }
-      const remaining = Math.max(0, options.maxEntries - pending.length);
-      const selectedNames = result.slice(0, remaining);
-      selectedNames.sort((left, right) => left.localeCompare(right));
-      for (const name of selectedNames) {
-        pending.push(NodePath.join(current, name));
-      }
-      if (result.length > remaining) {
-        reportBudget(
-          "entry-budget",
-          `Worktree scan exceeded ${options.maxEntries} filesystem entries.`,
-        );
-      }
-    } catch (cause) {
+    const directoryRead = await readValidatedDirectory(fileSystem, current, stats, deadlineAtMs);
+    if (directoryRead._tag === "DeadlineExceeded") {
+      reportBudget("time-budget", `Worktree scan exceeded ${options.maxDurationMs} milliseconds.`);
+      break traversal;
+    }
+    if (directoryRead._tag === "Failure") {
       if (failures.length < options.maxFailures) {
-        failures.push({ operation: "read-directory", path: current, cause });
+        failures.push({
+          operation: directoryRead.operation,
+          path: current,
+          cause: directoryRead.cause,
+        });
       }
+      continue;
+    }
+    const remaining = Math.max(0, options.maxEntries - pending.length);
+    const selectedNames = directoryRead.entries.slice(0, remaining);
+    selectedNames.sort((left, right) => left.localeCompare(right));
+    for (const name of selectedNames) {
+      pending.push(NodePath.join(current, name));
+    }
+    if (directoryRead.entries.length > remaining) {
+      reportBudget(
+        "entry-budget",
+        `Worktree scan exceeded ${options.maxEntries} filesystem entries.`,
+      );
     }
   }
 
@@ -228,42 +274,39 @@ export async function discoverWorktreeDirectoriesNoFollowPromise(
 
     if (stats.isSymbolicLink() || !stats.isDirectory()) continue;
 
-    try {
-      const result = await runBeforeDeadline(() => fileSystem.readdir(current), deadlineAtMs);
-      if (result === deadlineExceeded) {
-        reportBudget(
-          "time-budget",
-          `Worktree discovery exceeded ${options.maxDurationMs} milliseconds.`,
-        );
-        break traversal;
-      }
-      if (Date.now() >= deadlineAtMs) {
-        reportBudget(
-          "time-budget",
-          `Worktree discovery exceeded ${options.maxDurationMs} milliseconds.`,
-        );
-        break traversal;
-      }
-      if (current !== rootPath && result.includes(".git")) {
-        paths.push(current);
-        continue;
-      }
-      const remaining = Math.max(0, options.maxEntries - pending.length);
-      const selectedNames = result.slice(0, remaining);
-      selectedNames.sort((left, right) => left.localeCompare(right));
-      for (const name of selectedNames) {
-        pending.push(NodePath.join(current, name));
-      }
-      if (result.length > remaining) {
-        reportBudget(
-          "entry-budget",
-          `Worktree discovery exceeded ${options.maxEntries} filesystem entries.`,
-        );
-      }
-    } catch (cause) {
+    const directoryRead = await readValidatedDirectory(fileSystem, current, stats, deadlineAtMs);
+    if (directoryRead._tag === "DeadlineExceeded") {
+      reportBudget(
+        "time-budget",
+        `Worktree discovery exceeded ${options.maxDurationMs} milliseconds.`,
+      );
+      break traversal;
+    }
+    if (directoryRead._tag === "Failure") {
       if (failures.length < options.maxFailures) {
-        failures.push({ operation: "read-directory", path: current, cause });
+        failures.push({
+          operation: directoryRead.operation,
+          path: current,
+          cause: directoryRead.cause,
+        });
       }
+      continue;
+    }
+    if (current !== rootPath && directoryRead.entries.includes(".git")) {
+      paths.push(current);
+      continue;
+    }
+    const remaining = Math.max(0, options.maxEntries - pending.length);
+    const selectedNames = directoryRead.entries.slice(0, remaining);
+    selectedNames.sort((left, right) => left.localeCompare(right));
+    for (const name of selectedNames) {
+      pending.push(NodePath.join(current, name));
+    }
+    if (directoryRead.entries.length > remaining) {
+      reportBudget(
+        "entry-budget",
+        `Worktree discovery exceeded ${options.maxEntries} filesystem entries.`,
+      );
     }
   }
 

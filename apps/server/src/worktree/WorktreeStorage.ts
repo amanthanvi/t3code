@@ -121,18 +121,13 @@ interface GitInspectionResult {
   readonly targetWorktreePath: string | null;
 }
 
-function boundedMessage(cause: unknown): string {
-  const value = cause instanceof Error ? cause.message : String(cause);
-  const trimmed = value.trim();
-  return (trimmed.length === 0 ? "Unknown inspection failure." : trimmed).slice(0, 1_024);
-}
-
-function scanError(operation: string, cause: unknown, path?: string): WorktreeStorageScanError {
-  return {
-    operation: operation.slice(0, 128) || "inspect",
-    message: boundedMessage(cause),
-    ...(path === undefined ? {} : { path: path.slice(0, 4_096) }),
+function scanError(operation: string, _cause: unknown, path?: string): WorktreeStorageScanError {
+  const boundedOperation = operation.slice(0, 128) || "inspect";
+  const error: WorktreeStorageScanError = {
+    operation: boundedOperation,
+    message: `Worktree storage ${boundedOperation} could not be completed safely.`.slice(0, 1_024),
   };
+  return path === undefined ? error : { ...error, path: path.slice(0, 4_096) };
 }
 
 function safeByteCount(value: number): number {
@@ -163,44 +158,6 @@ export function hasLivePathUse(
   livePaths: ReadonlyArray<string>,
 ): boolean {
   return livePaths.some((livePath) => isSameOrDescendant(path, candidatePath, livePath));
-}
-
-export function parseWorktreePorcelain(output: string): ReadonlyArray<WorktreePorcelainEntry> {
-  const entries: WorktreePorcelainEntry[] = [];
-  let current: { path?: string; locked: boolean; prunable: boolean; detached: boolean } = {
-    locked: false,
-    prunable: false,
-    detached: false,
-  };
-  const flush = () => {
-    if (current.path !== undefined) {
-      entries.push({
-        path: current.path,
-        locked: current.locked,
-        prunable: current.prunable,
-        detached: current.detached,
-      });
-    }
-    current = { locked: false, prunable: false, detached: false };
-  };
-
-  for (const field of output.split("\0")) {
-    if (field === "") {
-      flush();
-      continue;
-    }
-    if (field.startsWith("worktree ")) {
-      current.path = field.slice("worktree ".length);
-    } else if (field === "locked" || field.startsWith("locked ")) {
-      current.locked = true;
-    } else if (field === "prunable" || field.startsWith("prunable ")) {
-      current.prunable = true;
-    } else if (field === "detached") {
-      current.detached = true;
-    }
-  }
-  flush();
-  return entries;
 }
 
 export function decodeWorktreePorcelain(
@@ -757,7 +714,7 @@ export const make = Effect.gen(function* () {
         (cause) =>
           new WorktreeStorageError({
             operation,
-            message: "Failed to load current thread state for worktree inspection.",
+            reason: "state-load-failed",
             cause,
           }),
       ),
@@ -777,13 +734,15 @@ export const make = Effect.gen(function* () {
     >();
     const referencedThreads = yield* Effect.forEach(
       [...snapshots.active.threads, ...snapshots.archived.threads],
-      (thread) =>
-        thread.worktreePath === null
+      (thread) => {
+        const worktreePath = thread.worktreePath;
+        return worktreePath === null
           ? Effect.succeed(null)
-          : fileSystem.realPath(thread.worktreePath).pipe(
-              Effect.orElseSucceed(() => path.resolve(thread.worktreePath!)),
-              Effect.map((key) => ({ key, thread, worktreePath: thread.worktreePath! })),
-            ),
+          : fileSystem.realPath(worktreePath).pipe(
+              Effect.orElseSucceed(() => path.resolve(worktreePath)),
+              Effect.map((key) => ({ key, thread, worktreePath })),
+            );
+      },
       { concurrency: SIZE_SCAN_CONCURRENCY },
     );
     for (const referenced of referencedThreads) {
@@ -829,12 +788,12 @@ export const make = Effect.gen(function* () {
     const liveProviderThreadIds = new Set(liveProviderSessions.map((session) => session.threadId));
     const liveProviderPaths = yield* Effect.forEach(
       liveProviderSessions,
-      (session) =>
-        session.cwd === undefined
+      (session) => {
+        const cwd = session.cwd;
+        return cwd === undefined
           ? Effect.succeed(null)
-          : fileSystem
-              .realPath(session.cwd)
-              .pipe(Effect.orElseSucceed(() => path.resolve(session.cwd!))),
+          : fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => path.resolve(cwd)));
+      },
       { concurrency: SIZE_SCAN_CONCURRENCY },
     );
     const liveTerminals = snapshots.terminalSummaries.filter(
@@ -963,7 +922,8 @@ export const make = Effect.gen(function* () {
     }
     const stale =
       mode.mode === "manual"
-        ? association.threads.every(
+        ? association.threads.length > 0 &&
+          association.threads.every(
             (thread) => thread.archivedAt !== null || thread.settledAt !== null,
           )
         : association.threads.length > 0 &&
@@ -1472,7 +1432,7 @@ export const make = Effect.gen(function* () {
                     bytes: fresh.detail.bytes,
                     status: "failed",
                     protectionReasons: [],
-                    message: boundedMessage(cause),
+                    message: "Git did not remove the worktree; its association was restored.",
                   });
                   if (errors.length < WORKTREE_STORAGE_MAX_ERRORS) {
                     errors.push(scanError("git-worktree-remove", cause, fresh.detail.worktreePath));

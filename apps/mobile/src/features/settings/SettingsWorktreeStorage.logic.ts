@@ -1,11 +1,7 @@
 import type { EnvironmentId, WorktreeStorageProtectionReason } from "@t3tools/contracts";
 import {
-  formatWorktreeStorageBytes,
-  resolveFrozenPrunePlan,
-  worktreeStorageSkippedReason,
-  type PruneOutcomeSummary,
-  type WorktreeStorageEnvironmentSummary,
-  type WorktreeStorageSkippedReason,
+  type FrozenWorktreeStorageEnvironmentRef,
+  type FrozenWorktreeStorageSkippedRef,
 } from "@t3tools/client-runtime/state/worktree-storage";
 
 export const MOBILE_WORKTREE_STORAGE_ROUTE = {
@@ -13,75 +9,10 @@ export const MOBILE_WORKTREE_STORAGE_ROUTE = {
   target: "SettingsWorktreeStorage",
 } as const;
 
-export interface FrozenMobileEnvironmentRef {
-  readonly environmentId: EnvironmentId;
-  readonly label: string;
-}
+export type FrozenMobileEnvironmentRef = FrozenWorktreeStorageEnvironmentRef<EnvironmentId>;
+export type FrozenMobileSkippedEnvironment = FrozenWorktreeStorageSkippedRef<EnvironmentId>;
 
-export interface FrozenMobileSkippedEnvironment extends FrozenMobileEnvironmentRef {
-  readonly reason: WorktreeStorageSkippedReason;
-}
-
-export function updatePendingEnvironmentIds(
-  current: ReadonlySet<EnvironmentId>,
-  environmentId: EnvironmentId,
-  pending: boolean,
-): ReadonlySet<EnvironmentId> {
-  const next = new Set(current);
-  if (pending) {
-    next.add(environmentId);
-  } else {
-    next.delete(environmentId);
-  }
-  return next;
-}
-
-export function beginPendingPolicyUpdate(
-  current: ReadonlySet<EnvironmentId>,
-  environmentId: EnvironmentId,
-): ReadonlySet<EnvironmentId> | null {
-  return current.has(environmentId)
-    ? null
-    : updatePendingEnvironmentIds(current, environmentId, true);
-}
-
-export function reconcileConfirmedMobilePrunePlan<
-  T extends WorktreeStorageEnvironmentSummary & { readonly environmentId: EnvironmentId },
->(
-  currentEnvironments: readonly T[],
-  confirmedTargets: readonly FrozenMobileEnvironmentRef[],
-): {
-  readonly targets: readonly T[];
-  readonly skipped: readonly FrozenMobileSkippedEnvironment[];
-} {
-  const currentPlan = resolveFrozenPrunePlan(
-    currentEnvironments,
-    confirmedTargets.map((environment) => environment.environmentId),
-  );
-  const currentIds = new Set(currentEnvironments.map((environment) => environment.environmentId));
-  return {
-    targets: currentPlan.targets,
-    skipped: [
-      ...currentPlan.skipped.map(
-        (environment): FrozenMobileSkippedEnvironment => ({
-          environmentId: environment.environmentId,
-          label: environment.label,
-          reason: worktreeStorageSkippedReason(environment),
-        }),
-      ),
-      ...confirmedTargets
-        .filter((environment) => !currentIds.has(environment.environmentId))
-        .map(
-          (environment): FrozenMobileSkippedEnvironment => ({
-            ...environment,
-            reason: "unavailable",
-          }),
-        ),
-    ],
-  };
-}
-
-const PROTECTION_LABELS: Readonly<Record<WorktreeStorageProtectionReason, string>> = {
+const PROTECTION_LABELS = {
   "outside-managed-root": "outside managed storage",
   "shared-across-projects": "shared across projects",
   "main-checkout": "main checkout",
@@ -100,12 +31,8 @@ const PROTECTION_LABELS: Readonly<Record<WorktreeStorageProtectionReason, string
   "pending-plan": "plan is pending",
   "background-liveness": "background work is running",
   "inspection-error": "safety check incomplete",
-};
+} satisfies Record<WorktreeStorageProtectionReason, string>;
 
 export function mobileProtectionLabel(reason: WorktreeStorageProtectionReason): string {
   return PROTECTION_LABELS[reason];
-}
-
-export function summarizeMobilePrune(summary: PruneOutcomeSummary): string {
-  return `${formatWorktreeStorageBytes(summary.freedBytes)} estimated reclaimed · ${summary.removedCount} removed · ${summary.protectedCount} protected · ${summary.failedWorktreeCount} worktree failures · ${summary.partialEnvironmentCount} partial systems · ${summary.serverErrorCount} server errors · ${summary.unreportedOutcomeCount} outcome details omitted · ${summary.skippedEnvironmentCount} systems skipped · ${summary.failedEnvironmentCount} systems failed`;
 }

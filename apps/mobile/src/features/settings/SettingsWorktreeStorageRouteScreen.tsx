@@ -11,13 +11,17 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  beginPendingPolicyUpdate,
   computeWorktreeStorageCoverage,
+  formatPruneOutcomeSummary,
   formatWorktreeStorageBytes,
   planAcrossEnvironmentPrune,
   rankWorktreeEntries,
   rankWorktreeProjects,
+  reconcileFrozenPrunePlan,
   successfulPruneOutcome,
   summarizePruneOutcomes,
+  updatePendingEnvironmentIds,
   worktreeDisplayName,
   worktreeStorageSkippedReason,
   type EnvironmentPruneOutcome,
@@ -48,13 +52,9 @@ import {
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "./components/SettingsSection";
 import {
-  beginPendingPolicyUpdate,
   type FrozenMobileEnvironmentRef,
   type FrozenMobileSkippedEnvironment,
   mobileProtectionLabel,
-  reconcileConfirmedMobilePrunePlan,
-  summarizeMobilePrune,
-  updatePendingEnvironmentIds,
 } from "./SettingsWorktreeStorage.logic";
 
 const PROJECT_LIMIT = 6;
@@ -433,10 +433,7 @@ export function SettingsWorktreeStorageRouteScreen() {
     mutationPending.current = true;
     setPruning(true);
     try {
-      const currentPlan = reconcileConfirmedMobilePrunePlan(
-        environmentsRef.current,
-        confirmedTargets,
-      );
+      const currentPlan = reconcileFrozenPrunePlan(environmentsRef.current, confirmedTargets);
       const targets = currentPlan.targets;
       const skippedEnvironments = [...initiallySkipped, ...currentPlan.skipped];
       const results = await Promise.all(
@@ -462,7 +459,7 @@ export function SettingsWorktreeStorageRouteScreen() {
       );
       const outcomes = [...resultOutcomes, ...skippedOutcomes];
       const aggregate = summarizePruneOutcomes(outcomes);
-      const summary = summarizeMobilePrune(aggregate);
+      const summary = formatPruneOutcomeSummary(aggregate);
       const skippedLabels = outcomes
         .filter((outcome) => outcome.status === "skipped")
         .map((outcome) => `${outcome.label} (${outcome.reason})`);

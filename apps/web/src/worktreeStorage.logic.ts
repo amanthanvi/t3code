@@ -1,6 +1,6 @@
 import type { WorktreeStorageProtectionReason } from "@t3tools/contracts";
 
-const PROTECTION_REASON_LABELS: Readonly<Record<WorktreeStorageProtectionReason, string>> = {
+const PROTECTION_REASON_LABELS = {
   "outside-managed-root": "Outside managed storage",
   "shared-across-projects": "Shared across projects",
   "main-checkout": "Main checkout",
@@ -19,7 +19,7 @@ const PROTECTION_REASON_LABELS: Readonly<Record<WorktreeStorageProtectionReason,
   "pending-plan": "Plan is pending",
   "background-liveness": "Background work is running",
   "inspection-error": "Safety check did not complete",
-};
+} satisfies Record<WorktreeStorageProtectionReason, string>;
 
 export function describeWorktreeProtectionReason(reason: WorktreeStorageProtectionReason): string {
   return PROTECTION_REASON_LABELS[reason];

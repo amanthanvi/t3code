@@ -1,21 +1,21 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 import {
+  beginPendingPolicyUpdate,
   computeWorktreeStorageCoverage,
+  formatPruneOutcomeSummary,
   formatWorktreeStorageBytes,
   planAcrossEnvironmentPrune,
+  reconcileFrozenPrunePlan,
   summarizePruneOutcomes,
+  updatePendingEnvironmentIds,
   worktreeDisplayName,
   worktreeStorageSkippedReason,
 } from "@t3tools/client-runtime/state/worktree-storage";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  beginPendingPolicyUpdate,
   MOBILE_WORKTREE_STORAGE_ROUTE,
   mobileProtectionLabel,
-  reconcileConfirmedMobilePrunePlan,
-  summarizeMobilePrune,
-  updatePendingEnvironmentIds,
 } from "./SettingsWorktreeStorage.logic";
 import type { MobileEnvironmentWorktreeStorageStatus } from "../../state/worktree-storage";
 
@@ -27,8 +27,8 @@ function environment(
     connectionPhase: "connected",
     capable: true,
     state: "ready",
-    totalBytes: input.report?.totalBytes ?? null,
-    partial: input.report?.partial ?? false,
+    totalBytes: null,
+    partial: false,
     report: null,
     policy: { mode: "off" },
     isRefreshing: false,
@@ -39,22 +39,30 @@ function environment(
 
 describe("mobile worktree storage presentation", () => {
   it("rejects a duplicate policy update before the first update finishes", () => {
-    const environmentId = "first" as EnvironmentId;
-    const pending = beginPendingPolicyUpdate(new Set(), environmentId);
+    const environmentId = EnvironmentId.make("first");
+    const pending = beginPendingPolicyUpdate(new Set<EnvironmentId>(), environmentId);
+    expect(pending).not.toBeNull();
+    if (pending === null) return;
 
     expect({
-      pending: [...(pending ?? [])],
-      duplicate: beginPendingPolicyUpdate(pending!, environmentId),
+      pending: [...pending],
+      duplicate: beginPendingPolicyUpdate(pending, environmentId),
     }).toEqual({ pending: [environmentId], duplicate: null });
   });
 
   it("tracks overlapping policy updates independently when they finish out of order", () => {
-    const firstEnvironmentId = "first" as EnvironmentId;
-    const secondEnvironmentId = "second" as EnvironmentId;
+    const firstEnvironmentId = EnvironmentId.make("first");
+    const secondEnvironmentId = EnvironmentId.make("second");
     let pendingEnvironmentIds: ReadonlySet<EnvironmentId> = new Set();
 
-    pendingEnvironmentIds = beginPendingPolicyUpdate(pendingEnvironmentIds, firstEnvironmentId)!;
-    pendingEnvironmentIds = beginPendingPolicyUpdate(pendingEnvironmentIds, secondEnvironmentId)!;
+    const firstPending = beginPendingPolicyUpdate(pendingEnvironmentIds, firstEnvironmentId);
+    expect(firstPending).not.toBeNull();
+    if (firstPending === null) return;
+    pendingEnvironmentIds = firstPending;
+    const bothPending = beginPendingPolicyUpdate(pendingEnvironmentIds, secondEnvironmentId);
+    expect(bothPending).not.toBeNull();
+    if (bothPending === null) return;
+    pendingEnvironmentIds = bothPending;
     pendingEnvironmentIds = updatePendingEnvironmentIds(
       pendingEnvironmentIds,
       firstEnvironmentId,
@@ -76,25 +84,24 @@ describe("mobile worktree storage presentation", () => {
   });
 
   it("qualifies totals and targets only connected capable systems", () => {
-    const environments = [
-      environment({
-        environmentId: "ready" as EnvironmentId,
-        label: "Ready",
-        report: { totalBytes: 1_048_576 } as MobileEnvironmentWorktreeStorageStatus["report"],
-      }),
-      environment({
-        environmentId: "offline" as EnvironmentId,
-        label: "Offline",
-        connectionPhase: "offline",
-        state: "offline",
-      }),
-      environment({
-        environmentId: "old" as EnvironmentId,
-        label: "Old",
-        capable: false,
-        state: "unsupported",
-      }),
-    ];
+    const ready = environment({
+      environmentId: EnvironmentId.make("ready"),
+      label: "Ready",
+      totalBytes: 1_048_576,
+    });
+    const offline = environment({
+      environmentId: EnvironmentId.make("offline"),
+      label: "Offline",
+      connectionPhase: "offline",
+      state: "offline",
+    });
+    const old = environment({
+      environmentId: EnvironmentId.make("old"),
+      label: "Old",
+      capable: false,
+      state: "unsupported",
+    });
+    const environments = [ready, offline, old];
 
     expect(computeWorktreeStorageCoverage(environments)).toEqual({
       totalKnownBytes: 1_048_576,
@@ -113,17 +120,15 @@ describe("mobile worktree storage presentation", () => {
     expect(
       planAcrossEnvironmentPrune(environments).skipped.map((item) => item.environmentId),
     ).toEqual(["offline", "old"]);
-    expect(worktreeStorageSkippedReason(environments[1]!)).toBe("offline");
-    expect(worktreeStorageSkippedReason(environments[2]!)).toBe("unsupported");
+    expect(worktreeStorageSkippedReason(offline)).toBe("offline");
+    expect(worktreeStorageSkippedReason(old)).toBe("unsupported");
     expect(
       computeWorktreeStorageCoverage([
         environment({
-          environmentId: "partial" as EnvironmentId,
+          environmentId: EnvironmentId.make("partial"),
           label: "Partial",
-          report: {
-            totalBytes: 100,
-            partial: true,
-          } as MobileEnvironmentWorktreeStorageStatus["report"],
+          totalBytes: 100,
+          partial: true,
         }),
       ]),
     ).toMatchObject({
@@ -135,11 +140,11 @@ describe("mobile worktree storage presentation", () => {
   });
 
   it("narrows confirmed prune scope when systems change before native confirmation runs", () => {
-    const readyId = "ready" as EnvironmentId;
-    const offlineId = "offline" as EnvironmentId;
-    const disappearedId = "disappeared" as EnvironmentId;
-    const newlyConnectedId = "new" as EnvironmentId;
-    const result = reconcileConfirmedMobilePrunePlan(
+    const readyId = EnvironmentId.make("ready");
+    const offlineId = EnvironmentId.make("offline");
+    const disappearedId = EnvironmentId.make("disappeared");
+    const newlyConnectedId = EnvironmentId.make("new");
+    const result = reconcileFrozenPrunePlan(
       [
         environment({ environmentId: readyId, label: "Ready" }),
         environment({
@@ -175,7 +180,7 @@ describe("mobile worktree storage presentation", () => {
     expect(mobileProtectionLabel("active-turn-or-session")).toBe("active turn or session");
     expect(mobileProtectionLabel("unowned-or-orphaned")).toBe("no registered project");
     expect(
-      summarizeMobilePrune(
+      formatPruneOutcomeSummary(
         summarizePruneOutcomes([
           {
             environmentId: "ready",

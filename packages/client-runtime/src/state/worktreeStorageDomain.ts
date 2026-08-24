@@ -50,6 +50,37 @@ export interface WorktreeStoragePrunePlan<T extends WorktreeStorageEnvironmentSu
 
 export type WorktreeStorageSkippedReason = "offline" | "unsupported" | "unavailable";
 
+export interface FrozenWorktreeStorageEnvironmentRef<Id extends string = string> {
+  readonly environmentId: Id;
+  readonly label: string;
+}
+
+export interface FrozenWorktreeStorageSkippedRef<
+  Id extends string = string,
+> extends FrozenWorktreeStorageEnvironmentRef<Id> {
+  readonly reason: WorktreeStorageSkippedReason;
+}
+
+export function updatePendingEnvironmentIds<Id extends string>(
+  current: ReadonlySet<Id>,
+  environmentId: Id,
+  pending: boolean,
+): ReadonlySet<Id> {
+  const next = new Set(current);
+  if (pending) next.add(environmentId);
+  else next.delete(environmentId);
+  return next;
+}
+
+export function beginPendingPolicyUpdate<Id extends string>(
+  current: ReadonlySet<Id>,
+  environmentId: Id,
+): ReadonlySet<Id> | null {
+  return current.has(environmentId)
+    ? null
+    : updatePendingEnvironmentIds(current, environmentId, true);
+}
+
 export type EnvironmentPruneOutcome =
   | {
       readonly environmentId: string;
@@ -193,17 +224,6 @@ export function planAcrossEnvironmentPrune<T extends WorktreeStorageEnvironmentS
   return { targets, skipped };
 }
 
-/** A confirmed prune may narrow as systems disconnect, but never expands to new systems. */
-export function resolveFrozenPrunePlan<T extends WorktreeStorageEnvironmentSummary>(
-  environments: readonly T[],
-  confirmedEnvironmentIds: readonly string[],
-): WorktreeStoragePrunePlan<T> {
-  const confirmed = new Set(confirmedEnvironmentIds);
-  return planAcrossEnvironmentPrune(
-    environments.filter((environment) => confirmed.has(environment.environmentId)),
-  );
-}
-
 export function worktreeStorageSkippedReason(
   environment: WorktreeStorageEnvironmentSummary,
 ): WorktreeStorageSkippedReason {
@@ -211,6 +231,39 @@ export function worktreeStorageSkippedReason(
   if (environment.connectionPhase === "offline") return "offline";
   if (environment.connectionPhase !== "connected") return "unavailable";
   return environment.capable ? "unavailable" : "unsupported";
+}
+
+/** A confirmed prune may narrow as systems disconnect or disappear, but never expands. */
+export function reconcileFrozenPrunePlan<
+  T extends WorktreeStorageEnvironmentSummary,
+  Id extends string,
+>(
+  environments: readonly T[],
+  confirmedTargets: readonly FrozenWorktreeStorageEnvironmentRef<Id>[],
+): {
+  readonly targets: readonly T[];
+  readonly skipped: readonly FrozenWorktreeStorageSkippedRef<Id>[];
+} {
+  const currentById = new Map(
+    environments.map((environment) => [environment.environmentId, environment] as const),
+  );
+  const targets: T[] = [];
+  const skipped: FrozenWorktreeStorageSkippedRef<Id>[] = [];
+  for (const confirmed of confirmedTargets) {
+    const current = currentById.get(confirmed.environmentId);
+    if (current === undefined) {
+      skipped.push({ ...confirmed, reason: "unavailable" });
+    } else if (current.connectionPhase === "connected" && current.capable) {
+      targets.push(current);
+    } else {
+      skipped.push({
+        environmentId: confirmed.environmentId,
+        label: current.label,
+        reason: worktreeStorageSkippedReason(current),
+      });
+    }
+  }
+  return { targets, skipped };
 }
 
 export function skippedPruneOutcome(
@@ -284,4 +337,8 @@ export function summarizePruneOutcomes(
           ? "warning"
           : "success",
   };
+}
+
+export function formatPruneOutcomeSummary(summary: PruneOutcomeSummary): string {
+  return `${formatWorktreeStorageBytes(summary.freedBytes)} estimated reclaimed · ${summary.removedCount} removed · ${summary.protectedCount} protected · ${summary.failedWorktreeCount} worktree failures · ${summary.partialEnvironmentCount} partial systems · ${summary.serverErrorCount} server errors · ${summary.unreportedOutcomeCount} outcome details omitted · ${summary.skippedEnvironmentCount} systems skipped · ${summary.failedEnvironmentCount} systems failed`;
 }

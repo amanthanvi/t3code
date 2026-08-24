@@ -9,11 +9,16 @@ capability.
 ## Accounting
 
 The server discovers linked worktree roots below its configured worktree directory without
-following directory symlinks. It measures apparent checkout bytes with bounded entry, time, error,
-candidate, and response budgets. Shared Git object storage is not attributed to a linked worktree,
-so reported bytes are an estimate rather than a promise about space reclaimed by deletion.
+following directory symlinks. Directory reads are rejected when the path's device or inode changes
+during traversal. It measures apparent checkout bytes with bounded entry, time, error, candidate,
+and response budgets. Shared Git object storage is not attributed to a linked worktree, so reported
+bytes are an estimate rather than a promise about space reclaimed by deletion.
 
-Reports carry explicit `partial`, error, total-count, and returned-count fields. Clients may sum the
+The time budget bounds when a scan returns and prevents late filesystem results from influencing a
+deletion decision. Node's `lstat` and `readdir` promises are not cancellable, so an operating-system
+request that outlives the deadline may still settle later and is ignored.
+
+Reports carry explicit `partial`, error, and bounded returned-count fields. Clients may sum the
 known bytes across environments, but must keep offline, unsupported, failed, and partial systems
 qualified instead of treating them as zero or complete.
 
@@ -42,17 +47,26 @@ reserves its associated thread paths with an expected-path compare-and-swap. The
 the exact persisted metadata event and reloads projections and live process summaries before a
 final filesystem and Git inspection.
 
-The reservation scope restores cleared paths with an expected-null compare-and-swap on failure or
-interruption. Once bounded Git removal starts, the server observes its result without interruption;
-successful removal commits the cleared association, while failed removal restores it. Expected-path
-metadata updates preserve the thread's durable activity timestamp so the reservation itself cannot
-make an inactivity-qualified candidate recent.
+The reservation scope makes an uninterruptible attempt to restore cleared paths with an
+expected-null compare-and-swap on failure or interruption. Once bounded Git removal starts, the
+server observes its result without interruption; successful removal commits the cleared
+association, while failed removal attempts to restore it. Expected-path metadata updates preserve
+the thread's durable activity timestamp so the reservation itself cannot make an
+inactivity-qualified candidate recent.
+
+A hard process stop or a defect in the restoration path can strand a thread's worktree association
+as cleared. The physical checkout remains discoverable after restart and is then protected as an
+unassigned worktree; recovering the association requires operator repair. Eliminating this metadata
+recovery case requires a durable reservation journal and startup reconciliation, which this design
+does not provide.
 
 This is a conservative application-level transaction, not a global filesystem lease. T3-controlled
 live activity is checked immediately before removal, and Git's non-force removal remains the final
-dirty-data guard. Processes outside the server are not admission-locked; maintainers extending this
-flow must preserve fail-closed inspection and must not replace non-force removal with forced
-deletion.
+dirty-data guard. Separate server processes and other same-user filesystem writers are not
+admission-locked: they can change a path after a canonical or status check, and Git's own status and
+recursive removal are not one atomic filesystem operation. This flow does not claim safety against
+a hostile same-user writer racing those checks. Maintainers extending it must preserve fail-closed
+inspection and must not replace non-force removal with forced deletion.
 
 ## Automatic policies
 

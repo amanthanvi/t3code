@@ -2,14 +2,17 @@ import type { WorktreeStoragePruneResult } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  beginPendingPolicyUpdate,
   computeWorktreeStorageCoverage,
+  formatPruneOutcomeSummary,
   planAcrossEnvironmentPrune,
   rankWorktreeEntries,
   rankWorktreeEnvironments,
   rankWorktreeProjects,
-  resolveFrozenPrunePlan,
+  reconcileFrozenPrunePlan,
   successfulPruneOutcome,
   summarizePruneOutcomes,
+  updatePendingEnvironmentIds,
   type WorktreeStorageEnvironmentSummary,
 } from "./worktreeStorageDomain.ts";
 
@@ -97,9 +100,27 @@ describe("worktree storage domain", () => {
     ];
 
     expect(planAcrossEnvironmentPrune(environments).targets).toHaveLength(2);
-    const resolved = resolveFrozenPrunePlan(environments, ["confirmed", "disconnected"]);
+    const resolved = reconcileFrozenPrunePlan(environments, [
+      { environmentId: "confirmed", label: "Confirmed" },
+      { environmentId: "disconnected", label: "Disconnected" },
+      { environmentId: "disappeared", label: "Disappeared" },
+    ]);
     expect(resolved.targets.map((item) => item.environmentId)).toEqual(["confirmed"]);
-    expect(resolved.skipped.map((item) => item.environmentId)).toEqual(["disconnected"]);
+    expect(resolved.skipped).toEqual([
+      { environmentId: "disconnected", label: "Disconnected", reason: "offline" },
+      { environmentId: "disappeared", label: "Disappeared", reason: "unavailable" },
+    ]);
+  });
+
+  it("guards duplicate policy updates while preserving distinct pending systems", () => {
+    const first = beginPendingPolicyUpdate(new Set<string>(), "first");
+    expect(first).not.toBeNull();
+    if (first === null) return;
+    expect(beginPendingPolicyUpdate(first, "first")).toBeNull();
+    const both = beginPendingPolicyUpdate(first, "second");
+    expect(both).not.toBeNull();
+    if (both === null) return;
+    expect([...updatePendingEnvironmentIds(both, "first", false)]).toEqual(["second"]);
   });
 
   it("preserves partial server results and omitted outcome counts in aggregation", () => {
@@ -128,7 +149,8 @@ describe("worktree storage domain", () => {
       result,
     );
 
-    expect(summarizePruneOutcomes([outcome])).toMatchObject({
+    const summary = summarizePruneOutcomes([outcome]);
+    expect(summary).toMatchObject({
       removedCount: 2,
       protectedCount: 1,
       freedBytes: 1_024,
@@ -137,5 +159,8 @@ describe("worktree storage domain", () => {
       unreportedOutcomeCount: 2,
       tone: "warning",
     });
+    expect(formatPruneOutcomeSummary(summary)).toBe(
+      "1 KB estimated reclaimed · 2 removed · 1 protected · 0 worktree failures · 1 partial systems · 1 server errors · 2 outcome details omitted · 0 systems skipped · 0 systems failed",
+    );
   });
 });

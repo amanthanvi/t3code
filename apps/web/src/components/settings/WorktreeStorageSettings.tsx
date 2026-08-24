@@ -11,16 +11,20 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  beginPendingPolicyUpdate,
+  formatPruneOutcomeSummary,
   formatWorktreeStorageBytes,
   planAcrossEnvironmentPrune,
   rankWorktreeEntries,
   rankWorktreeProjects,
-  resolveFrozenPrunePlan,
+  reconcileFrozenPrunePlan,
   skippedPruneOutcome,
   successfulPruneOutcome,
   summarizePruneOutcomes,
+  updatePendingEnvironmentIds,
   worktreeDisplayName,
   type EnvironmentPruneOutcome,
+  type FrozenWorktreeStorageEnvironmentRef,
 } from "@t3tools/client-runtime/state/worktree-storage";
 import { HardDriveIcon, RefreshCwIcon, ShieldCheckIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -55,14 +59,9 @@ const PROJECT_DISPLAY_LIMIT = 8;
 const WORKTREE_DISPLAY_LIMIT_PER_PROJECT = 4;
 const DEFAULT_INACTIVITY_DAYS = 30;
 
-interface FrozenEnvironmentRef {
-  readonly environmentId: EnvironmentId;
-  readonly label: string;
-}
-
 interface PruneScope {
   readonly type: "environment" | "across";
-  readonly targets: readonly FrozenEnvironmentRef[];
+  readonly targets: readonly FrozenWorktreeStorageEnvironmentRef<EnvironmentId>[];
   readonly skipped: readonly EnvironmentPruneOutcome[];
 }
 
@@ -350,18 +349,7 @@ function EnvironmentInventory({
 }
 
 function pruneSummaryDescription(outcomes: readonly EnvironmentPruneOutcome[]): string {
-  const summary = summarizePruneOutcomes(outcomes);
-  const parts = [
-    `${summary.removedCount} removed`,
-    `${summary.protectedCount} protected`,
-    `${summary.failedWorktreeCount} worktree failures`,
-    `${summary.partialEnvironmentCount} partial systems`,
-    `${summary.serverErrorCount} server errors`,
-    `${summary.unreportedOutcomeCount} outcome details omitted`,
-    `${summary.skippedEnvironmentCount} systems skipped`,
-    `${summary.failedEnvironmentCount} systems failed`,
-  ];
-  return `${formatWorktreeStorageBytes(summary.freedBytes)} estimated reclaimed · ${parts.join(" · ")}`;
+  return formatPruneOutcomeSummary(summarizePruneOutcomes(outcomes));
 }
 
 export function WorktreeStorageSettings() {
@@ -374,30 +362,44 @@ export function WorktreeStorageSettings() {
   });
   const [pruneScope, setPruneScope] = useState<PruneScope | null>(null);
   const [isPruning, setIsPruning] = useState(false);
-  const [savingPolicyEnvironmentId, setSavingPolicyEnvironmentId] = useState<EnvironmentId | null>(
-    null,
-  );
+  const [savingPolicyEnvironmentIds, setSavingPolicyEnvironmentIds] = useState<
+    ReadonlySet<EnvironmentId>
+  >(() => new Set());
   const [lastOutcomes, setLastOutcomes] = useState<readonly EnvironmentPruneOutcome[]>([]);
   const mutationPending = useRef(false);
+  const savingPolicyEnvironmentIdsRef = useRef<ReadonlySet<EnvironmentId>>(new Set());
   const plan = useMemo(() => planAcrossEnvironmentPrune(environments), [environments]);
 
   const updatePolicy = async (environmentId: EnvironmentId, policy: WorktreeAutoPrunePolicy) => {
-    setSavingPolicyEnvironmentId(environmentId);
-    const result = await updateSettings({
-      environmentId,
-      input: { patch: { worktreeAutoPrunePolicy: policy } },
-    });
-    setSavingPolicyEnvironmentId(null);
-    if (result._tag === "Success") {
-      toastManager.add({ type: "success", title: "Automatic prune policy updated" });
-    } else if (!isAtomCommandInterrupted(result)) {
-      const error = squashAtomCommandFailure(result);
-      toastManager.add({
-        type: "error",
-        title: "Could not update automatic prune policy",
-        description:
-          error instanceof Error ? error.message : "Try again when this system is connected.",
+    if (mutationPending.current) return;
+    const pending = beginPendingPolicyUpdate(savingPolicyEnvironmentIdsRef.current, environmentId);
+    if (pending === null) return;
+    savingPolicyEnvironmentIdsRef.current = pending;
+    setSavingPolicyEnvironmentIds(pending);
+    try {
+      const result = await updateSettings({
+        environmentId,
+        input: { patch: { worktreeAutoPrunePolicy: policy } },
       });
+      if (result._tag === "Success") {
+        toastManager.add({ type: "success", title: "Automatic prune policy updated" });
+      } else if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add({
+          type: "error",
+          title: "Could not update automatic prune policy",
+          description:
+            error instanceof Error ? error.message : "Try again when this system is connected.",
+        });
+      }
+    } finally {
+      const remaining = updatePendingEnvironmentIds(
+        savingPolicyEnvironmentIdsRef.current,
+        environmentId,
+        false,
+      );
+      savingPolicyEnvironmentIdsRef.current = remaining;
+      setSavingPolicyEnvironmentIds(remaining);
     }
   };
 
@@ -418,60 +420,60 @@ export function WorktreeStorageSettings() {
   };
 
   const runPrune = async () => {
-    if (pruneScope === null || mutationPending.current) return;
+    if (
+      pruneScope === null ||
+      mutationPending.current ||
+      savingPolicyEnvironmentIdsRef.current.size > 0
+    ) {
+      return;
+    }
     mutationPending.current = true;
     setIsPruning(true);
-
-    const confirmedIds = pruneScope.targets.map((environment) => environment.environmentId);
-    const currentPlan = resolveFrozenPrunePlan(environments, confirmedIds);
-    const targets = currentPlan.targets;
-    const currentIds = new Set(environments.map((environment) => environment.environmentId));
-    const skipped = [
-      ...pruneScope.skipped,
-      ...currentPlan.skipped.map(skippedPruneOutcome),
-      ...pruneScope.targets
-        .filter((environment) => !currentIds.has(environment.environmentId))
-        .map(
-          (environment): EnvironmentPruneOutcome => ({
-            ...environment,
-            status: "skipped",
-            reason: "unavailable",
-          }),
-        ),
-    ];
-    const results = await Promise.all(
-      targets.map(async (environment): Promise<EnvironmentPruneOutcome> => {
-        const result = await pruneStale({ environmentId: environment.environmentId, input: {} });
-        if (result._tag === "Success") {
-          return successfulPruneOutcome(environment, result.value);
-        }
-        const cause = squashAtomCommandFailure(result);
-        return {
-          environmentId: environment.environmentId,
-          label: environment.label,
-          status: "failure",
-          error: cause instanceof Error ? cause.message : "Prune request failed.",
-        };
-      }),
-    );
-    const outcomes = [...results, ...skipped];
-    const summary = summarizePruneOutcomes(outcomes);
-    setLastOutcomes(outcomes);
-    toastManager.add({
-      type: summary.tone,
-      title:
-        summary.tone === "warning"
-          ? "Prune finished with exceptions"
-          : summary.tone === "error"
-            ? "Prune failed"
-            : summary.removedCount > 0
-              ? `Pruned ${summary.removedCount} stale ${summary.removedCount === 1 ? "worktree" : "worktrees"}`
-              : "No stale worktrees were pruned",
-      description: pruneSummaryDescription(outcomes),
-    });
-    setPruneScope(null);
-    setIsPruning(false);
-    mutationPending.current = false;
+    try {
+      const currentPlan = reconcileFrozenPrunePlan(environments, pruneScope.targets);
+      const targets = currentPlan.targets;
+      const skipped: readonly EnvironmentPruneOutcome[] = [
+        ...pruneScope.skipped,
+        ...currentPlan.skipped.map((environment) => ({
+          ...environment,
+          status: "skipped" as const,
+        })),
+      ];
+      const results = await Promise.all(
+        targets.map(async (environment): Promise<EnvironmentPruneOutcome> => {
+          const result = await pruneStale({ environmentId: environment.environmentId, input: {} });
+          if (result._tag === "Success") {
+            return successfulPruneOutcome(environment, result.value);
+          }
+          const cause = squashAtomCommandFailure(result);
+          return {
+            environmentId: environment.environmentId,
+            label: environment.label,
+            status: "failure",
+            error: cause instanceof Error ? cause.message : "Prune request failed.",
+          };
+        }),
+      );
+      const outcomes = [...results, ...skipped];
+      const summary = summarizePruneOutcomes(outcomes);
+      setLastOutcomes(outcomes);
+      toastManager.add({
+        type: summary.tone,
+        title:
+          summary.tone === "warning"
+            ? "Prune finished with exceptions"
+            : summary.tone === "error"
+              ? "Prune failed"
+              : summary.removedCount > 0
+                ? `Pruned ${summary.removedCount} stale ${summary.removedCount === 1 ? "worktree" : "worktrees"}`
+                : "No stale worktrees were pruned",
+        description: pruneSummaryDescription(outcomes),
+      });
+      setPruneScope(null);
+    } finally {
+      setIsPruning(false);
+      mutationPending.current = false;
+    }
   };
 
   const confirmTargets = pruneScope?.targets ?? [];
@@ -490,7 +492,7 @@ export function WorktreeStorageSettings() {
     <SettingsPageContainer width="wide">
       <SettingsSection
         {...searchableSetting("worktree-storage-overview")}
-        icon={<HardDriveIcon className="size-4.5 text-muted-foreground" />}
+        icon={<HardDriveIcon className="size-4 text-muted-foreground" />}
         headerAction={
           <Button
             size="icon-micro"
@@ -569,7 +571,8 @@ export function WorktreeStorageSettings() {
                   disabled={
                     environment.connectionPhase !== "connected" ||
                     !environment.capable ||
-                    savingPolicyEnvironmentId === environment.environmentId
+                    isPruning ||
+                    savingPolicyEnvironmentIds.has(environment.environmentId)
                   }
                   onUpdate={(environmentId, policy) => void updatePolicy(environmentId, policy)}
                 />
@@ -579,7 +582,10 @@ export function WorktreeStorageSettings() {
                   variant="destructive-outline"
                   className="h-auto min-h-9 w-full max-w-full whitespace-normal py-1.5 leading-snug sm:h-auto sm:min-h-8 sm:w-auto"
                   disabled={
-                    isPruning || environment.connectionPhase !== "connected" || !environment.capable
+                    isPruning ||
+                    savingPolicyEnvironmentIds.size > 0 ||
+                    environment.connectionPhase !== "connected" ||
+                    !environment.capable
                   }
                   onClick={() => openPruneConfirmation("environment", environment.environmentId)}
                 >
@@ -599,7 +605,7 @@ export function WorktreeStorageSettings() {
 
       <SettingsSection
         {...searchableSetting("worktree-pruning")}
-        icon={<ShieldCheckIcon className="size-4.5 text-muted-foreground" />}
+        icon={<ShieldCheckIcon className="size-4 text-muted-foreground" />}
       >
         <SettingsRow
           title="Prune across connected systems"
@@ -608,7 +614,9 @@ export function WorktreeStorageSettings() {
             <Button
               variant="destructive-outline"
               className="h-auto min-h-9 w-full max-w-full whitespace-normal py-1.5 leading-snug sm:h-auto sm:min-h-8 sm:w-auto"
-              disabled={isPruning || plan.targets.length === 0}
+              disabled={
+                isPruning || savingPolicyEnvironmentIds.size > 0 || plan.targets.length === 0
+              }
               onClick={() => openPruneConfirmation("across")}
             >
               <Trash2Icon />

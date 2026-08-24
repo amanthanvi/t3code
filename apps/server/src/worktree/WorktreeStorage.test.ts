@@ -28,7 +28,6 @@ import {
   hasLivePathUse,
   isAppliedThreadPathEvent,
   isCanonicallyContained,
-  parseWorktreePorcelain,
   rankDetails,
   rankProjects,
   reservationIsValid,
@@ -288,13 +287,14 @@ it.layer(NodeServices.layer)("worktree storage safety decisions", (it) => {
       "worktree /detached\0HEAD def\0detached\0\0" +
       "worktree /locked\0HEAD ghi\0branch refs/heads/locked\0locked reason\0\0" +
       "worktree /prunable\0HEAD jkl\0branch refs/heads/prunable\0prunable reason\0\0";
-    expect(parseWorktreePorcelain(validOutput)).toEqual([
-      { path: "/main", locked: false, prunable: false, detached: false },
-      { path: "/detached", locked: false, prunable: false, detached: true },
-      { path: "/locked", locked: true, prunable: false, detached: false },
-      { path: "/prunable", locked: false, prunable: true, detached: false },
-    ]);
-    expect("entries" in decodeWorktreePorcelain(validOutput)).toBe(true);
+    expect(decodeWorktreePorcelain(validOutput)).toEqual({
+      entries: [
+        { path: "/main", locked: false, prunable: false, detached: false },
+        { path: "/detached", locked: false, prunable: false, detached: true },
+        { path: "/locked", locked: true, prunable: false, detached: false },
+        { path: "/prunable", locked: false, prunable: true, detached: false },
+      ],
+    });
     expect(decodeWorktreePorcelain("worktree /bare.git\0bare\0\0")).toEqual({
       entries: [{ path: "/bare.git", locked: false, prunable: false, detached: false }],
     });

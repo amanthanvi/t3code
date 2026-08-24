@@ -112,6 +112,7 @@ const makeHarness = Effect.fn("WorktreeStorage.serviceTest.makeHarness")(functio
   readonly secondThread?: boolean;
   readonly defectOnFirstRestore?: boolean;
   readonly defectOnSecondClear?: boolean;
+  readonly unassigned?: boolean;
 }) {
   const root = yield* Effect.promise(() =>
     NodeFSP.mkdtemp(NodePath.join(process.cwd(), ".worktree-storage-service-test-")),
@@ -220,13 +221,16 @@ const makeHarness = Effect.fn("WorktreeStorage.serviceTest.makeHarness")(functio
           )
         : Effect.sync(() => ({
             snapshotSequence: sequence,
-            projects: [project],
-            threads: [
-              makeThread(threadPath, firstThreadId),
-              ...(input.secondThread === true
-                ? [makeThread(secondThreadPath, secondThreadId)]
-                : []),
-            ],
+            projects: input.unassigned === true ? [] : [project],
+            threads:
+              input.unassigned === true
+                ? []
+                : [
+                    makeThread(threadPath, firstThreadId),
+                    ...(input.secondThread === true
+                      ? [makeThread(secondThreadPath, secondThreadId)]
+                      : []),
+                  ],
             updatedAt: OLD,
           })),
     getArchivedShellSnapshot: () =>
@@ -379,6 +383,28 @@ it.effect("labels scan-context failures with the requested operation", () =>
 
       const pruneError = yield* Effect.flip(service.pruneStale);
       expect(pruneError.operation).toBe("prune");
+    }),
+  ),
+);
+
+it.effect("reports unassigned worktrees as protected without claiming known staleness", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ remove: "success", unassigned: true });
+      const service = yield* harness.program;
+
+      const report = yield* service.getReport;
+
+      expect(report.worktreeCount).toBe(1);
+      expect(report.staleWorktreeCount).toBe(0);
+      expect(report.eligibleWorktreeCount).toBe(0);
+      expect(report.details).toHaveLength(1);
+      expect(report.details[0]).toMatchObject({
+        projectId: null,
+        stale: false,
+        eligible: false,
+        protectionReasons: ["unowned-or-orphaned"],
+      });
     }),
   ),
 );

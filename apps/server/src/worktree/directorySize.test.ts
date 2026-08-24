@@ -10,6 +10,22 @@ import {
 
 const temporaryDirectories: string[] = [];
 
+function traversalStats(input: {
+  readonly dev?: number;
+  readonly ino?: number;
+  readonly size?: number;
+  readonly symbolicLink?: boolean;
+  readonly directory?: boolean;
+}) {
+  return {
+    dev: input.dev ?? 1,
+    ino: input.ino ?? 1,
+    size: input.size ?? 1,
+    isSymbolicLink: () => input.symbolicLink ?? false,
+    isDirectory: () => input.directory ?? true,
+  };
+}
+
 async function makeTemporaryDirectory() {
   const directory = await NodeFSP.mkdtemp(NodePath.join(process.cwd(), ".worktree-storage-test-"));
   temporaryDirectories.push(directory);
@@ -91,6 +107,33 @@ describe("worktree directory sizing", () => {
     expect(result.failures).toEqual([]);
   });
 
+  it.each([
+    ["measurement", measureDirectoryNoFollowPromise],
+    ["discovery", discoverWorktreeDirectoriesNoFollowPromise],
+  ] as const)("rejects a directory identity swap during %s", async (_scanKind, scan) => {
+    let lstatCount = 0;
+    const fileSystem = {
+      lstat: () =>
+        Promise.resolve(
+          lstatCount++ === 0
+            ? traversalStats({ dev: 1, ino: 10 })
+            : traversalStats({ dev: 2, ino: 20, symbolicLink: true }),
+        ),
+      readdir: () => Promise.resolve([".git", "outside-entry"]),
+    };
+
+    const result = await scan(
+      "/managed/candidate",
+      { maxEntries: 10, maxDurationMs: 5_000, maxFailures: 10 },
+      fileSystem,
+    );
+
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.operation).toBe("stat");
+    if ("paths" in result) expect(result.paths).toEqual([]);
+    expect(lstatCount).toBe(2);
+  });
+
   it("reports discovery lstat failures as stat operations", async () => {
     const missing = NodePath.join(await makeTemporaryDirectory(), "missing");
     const result = await discoverWorktreeDirectoriesNoFollowPromise(missing, {
@@ -117,14 +160,7 @@ describe("worktree directory sizing", () => {
       vi.useFakeTimers();
       const never = new Promise<never>(() => undefined);
       const fileSystem = {
-        lstat: () =>
-          stalledOperation === "lstat"
-            ? never
-            : Promise.resolve({
-                size: 1,
-                isSymbolicLink: () => false,
-                isDirectory: () => true,
-              }),
+        lstat: () => (stalledOperation === "lstat" ? never : Promise.resolve(traversalStats({}))),
         readdir: () => (stalledOperation === "readdir" ? never : Promise.resolve([])),
       };
       const resultPromise = scan(
@@ -151,12 +187,7 @@ describe("worktree directory sizing", () => {
       .mockReturnValueOnce(0)
       .mockReturnValue(100);
     const fileSystem = {
-      lstat: () =>
-        Promise.resolve({
-          size: 1,
-          isSymbolicLink: () => false,
-          isDirectory: () => false,
-        }),
+      lstat: () => Promise.resolve(traversalStats({ directory: false })),
       readdir: () => Promise.resolve([]),
     };
     const resultPromise = scan(
