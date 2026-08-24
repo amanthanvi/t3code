@@ -5,6 +5,8 @@ import {
   type MessageId,
   type ModelSelection,
   type ProviderDriverKind,
+  type ProviderInteractionMode,
+  type RuntimeMode,
   type ServerProvider,
   type ScopedProjectRef,
   type ScopedThreadRef,
@@ -24,7 +26,10 @@ import {
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 import type { ComposerSubmissionIntent } from "../composer-logic";
 import type { TimelineEntry } from "../session-logic";
-import { getUnsupportedProviderAttachmentReason } from "../providerModels";
+import {
+  getUnsupportedProviderAttachmentReason,
+  getUnsupportedProviderModeReason,
+} from "../providerModels";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
@@ -41,6 +46,22 @@ export function getDirectAnnotationAttachmentBlockReason(input: {
   const attachmentCount =
     input.existingImages.length + (input.image !== null && !includesDirectImage ? 1 : 0);
   return getUnsupportedProviderAttachmentReason(input.provider, attachmentCount);
+}
+
+export function getDirectAnnotationBlockReason(input: {
+  readonly provider: ServerProvider | null | undefined;
+  readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: ProviderInteractionMode;
+  readonly existingImages: ReadonlyArray<Pick<ComposerImageAttachment, "id">>;
+  readonly image: Pick<ComposerImageAttachment, "id"> | null;
+}): string | null {
+  return (
+    getUnsupportedProviderModeReason({
+      provider: input.provider,
+      runtimeMode: input.runtimeMode,
+      interactionMode: input.interactionMode,
+    }) ?? getDirectAnnotationAttachmentBlockReason(input)
+  );
 }
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);

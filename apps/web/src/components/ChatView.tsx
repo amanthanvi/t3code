@@ -337,7 +337,7 @@ import {
   shouldReleaseTimelineAnchorForToolActivity,
   shouldShowBranchMismatchBanner,
   getStartedThreadModelChangeBlockReason,
-  getDirectAnnotationAttachmentBlockReason,
+  getDirectAnnotationBlockReason,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
   type LocalDispatchSnapshot,
@@ -5206,17 +5206,19 @@ function ChatViewContent(props: ChatViewProps) {
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
     } = sendCtx;
-    const directAnnotationAttachmentBlockReason = getDirectAnnotationAttachmentBlockReason({
+    const directAnnotationBlockReason = getDirectAnnotationBlockReason({
       provider: ctxSelectedProviderStatus,
+      runtimeMode,
+      interactionMode,
       existingImages: sendContextImages,
       image: directAnnotation?.image ?? null,
     });
-    if (directAnnotation && directAnnotationAttachmentBlockReason) {
+    if (directAnnotation && directAnnotationBlockReason) {
       toastManager.add(
         stackedThreadToast({
           type: "info",
           title: "Annotation attached to draft",
-          description: directAnnotationAttachmentBlockReason,
+          description: directAnnotationBlockReason,
         }),
       );
       return;

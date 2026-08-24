@@ -83,6 +83,8 @@ export interface AcpSessionRuntimeOptions {
   readonly beforePromptRegistration?: Effect.Effect<void>;
   /** Test-only scheduling hook after cancellation capture and before prompt serialization. */
   readonly beforePromptSerialization?: Effect.Effect<void>;
+  /** Test-only observation hook for prompt RPC fiber cleanup. */
+  readonly onPromptRpcFiberExit?: Effect.Effect<void>;
   readonly protocolLogging?: {
     readonly logIncoming?: boolean;
     readonly logOutgoing?: boolean;
@@ -793,31 +795,34 @@ export const make = (
                     acp.agent.prompt(requestPayload),
                   ),
                 ),
-                Effect.forkIn(runtimeScope),
+                Effect.ensuring(options.onPromptRpcFiberExit ?? Effect.void),
+                Effect.forkIn(runtimeScope, { startImmediately: true }),
               );
-              yield* options.beforePromptRegistration ?? Effect.void;
-              const cancelledBeforeRegistration = yield* promptCancellationSemaphore.withPermit(
-                Effect.gen(function* () {
-                  if (
-                    (yield* Ref.get(promptCancellationGenerationRef)) !== cancellationGeneration
-                  ) {
-                    return true;
-                  }
-                  yield* Ref.set(activePromptFiberRef, Option.some(promptRpcFiber));
-                  return false;
-                }),
-              );
-              if (cancelledBeforeRegistration) {
-                yield* Fiber.interrupt(promptRpcFiber).pipe(Effect.ignore);
-                return cancelledResponse;
-              }
-              yield* Deferred.succeed(promptStartGate, undefined);
-              return yield* Fiber.join(promptRpcFiber).pipe(
-                Effect.catchCause((cause) =>
-                  Cause.hasInterruptsOnly(cause)
-                    ? Effect.succeed(cancelledResponse)
-                    : Effect.failCause(cause),
-                ),
+              return yield* Effect.gen(function* () {
+                yield* options.beforePromptRegistration ?? Effect.void;
+                const cancelledBeforeRegistration = yield* promptCancellationSemaphore.withPermit(
+                  Effect.gen(function* () {
+                    if (
+                      (yield* Ref.get(promptCancellationGenerationRef)) !== cancellationGeneration
+                    ) {
+                      return true;
+                    }
+                    yield* Ref.set(activePromptFiberRef, Option.some(promptRpcFiber));
+                    return false;
+                  }),
+                );
+                if (cancelledBeforeRegistration) {
+                  return cancelledResponse;
+                }
+                yield* Deferred.succeed(promptStartGate, undefined);
+                return yield* Fiber.join(promptRpcFiber).pipe(
+                  Effect.catchCause((cause) =>
+                    Cause.hasInterruptsOnly(cause)
+                      ? Effect.succeed(cancelledResponse)
+                      : Effect.failCause(cause),
+                  ),
+                );
+              }).pipe(
                 Effect.ensuring(
                   Effect.gen(function* () {
                     yield* Fiber.interrupt(promptRpcFiber).pipe(Effect.ignore);

@@ -342,6 +342,66 @@ describe("AcpSessionRuntime", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("cleans up a forked prompt RPC when registration is interrupted", () =>
+    Effect.gen(function* () {
+      const registrationReached = yield* Deferred.make<void>();
+      const promptRpcFiberExited = yield* Deferred.make<void>();
+      const runtime = yield* AcpSessionRuntime.make({
+        spawn: {
+          command: mockAgentCommand,
+          args: mockAgentArgs,
+        },
+        cwd: process.cwd(),
+        clientInfo: { name: "t3-test", version: "0.0.0" },
+        authMethodId: "test",
+        beforePromptRegistration: Deferred.succeed(registrationReached, undefined).pipe(
+          Effect.andThen(Effect.never),
+        ),
+        onPromptRpcFiberExit: Deferred.succeed(promptRpcFiberExited, undefined).pipe(Effect.asVoid),
+      });
+      yield* runtime.start();
+
+      const promptFiber = yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "must clean up" }] })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(registrationReached);
+      yield* Fiber.interrupt(promptFiber);
+
+      expect(Option.isSome(yield* Deferred.poll(promptRpcFiberExited))).toBe(true);
+      yield* runtime.terminate("100 millis");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("requires authentication before session/load replay", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      const error = yield* runtime.start().pipe(Effect.flip);
+
+      expect(error._tag).toBe("AcpRequestError");
+      if (error._tag === "AcpRequestError") {
+        expect(error.errorMessage).toContain("authenticate before starting a session");
+      }
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_REQUIRE_AUTHENTICATION: "1",
+              T3_ACP_EMIT_LOAD_REPLAY: "1",
+            },
+          },
+          cwd: process.cwd(),
+          resumeSessionId: "mock-session-1",
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
   it.effect("segments assistant text around ACP tool calls", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;

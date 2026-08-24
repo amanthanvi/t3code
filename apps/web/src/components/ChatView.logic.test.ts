@@ -22,6 +22,7 @@ import {
   deriveComposerSendState,
   dismissBranchMismatchForSession,
   ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
+  getDirectAnnotationBlockReason,
   getStartedThreadModelChangeBlockReason,
   getDirectAnnotationAttachmentBlockReason,
   hasEnvironmentReconnectWarningGraceElapsed,
@@ -82,6 +83,37 @@ describe("direct preview annotation attachments", () => {
         image: null,
       }),
     ).toBeNull();
+  });
+
+  it("blocks direct annotations when the selected instance rejects the runtime mode", () => {
+    expect(
+      getDirectAnnotationBlockReason({
+        provider: {
+          ...providerWithoutImageAttachments,
+          supportedRuntimeModes: ["full-access"],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        existingImages: [],
+        image: null,
+      }),
+    ).toBe("Cline does not support the selected access mode. Choose Full access to continue.");
+  });
+
+  it("blocks direct annotations in carried Plan mode when the instance hides Plan", () => {
+    expect(
+      getDirectAnnotationBlockReason({
+        provider: {
+          ...providerWithoutImageAttachments,
+          supportedRuntimeModes: ["full-access"],
+          showInteractionModeToggle: false,
+        },
+        runtimeMode: "full-access",
+        interactionMode: "plan",
+        existingImages: [],
+        image: null,
+      }),
+    ).toBe("Cline does not support Plan mode. Choose Build to continue.");
   });
 });
 

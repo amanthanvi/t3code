@@ -393,6 +393,11 @@ const program = Effect.gen(function* () {
   yield* agent.handleLoadSession((request) =>
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
+      if (!authenticated) {
+        return yield* AcpError.AcpRequestError.authRequired(
+          "Call authenticate before starting a session",
+        );
+      }
       if (failLoadSession) {
         return yield* AcpError.AcpRequestError.internalError("Mock load session failure");
       }

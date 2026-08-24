@@ -138,6 +138,10 @@ export interface ClineAdapterLiveOptions {
   readonly sessionStartTimeout?: Duration.Input;
   /** Test-only scheduling hook at the shared ACP prompt serialization boundary. */
   readonly beforePromptSerialization?: Effect.Effect<void>;
+  /** Test-only scheduling hook before a send reserves its turn. */
+  readonly beforeTurnReservation?: Effect.Effect<void>;
+  /** Test-only scheduling hook inside the atomic prompt-settlement section. */
+  readonly afterPromptSettlementDecision?: Effect.Effect<void>;
 }
 
 interface PendingApproval {
@@ -866,6 +870,7 @@ export const makeClineAdapter = Effect.fn("makeClineAdapter")(function* (
           issue: "Turn requires non-empty text.",
         });
       }
+      yield* options?.beforeTurnReservation ?? Effect.void;
       const prepared = yield* withThreadLock(
         input.threadId,
         Effect.gen(function* () {
@@ -888,6 +893,7 @@ export const makeClineAdapter = Effect.fn("makeClineAdapter")(function* (
         }),
       );
       const { ctx, steeringTurnId, turnId } = prepared;
+      let promptReservationReleased = false;
 
       return yield* Effect.gen(function* () {
         const turnModelSelection =
@@ -948,22 +954,31 @@ export const makeClineAdapter = Effect.fn("makeClineAdapter")(function* (
           model,
         };
 
-        // Only the last remaining prompt settles the turn — a steer-
-        // superseded prompt resolving (usually cancelled) while another is
-        // in flight or pending must leave the merged turn running.
-        if (ctx.promptsInFlight === 1) {
-          yield* offerRuntimeEvent({
-            type: "turn.completed",
-            ...(yield* makeEventStamp()),
-            provider: PROVIDER,
-            threadId: input.threadId,
-            turnId,
-            payload: {
-              state: result.stopReason === "cancelled" ? "cancelled" : "completed",
-              stopReason: result.stopReason ?? null,
-            },
-          });
-        }
+        // Decide completion and release the prompt reservation under the same
+        // thread lock used by new sends. A send either joins this turn before
+        // the decision or starts a new turn after its completion is published.
+        yield* withThreadLock(
+          input.threadId,
+          Effect.gen(function* () {
+            ctx.promptsInFlight = Math.max(0, ctx.promptsInFlight - 1);
+            promptReservationReleased = true;
+            const shouldCompleteTurn = ctx.promptsInFlight === 0;
+            yield* options?.afterPromptSettlementDecision ?? Effect.void;
+            if (shouldCompleteTurn) {
+              yield* offerRuntimeEvent({
+                type: "turn.completed",
+                ...(yield* makeEventStamp()),
+                provider: PROVIDER,
+                threadId: input.threadId,
+                turnId,
+                payload: {
+                  state: result.stopReason === "cancelled" ? "cancelled" : "completed",
+                  stopReason: result.stopReason ?? null,
+                },
+              });
+            }
+          }),
+        ).pipe(Effect.uninterruptible);
 
         return {
           threadId: input.threadId,
@@ -972,11 +987,16 @@ export const makeClineAdapter = Effect.fn("makeClineAdapter")(function* (
         };
       }).pipe(
         Effect.ensuring(
-          withThreadLock(
-            input.threadId,
-            Effect.sync(() => {
-              ctx.promptsInFlight = Math.max(0, ctx.promptsInFlight - 1);
-            }),
+          Effect.suspend(() =>
+            promptReservationReleased
+              ? Effect.void
+              : withThreadLock(
+                  input.threadId,
+                  Effect.sync(() => {
+                    ctx.promptsInFlight = Math.max(0, ctx.promptsInFlight - 1);
+                    promptReservationReleased = true;
+                  }),
+                ),
           ),
         ),
       );

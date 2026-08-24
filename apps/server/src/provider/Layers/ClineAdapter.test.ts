@@ -66,7 +66,13 @@ const clineAdapterTestLayer = ServerConfig.layerTest(process.cwd(), {
 
 const makeTestAdapter = (
   binaryPath: string,
-  options?: Pick<ClineAdapterLiveOptions, "beforePromptSerialization" | "sessionStartTimeout">,
+  options?: Pick<
+    ClineAdapterLiveOptions,
+    | "afterPromptSettlementDecision"
+    | "beforePromptSerialization"
+    | "beforeTurnReservation"
+    | "sessionStartTimeout"
+  >,
 ) => makeClineAdapter(decodeClineSettings({ binaryPath }), options).pipe(Effect.orDie);
 
 it.effect("releases Cline thread locks after serialized work and thread churn", () =>
@@ -286,6 +292,77 @@ it.layer(clineAdapterTestLayer)("ClineAdapterLive", (it) => {
         "prompt:second concurrent prompt",
       ]);
     }).pipe(TestClock.withLive),
+  );
+
+  it.effect("publishes completion before a send that arrives after settlement decision", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("cline-atomic-prompt-settlement");
+      const wrapperPath = yield* Effect.promise(() => makeMockClineWrapper());
+      const firstSettlementDecided = yield* Deferred.make<void>();
+      const secondReservationAttempted = yield* Deferred.make<void>();
+      const settlementCount = yield* Ref.make(0);
+      const reservationCount = yield* Ref.make(0);
+      const adapter = yield* makeTestAdapter(wrapperPath, {
+        beforeTurnReservation: Ref.updateAndGet(reservationCount, (count) => count + 1).pipe(
+          Effect.flatMap((count) =>
+            count === 2 ? Deferred.succeed(secondReservationAttempted, undefined) : Effect.void,
+          ),
+        ),
+        afterPromptSettlementDecision: Ref.updateAndGet(settlementCount, (count) => count + 1).pipe(
+          Effect.flatMap((count) =>
+            count === 1
+              ? Deferred.succeed(firstSettlementDecided, undefined).pipe(
+                  Effect.andThen(Deferred.await(secondReservationAttempted)),
+                )
+              : Effect.void,
+          ),
+        ),
+      });
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cline"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      const firstTurnFiber = yield* adapter
+        .sendTurn({ threadId, input: "first turn", attachments: [] })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(firstSettlementDecided);
+      const secondTurnFiber = yield* adapter
+        .sendTurn({ threadId, input: "second turn", attachments: [] })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(secondReservationAttempted);
+
+      const [firstResult, secondResult] = yield* Effect.all([
+        Fiber.join(firstTurnFiber),
+        Fiber.join(secondTurnFiber),
+      ]);
+      yield* adapter.stopSession(threadId);
+      yield* Fiber.interrupt(eventsFiber);
+
+      assert.notEqual(firstResult.turnId, secondResult.turnId);
+      assert.lengthOf(
+        runtimeEvents.filter((event) => event.type === "turn.started"),
+        2,
+      );
+      assert.lengthOf(
+        runtimeEvents.filter((event) => event.type === "turn.completed"),
+        2,
+      );
+      const firstCompletedIndex = runtimeEvents.findIndex(
+        (event) => event.type === "turn.completed" && event.turnId === firstResult.turnId,
+      );
+      const secondStartedIndex = runtimeEvents.findIndex(
+        (event) => event.type === "turn.started" && event.turnId === secondResult.turnId,
+      );
+      assert.isAtLeast(firstCompletedIndex, 0);
+      assert.isAbove(secondStartedIndex, firstCompletedIndex);
+    }),
   );
 
   it.effect("resumes the exact Cline ACP session through session/load", () =>
