@@ -6,6 +6,12 @@ export function hasSelectableProviderModel(model: string): boolean {
   return model.trim().length > 0;
 }
 
+export function getNoSelectableProviderModelReason(
+  noSelectableModelAvailable: boolean,
+): string | null {
+  return noSelectableModelAvailable ? "No models available for this provider" : null;
+}
+
 export function getComposerProviderAvailability(input: {
   readonly hasProviderEntry: boolean;
   readonly selectedModel: string;

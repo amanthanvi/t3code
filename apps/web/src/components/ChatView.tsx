@@ -179,6 +179,7 @@ import {
   ChevronDownIcon,
   GitBranchIcon,
   PaperclipIcon,
+  ShieldAlertIcon,
   WifiOffIcon,
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
@@ -338,6 +339,7 @@ import {
   shouldShowBranchMismatchBanner,
   getStartedThreadModelChangeBlockReason,
   getDirectAnnotationBlockReason,
+  getUnsupportedProviderModeBannerCopy,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
   type LocalDispatchSnapshot,
@@ -4691,6 +4693,22 @@ function ChatViewContent(props: ChatViewProps) {
     handleStopBackgroundWork,
     isStoppingBackgroundWork,
   ]);
+  const unsupportedProviderModeBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    const copy = getUnsupportedProviderModeBannerCopy(unsupportedProviderModeReason);
+    if (copy === null) return null;
+    return {
+      id: `unsupported-provider-mode:${activeProviderStatus?.instanceId ?? "unknown"}:${runtimeMode}:${interactionMode}`,
+      variant: "warning",
+      icon: <ShieldAlertIcon />,
+      title: copy.title,
+      description: copy.description,
+    };
+  }, [
+    activeProviderStatus?.instanceId,
+    interactionMode,
+    runtimeMode,
+    unsupportedProviderModeReason,
+  ]);
   // A woken thread announces itself in the open view, not just the sidebar
   // pill. Dismissing marks the wake as seen (same acknowledgment as the
   // pill); sending a message clears it as a side effect of the send path.
@@ -4709,7 +4727,8 @@ function ChatViewContent(props: ChatViewProps) {
     };
   }, [acknowledgeActiveThreadWoke, activeThread?.id, activeThreadWokeVisible]);
   // The stack renders items[0] front-most and tucks the rest behind hover, so
-  // ordering is priority: urgent system banners (error/warning variants plus
+  // ordering is priority: unsupported provider modes, urgent system banners
+  // (error/warning variants plus
   // calm-styled live states flagged `urgent`, like update progress), then
   // background liveness — its Stop button is the only stop affordance for
   // settled turns, so a passive "update available" notice must not cover it —
@@ -4772,8 +4791,11 @@ function ChatViewContent(props: ChatViewProps) {
       backgroundLivenessBannerItem === null ? [] : [backgroundLivenessBannerItem];
     const wokeThreadItems = wokeThreadBannerItem === null ? [] : [wokeThreadBannerItem];
     const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
+    const unsupportedProviderModeItems =
+      unsupportedProviderModeBannerItem === null ? [] : [unsupportedProviderModeBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
+        ...unsupportedProviderModeItems,
         ...urgentSystemItems,
         ...backgroundLivenessItems,
         ...calmSystemItems,
@@ -4782,6 +4804,7 @@ function ChatViewContent(props: ChatViewProps) {
       ];
     }
     return [
+      ...unsupportedProviderModeItems,
       ...urgentSystemItems,
       ...backgroundLivenessItems,
       ...calmSystemItems,
@@ -4836,6 +4859,7 @@ function ChatViewContent(props: ChatViewProps) {
     parkedThreadBannerItem,
     showBranchMismatchBanner,
     systemComposerBannerItems,
+    unsupportedProviderModeBannerItem,
     wokeThreadBannerItem,
   ]);
   useEffect(() => {

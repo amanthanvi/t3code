@@ -25,6 +25,7 @@ import {
   getDirectAnnotationBlockReason,
   getStartedThreadModelChangeBlockReason,
   getDirectAnnotationAttachmentBlockReason,
+  getUnsupportedProviderModeBannerCopy,
   hasEnvironmentReconnectWarningGraceElapsed,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
@@ -114,6 +115,21 @@ describe("direct preview annotation attachments", () => {
         image: null,
       }),
     ).toBe("Cline does not support Plan mode. Choose Build to continue.");
+  });
+});
+
+describe("unsupported provider mode banner", () => {
+  it("surfaces the actionable send-block reason as visible banner copy", () => {
+    expect(
+      getUnsupportedProviderModeBannerCopy(
+        "Cline does not support the selected access mode. Choose Full access to continue.",
+      ),
+    ).toEqual({
+      title: "Provider mode unavailable",
+      description:
+        "Cline does not support the selected access mode. Choose Full access to continue.",
+    });
+    expect(getUnsupportedProviderModeBannerCopy(null)).toBeNull();
   });
 });
 

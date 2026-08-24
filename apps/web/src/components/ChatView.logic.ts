@@ -64,6 +64,18 @@ export function getDirectAnnotationBlockReason(input: {
   );
 }
 
+export function getUnsupportedProviderModeBannerCopy(reason: string | null): {
+  readonly title: string;
+  readonly description: string;
+} | null {
+  return reason === null
+    ? null
+    : {
+        title: "Provider mode unavailable",
+        description: reason,
+      };
+}
+
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
 export function shouldDockDraftHeroForSubmission(input: {

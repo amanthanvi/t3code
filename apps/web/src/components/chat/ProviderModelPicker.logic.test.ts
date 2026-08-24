@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   getComposerProviderAvailability,
   getFallbackProviderModelLabel,
+  getNoSelectableProviderModelReason,
   hasSelectableProviderModel,
 } from "./ProviderModelPicker.logic";
 
@@ -17,6 +18,11 @@ describe("getFallbackProviderModelLabel", () => {
     expect(hasSelectableProviderModel("")).toBe(false);
     expect(hasSelectableProviderModel("  ")).toBe(false);
     expect(hasSelectableProviderModel("composer-2")).toBe(true);
+  });
+
+  it("provides an actionable disabled reason for an empty provider catalog", () => {
+    expect(getNoSelectableProviderModelReason(true)).toBe("No models available for this provider");
+    expect(getNoSelectableProviderModelReason(false)).toBeNull();
   });
 });
 

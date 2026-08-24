@@ -52,6 +52,16 @@ export function sourceControlWriterToggleState(input: {
   } as const;
 }
 
+export function sourceControlWriterUnavailableMessage(input: {
+  readonly hasOverride: boolean;
+  readonly hasSupportedModel: boolean;
+}): string | null {
+  if (input.hasSupportedModel) return null;
+  return input.hasOverride
+    ? "The selected source control writer is unavailable. Turn off this override or enable a text generation provider with models."
+    : "No enabled and available text generation provider with models is available.";
+}
+
 export function hasUsableSourceControlWriterModel(
   entries: ReadonlyArray<
     Pick<ProviderInstanceEntry, "enabled" | "isAvailable" | "status" | "models">
@@ -90,6 +100,10 @@ export function SourceControlWritingSettingsSection() {
   );
   const canUseDedicatedModel = hasUsableSourceControlWriterModel(instanceEntries);
   const dedicatedWriterToggle = sourceControlWriterToggleState({
+    hasOverride: usesDedicatedModel,
+    hasSupportedModel: canUseDedicatedModel,
+  });
+  const dedicatedWriterUnavailableMessage = sourceControlWriterUnavailableMessage({
     hasOverride: usesDedicatedModel,
     hasSupportedModel: canUseDedicatedModel,
   });
@@ -200,7 +214,10 @@ export function SourceControlWritingSettingsSection() {
 
       <SettingsRow
         title="Source control writer model"
-        description="Optional model override for change descriptions, change request titles and descriptions, and branch or bookmark names. Off uses the global text generation model."
+        description={
+          dedicatedWriterUnavailableMessage ??
+          "Optional model override for change descriptions, change request titles and descriptions, and branch or bookmark names. Off uses the global text generation model."
+        }
         control={
           <div className="flex flex-wrap items-center justify-end gap-2">
             {usesDedicatedModel && canUseDedicatedModel ? (

@@ -95,7 +95,10 @@ import {
 } from "../composerFooterLayout";
 import { type ComposerPromptEditorHandle, ComposerPromptEditor } from "../ComposerPromptEditor";
 import { ProviderModelPicker } from "./ProviderModelPicker";
-import { getComposerProviderAvailability } from "./ProviderModelPicker.logic";
+import {
+  getComposerProviderAvailability,
+  getNoSelectableProviderModelReason,
+} from "./ProviderModelPicker.logic";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
@@ -877,6 +880,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   const effectiveSendDisabledReason =
     sendDisabledReason ??
+    getNoSelectableProviderModelReason(noSelectableModelAvailable) ??
     getUnsupportedProviderAttachmentReason(selectedProviderStatus, composerImages.length);
   const isSendDisabled = effectiveSendDisabledReason !== null;
   const selectedProviderModels = useMemo<ReadonlyArray<ServerProvider["models"][number]>>(
@@ -1895,6 +1899,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     (event?: { preventDefault: () => void }, intent: ComposerSubmissionIntent = "foreground") => {
       if (noProviderAvailable || isSendDisabled) {
         event?.preventDefault();
+        setProviderInputSubmissionError(effectiveSendDisabledReason);
         return;
       }
       // A send while a pasted image is still compressing would strand that
@@ -1932,6 +1937,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       activeThreadId,
       activePendingProgress,
       blurMobileComposerAfterSend,
+      effectiveSendDisabledReason,
       isSendDisabled,
       noProviderAvailable,
       onSend,
@@ -2968,7 +2974,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       isConnecting={isConnecting}
                       isEnvironmentUnavailable={
                         environmentUnavailable !== null ||
-                        noProviderAvailable ||
+                        noProviderEntryAvailable ||
                         projectSelectionRequired
                       }
                       isPreparingWorktree={false}
@@ -3297,7 +3303,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       isConnecting={isConnecting}
                       isEnvironmentUnavailable={
                         environmentUnavailable !== null ||
-                        noProviderAvailable ||
+                        noProviderEntryAvailable ||
                         projectSelectionRequired
                       }
                       isPreparingWorktree={false}
@@ -3428,7 +3434,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     isConnecting={isConnecting}
                     isEnvironmentUnavailable={
                       environmentUnavailable !== null ||
-                      noProviderAvailable ||
+                      noProviderEntryAvailable ||
                       projectSelectionRequired
                     }
                     isPreparingWorktree={isPreparingWorktree}
