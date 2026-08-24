@@ -12,6 +12,25 @@ export function getNoSelectableProviderModelReason(
   return noSelectableModelAvailable ? "No models available for this provider" : null;
 }
 
+export function updateProviderInputSubmissionError(
+  error: string | null,
+  event:
+    | {
+        readonly type: "blocked-submit";
+        readonly effectiveSendDisabledReason: string | null;
+      }
+    | {
+        readonly type: "effective-send-disabled-reason-changed";
+        readonly previousEffectiveSendDisabledReason: string | null;
+        readonly effectiveSendDisabledReason: string | null;
+      },
+): string | null {
+  if (event.type === "blocked-submit") return event.effectiveSendDisabledReason;
+  return event.previousEffectiveSendDisabledReason === event.effectiveSendDisabledReason
+    ? error
+    : null;
+}
+
 export function getComposerProviderAvailability(input: {
   readonly hasProviderEntry: boolean;
   readonly selectedModel: string;

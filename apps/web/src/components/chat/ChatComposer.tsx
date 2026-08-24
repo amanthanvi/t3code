@@ -98,6 +98,7 @@ import { ProviderModelPicker } from "./ProviderModelPicker";
 import {
   getComposerProviderAvailability,
   getNoSelectableProviderModelReason,
+  updateProviderInputSubmissionError,
 } from "./ProviderModelPicker.logic";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
@@ -987,6 +988,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [providerInputSubmissionError, setProviderInputSubmissionError] = useState<string | null>(
     null,
   );
+  const previousEffectiveSendDisabledReasonRef = useRef(effectiveSendDisabledReason);
   const [composerMenuAnchor, setComposerMenuAnchor] = useState<HTMLDivElement | null>(null);
   const [isStashMenuOpen, setIsStashMenuOpen] = useState(false);
   const [isTasksDrawerOpen, setIsTasksDrawerOpen] = useState(false);
@@ -1394,6 +1396,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedPromptEffort,
     selectedProvider,
   ]);
+
+  useEffect(() => {
+    const previousEffectiveSendDisabledReason = previousEffectiveSendDisabledReasonRef.current;
+    previousEffectiveSendDisabledReasonRef.current = effectiveSendDisabledReason;
+    setProviderInputSubmissionError((error) =>
+      updateProviderInputSubmissionError(error, {
+        type: "effective-send-disabled-reason-changed",
+        previousEffectiveSendDisabledReason,
+        effectiveSendDisabledReason,
+      }),
+    );
+  }, [effectiveSendDisabledReason]);
 
   useEffect(() => {
     composerImagesRef.current = composerImages;
@@ -1899,7 +1913,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     (event?: { preventDefault: () => void }, intent: ComposerSubmissionIntent = "foreground") => {
       if (noProviderAvailable || isSendDisabled) {
         event?.preventDefault();
-        setProviderInputSubmissionError(effectiveSendDisabledReason);
+        setProviderInputSubmissionError((error) =>
+          updateProviderInputSubmissionError(error, {
+            type: "blocked-submit",
+            effectiveSendDisabledReason,
+          }),
+        );
         return;
       }
       // A send while a pasted image is still compressing would strand that

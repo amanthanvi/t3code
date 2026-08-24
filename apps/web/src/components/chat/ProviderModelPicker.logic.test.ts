@@ -5,6 +5,7 @@ import {
   getFallbackProviderModelLabel,
   getNoSelectableProviderModelReason,
   hasSelectableProviderModel,
+  updateProviderInputSubmissionError,
 } from "./ProviderModelPicker.logic";
 
 describe("getFallbackProviderModelLabel", () => {
@@ -23,6 +24,51 @@ describe("getFallbackProviderModelLabel", () => {
   it("provides an actionable disabled reason for an empty provider catalog", () => {
     expect(getNoSelectableProviderModelReason(true)).toBe("No models available for this provider");
     expect(getNoSelectableProviderModelReason(false)).toBeNull();
+  });
+
+  it("clears a blocked-submit error when the provider mode is corrected", () => {
+    const blockedReason =
+      "Cline does not support the selected access mode. Choose Full access to continue.";
+    const error = updateProviderInputSubmissionError(null, {
+      type: "blocked-submit",
+      effectiveSendDisabledReason: blockedReason,
+    });
+    expect(error).toBe(blockedReason);
+    expect(
+      updateProviderInputSubmissionError(error, {
+        type: "effective-send-disabled-reason-changed",
+        previousEffectiveSendDisabledReason: blockedReason,
+        effectiveSendDisabledReason: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("clears a blocked-submit error when an unsupported image is removed", () => {
+    const blockedReason =
+      "Cline does not support image attachments. Remove the images to continue.";
+    const error = updateProviderInputSubmissionError(null, {
+      type: "blocked-submit",
+      effectiveSendDisabledReason: blockedReason,
+    });
+    expect(error).toBe(blockedReason);
+    expect(
+      updateProviderInputSubmissionError(error, {
+        type: "effective-send-disabled-reason-changed",
+        previousEffectiveSendDisabledReason: blockedReason,
+        effectiveSendDisabledReason: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("retains a blocked-submit error while its reason is unchanged", () => {
+    const blockedReason = "No models available for this provider";
+    expect(
+      updateProviderInputSubmissionError(blockedReason, {
+        type: "effective-send-disabled-reason-changed",
+        previousEffectiveSendDisabledReason: blockedReason,
+        effectiveSendDisabledReason: blockedReason,
+      }),
+    ).toBe(blockedReason);
   });
 });
 
