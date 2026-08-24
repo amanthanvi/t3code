@@ -59,10 +59,14 @@ function processOutput(
   };
 }
 
-function makeProject(mainPath: string): OrchestrationProjectShell {
+function makeProject(
+  mainPath: string,
+  id: ProjectId = ProjectId.make("project-service"),
+  title = "Project",
+): OrchestrationProjectShell {
   return {
-    id: ProjectId.make("project-service"),
-    title: "Project",
+    id,
+    title,
     workspaceRoot: mainPath,
     defaultModelSelection: null,
     scripts: [],
@@ -74,10 +78,11 @@ function makeProject(mainPath: string): OrchestrationProjectShell {
 function makeThread(
   worktreePath: string | null,
   id: ThreadId = ThreadId.make("thread-service"),
+  projectId: ProjectId = ProjectId.make("project-service"),
 ): OrchestrationThreadShell {
   return {
     id,
-    projectId: ProjectId.make("project-service"),
+    projectId,
     title: "Thread",
     modelSelection: {
       instanceId: ProviderInstanceId.make("codex"),
@@ -113,6 +118,7 @@ const makeHarness = Effect.fn("WorktreeStorage.serviceTest.makeHarness")(functio
   readonly defectOnFirstRestore?: boolean;
   readonly defectOnSecondClear?: boolean;
   readonly unassigned?: boolean;
+  readonly sharedAcrossProjects?: boolean;
 }) {
   const root = yield* Effect.promise(() =>
     NodeFSP.mkdtemp(NodePath.join(process.cwd(), ".worktree-storage-service-test-")),
@@ -132,7 +138,8 @@ const makeHarness = Effect.fn("WorktreeStorage.serviceTest.makeHarness")(functio
   );
 
   let threadPath: string | null = candidatePath;
-  let secondThreadPath: string | null = input.secondThread === true ? candidatePath : null;
+  const hasSecondThread = input.secondThread === true || input.sharedAcrossProjects === true;
+  let secondThreadPath: string | null = hasSecondThread ? candidatePath : null;
   const firstThreadId = ThreadId.make("thread-service");
   const secondThreadId = ThreadId.make("thread-service-2");
   let sequence = 0;
@@ -145,6 +152,11 @@ const makeHarness = Effect.fn("WorktreeStorage.serviceTest.makeHarness")(functio
   const removeStarted = yield* Deferred.make<void>();
   const releaseRemove = yield* Deferred.make<void>();
   const project = makeProject(mainPath);
+  const secondProject = makeProject(
+    mainPath,
+    ProjectId.make("project-service-2"),
+    "Second project",
+  );
 
   const engineLayer = Layer.mock(OrchestrationEngine.OrchestrationEngineService)({
     dispatch: (command) =>
@@ -221,14 +233,23 @@ const makeHarness = Effect.fn("WorktreeStorage.serviceTest.makeHarness")(functio
           )
         : Effect.sync(() => ({
             snapshotSequence: sequence,
-            projects: input.unassigned === true ? [] : [project],
+            projects:
+              input.unassigned === true
+                ? []
+                : [project, ...(input.sharedAcrossProjects === true ? [secondProject] : [])],
             threads:
               input.unassigned === true
                 ? []
                 : [
                     makeThread(threadPath, firstThreadId),
-                    ...(input.secondThread === true
-                      ? [makeThread(secondThreadPath, secondThreadId)]
+                    ...(hasSecondThread
+                      ? [
+                          makeThread(
+                            secondThreadPath,
+                            secondThreadId,
+                            input.sharedAcrossProjects === true ? secondProject.id : project.id,
+                          ),
+                        ]
                       : []),
                   ],
             updatedAt: OLD,
@@ -244,8 +265,14 @@ const makeHarness = Effect.fn("WorktreeStorage.serviceTest.makeHarness")(functio
       Effect.sync(() =>
         threadId === firstThreadId
           ? Option.some(makeThread(threadPath, firstThreadId))
-          : input.secondThread === true && threadId === secondThreadId
-            ? Option.some(makeThread(secondThreadPath, secondThreadId))
+          : hasSecondThread && threadId === secondThreadId
+            ? Option.some(
+                makeThread(
+                  secondThreadPath,
+                  secondThreadId,
+                  input.sharedAcrossProjects === true ? secondProject.id : project.id,
+                ),
+              )
             : Option.none(),
       ),
   });
@@ -405,6 +432,30 @@ it.effect("reports unassigned worktrees as protected without claiming known stal
         eligible: false,
         protectionReasons: ["unowned-or-orphaned"],
       });
+    }),
+  ),
+);
+
+it.effect("attributes a shared checkout once to the same project as its detail", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ remove: "success", sharedAcrossProjects: true });
+      const service = yield* harness.program;
+
+      const report = yield* service.getReport;
+      const detail = report.details[0];
+      const project = report.projects[0];
+
+      expect(detail).toBeDefined();
+      expect(project).toBeDefined();
+      if (detail === undefined || project === undefined) return;
+      expect(detail.protectionReasons).toContain("shared-across-projects");
+      expect(report.projects).toHaveLength(1);
+      expect(project.projectId).toBe(detail.projectId);
+      expect(project.bytes).toBe(detail.bytes);
+      expect(report.projects.reduce((total, item) => total + item.bytes, 0)).toBe(
+        report.totalBytes,
+      );
     }),
   ),
 );

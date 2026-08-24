@@ -14,6 +14,10 @@ during traversal. It measures apparent checkout bytes with bounded entry, time, 
 and response budgets. Shared Git object storage is not attributed to a linked worktree, so reported
 bytes are an estimate rather than a promise about space reclaimed by deletion.
 
+Each physical checkout contributes bytes once. If threads from multiple projects reference the
+same checkout, the report attributes it to one deterministic associated project and marks the
+detail as shared across projects; project aggregates therefore never multiply system storage.
+
 The time budget bounds when a scan returns and prevents late filesystem results from influencing a
 deletion decision. Node's `lstat` and `readdir` promises are not cancellable, so an operating-system
 request that outlives the deadline may still settle later and is ignored.

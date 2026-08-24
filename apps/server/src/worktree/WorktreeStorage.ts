@@ -981,23 +981,23 @@ export const make = Effect.gen(function* () {
     const scans = batch.scans;
     const aggregates = new Map<ProjectId, WorktreeStorageProjectAggregate>();
     for (const scan of scans) {
-      for (const project of scan.association.projects) {
-        const current = aggregates.get(project.id) ?? {
-          projectId: project.id,
-          projectTitle: project.title,
-          bytes: 0,
-          worktreeCount: 0,
-          staleWorktreeCount: 0,
-          eligibleWorktreeCount: 0,
-        };
-        aggregates.set(project.id, {
-          ...current,
-          bytes: safeByteCount(current.bytes + scan.detail.bytes),
-          worktreeCount: current.worktreeCount + 1,
-          staleWorktreeCount: current.staleWorktreeCount + (scan.detail.stale ? 1 : 0),
-          eligibleWorktreeCount: current.eligibleWorktreeCount + (scan.detail.eligible ? 1 : 0),
-        });
-      }
+      const projectId = scan.detail.projectId;
+      if (projectId === null) continue;
+      const current = aggregates.get(projectId) ?? {
+        projectId,
+        projectTitle: scan.detail.projectTitle,
+        bytes: 0,
+        worktreeCount: 0,
+        staleWorktreeCount: 0,
+        eligibleWorktreeCount: 0,
+      };
+      aggregates.set(projectId, {
+        ...current,
+        bytes: safeByteCount(current.bytes + scan.detail.bytes),
+        worktreeCount: current.worktreeCount + 1,
+        staleWorktreeCount: current.staleWorktreeCount + (scan.detail.stale ? 1 : 0),
+        eligibleWorktreeCount: current.eligibleWorktreeCount + (scan.detail.eligible ? 1 : 0),
+      });
     }
     const projects = rankProjects([...aggregates.values()]);
     const details = rankDetails(scans.map((scan) => scan.detail));
