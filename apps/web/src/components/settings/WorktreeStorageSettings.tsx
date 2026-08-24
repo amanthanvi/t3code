@@ -668,7 +668,7 @@ export function WorktreeStorageSettings() {
                 ? `Prune all stale worktrees on ${confirmTargets[0]?.label ?? "this system"}?`
                 : `Prune all stale worktrees across ${confirmTargets.length} connected ${confirmTargets.length === 1 ? "system" : "systems"}?`}
             </AlertDialogTitle>
-            <AlertDialogDescription className="space-y-3 text-left">
+            <AlertDialogDescription className="space-y-3">
               <span className="block">
                 Each listed system performs a fresh safety check. Dirty, active, or unknown
                 worktrees remain protected. T3 Code never queues this action for an offline system.
