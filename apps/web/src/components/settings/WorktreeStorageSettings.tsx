@@ -52,7 +52,12 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
-import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import {
+  SettingsPageContainer,
+  SettingsRow,
+  SettingsSection,
+  useRelativeTimeTick,
+} from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
 const PROJECT_DISPLAY_LIMIT = 8;
@@ -352,6 +357,7 @@ function pruneSummaryDescription(outcomes: readonly EnvironmentPruneOutcome[]): 
 }
 
 export function WorktreeStorageSettings() {
+  useRelativeTimeTick();
   const { environments, coverage, refresh } = useWorktreeStorage();
   const pruneStale = useAtomCommand(worktreeStorageEnvironment.pruneStale, {
     reportFailure: false,
