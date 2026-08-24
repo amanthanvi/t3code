@@ -43,7 +43,7 @@ export function buildClineAcpSpawnInput(
     command: clineSettings?.binaryPath || "cline",
     args: ["--acp"],
     cwd,
-    ...(forceKillAfter ? { forceKillAfter } : {}),
+    ...(forceKillAfter !== undefined ? { forceKillAfter } : {}),
     ...(environment ? { env: environment } : {}),
   };
 }

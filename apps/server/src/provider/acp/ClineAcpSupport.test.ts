@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as itx from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import type * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
@@ -10,6 +14,7 @@ import {
   CLINE_PROCESS_FORCE_KILL_AFTER,
   currentClineModelIdFromSessionSetup,
   clineModelsFromSessionConfigOptions,
+  makeClineAcpRuntime,
 } from "./ClineAcpSupport.ts";
 
 function modelSelectOption(
@@ -82,7 +87,53 @@ describe("cline ACP support", () => {
       cwd: "/workspace",
       forceKillAfter: "2 seconds",
     });
+    expect(buildClineAcpSpawnInput({ binaryPath: "cline" }, "/workspace", undefined, 0)).toEqual({
+      command: "cline",
+      args: ["--acp"],
+      cwd: "/workspace",
+      forceKillAfter: 0,
+    });
   });
+
+  itx.it.effect("forwards an immediate force-kill bound to the ACP child command", () =>
+    Effect.gen(function* () {
+      let spawnedCommand:
+        | {
+            readonly options: {
+              readonly forceKillAfter?: unknown;
+            };
+          }
+        | undefined;
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          spawnedCommand = command as unknown as typeof spawnedCommand;
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.never,
+            isRunning: Effect.succeed(true),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.empty,
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        }),
+      );
+
+      yield* makeClineAcpRuntime({
+        childProcessSpawner: spawner,
+        clineSettings: { binaryPath: "cline" },
+        cwd: "/workspace",
+        forceKillAfter: 0,
+        clientInfo: { name: "t3-test", version: "0.0.0" },
+      });
+
+      expect(spawnedCommand?.options.forceKillAfter).toBe(0);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 
   it("reads the current model id from model-category config options", () => {
     const current = currentClineModelIdFromSessionSetup({
