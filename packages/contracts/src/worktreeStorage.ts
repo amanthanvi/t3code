@@ -165,7 +165,6 @@ export class WorktreeStorageError extends Schema.TaggedErrorClass<WorktreeStorag
   "WorktreeStorageError",
   {
     operation: Schema.Literals(["report", "prune"]),
-    reason: Schema.Literal("state-load-failed"),
     cause: Schema.Defect(),
   },
 ) {

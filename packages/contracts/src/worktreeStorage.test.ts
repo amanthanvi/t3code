@@ -31,14 +31,12 @@ describe("worktree storage contracts", () => {
     expect(decodeSettings({}).worktreeAutoPrunePolicy).toEqual(DEFAULT_WORKTREE_AUTO_PRUNE_POLICY);
   });
 
-  it("derives stable worktree storage failure text from a structured reason", () => {
+  it("derives stable worktree storage failure text from the operation", () => {
     const error = new WorktreeStorageError({
       operation: "report",
-      reason: "state-load-failed",
       cause: new Error("internal detail"),
     });
 
-    expect(error.reason).toBe("state-load-failed");
     expect(error.message).toBe("Worktree storage report could not load current environment state.");
   });
 

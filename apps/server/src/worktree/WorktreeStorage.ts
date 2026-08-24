@@ -714,7 +714,6 @@ export const make = Effect.gen(function* () {
         (cause) =>
           new WorktreeStorageError({
             operation,
-            reason: "state-load-failed",
             cause,
           }),
       ),
