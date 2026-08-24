@@ -25,7 +25,8 @@ import {
   getDirectAnnotationBlockReason,
   getStartedThreadModelChangeBlockReason,
   getDirectAnnotationAttachmentBlockReason,
-  getUnsupportedProviderModeBannerCopy,
+  getUnsupportedProviderInputBannerCopy,
+  getUnsupportedProviderInputReason,
   hasEnvironmentReconnectWarningGraceElapsed,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
@@ -118,18 +119,65 @@ describe("direct preview annotation attachments", () => {
   });
 });
 
-describe("unsupported provider mode banner", () => {
-  it("surfaces the actionable send-block reason as visible banner copy", () => {
-    expect(
-      getUnsupportedProviderModeBannerCopy(
-        "Cline does not support the selected access mode. Choose Full access to continue.",
-      ),
-    ).toEqual({
+describe("unsupported provider input banner", () => {
+  it("surfaces a carried unsupported image as persistent banner copy", () => {
+    const reason = getUnsupportedProviderInputReason({
+      provider: providerWithoutImageAttachments,
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      attachmentCount: 1,
+    });
+
+    expect(reason).toEqual({
+      kind: "attachment",
+      reason: "Cline does not support image attachments. Remove the images to continue.",
+    });
+    expect(getUnsupportedProviderInputBannerCopy(reason)).toEqual({
+      title: "Image attachments unavailable",
+      description: "Cline does not support image attachments. Remove the images to continue.",
+    });
+  });
+
+  it("gives an unsupported mode precedence over an unsupported attachment", () => {
+    const reason = getUnsupportedProviderInputReason({
+      provider: {
+        ...providerWithoutImageAttachments,
+        supportedRuntimeModes: ["full-access"],
+      },
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      attachmentCount: 1,
+    });
+
+    expect(reason).toEqual({
+      kind: "mode",
+      reason: "Cline does not support the selected access mode. Choose Full access to continue.",
+    });
+    expect(getUnsupportedProviderInputBannerCopy(reason)).toEqual({
       title: "Provider mode unavailable",
       description:
         "Cline does not support the selected access mode. Choose Full access to continue.",
     });
-    expect(getUnsupportedProviderModeBannerCopy(null)).toBeNull();
+  });
+
+  it("does not show an attachment banner without images or for a supporting provider", () => {
+    expect(
+      getUnsupportedProviderInputReason({
+        provider: providerWithoutImageAttachments,
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        attachmentCount: 0,
+      }),
+    ).toBeNull();
+    expect(
+      getUnsupportedProviderInputReason({
+        provider: { ...providerWithoutImageAttachments, supportsImageAttachments: true },
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        attachmentCount: 1,
+      }),
+    ).toBeNull();
+    expect(getUnsupportedProviderInputBannerCopy(null)).toBeNull();
   });
 });
 

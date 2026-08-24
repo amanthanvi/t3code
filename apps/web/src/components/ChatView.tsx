@@ -195,7 +195,7 @@ import {
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { useBrowserHistoryStore } from "~/browserHistoryStore";
 import { registerFaviconProjectForThread } from "~/browserFaviconStore";
-import { getProviderModelCapabilities, getUnsupportedProviderModeReason } from "../providerModels";
+import { getProviderModelCapabilities } from "../providerModels";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -339,7 +339,8 @@ import {
   shouldShowBranchMismatchBanner,
   getStartedThreadModelChangeBlockReason,
   getDirectAnnotationBlockReason,
-  getUnsupportedProviderModeBannerCopy,
+  getUnsupportedProviderInputBannerCopy,
+  getUnsupportedProviderInputReason,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
   type LocalDispatchSnapshot,
@@ -1366,6 +1367,9 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
+  );
+  const composerImageCount = useComposerDraftStore(
+    (store) => store.getComposerDraft(composerDraftTarget)?.images.length ?? 0,
   );
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
@@ -2796,10 +2800,11 @@ function ChatViewContent(props: ChatViewProps) {
   // composer will dispatch. A stale disabled draft selection must not impose
   // its restrictions while the composer has already fallen back elsewhere.
   const activeProviderStatus = activeProviderEntry?.snapshot ?? null;
-  const unsupportedProviderModeReason = getUnsupportedProviderModeReason({
+  const unsupportedProviderInputReason = getUnsupportedProviderInputReason({
     provider: activeProviderStatus,
     runtimeMode,
     interactionMode,
+    attachmentCount: composerImageCount,
   });
   const providerStatusBannerKey = getProviderStatusBannerKey(activeProviderStatus);
   const [dismissedProviderStatusBannerKey, setDismissedProviderStatusBannerKey] = useState<
@@ -4693,13 +4698,18 @@ function ChatViewContent(props: ChatViewProps) {
     handleStopBackgroundWork,
     isStoppingBackgroundWork,
   ]);
-  const unsupportedProviderModeBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
-    const copy = getUnsupportedProviderModeBannerCopy(unsupportedProviderModeReason);
+  const unsupportedProviderInputBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    const copy = getUnsupportedProviderInputBannerCopy(unsupportedProviderInputReason);
     if (copy === null) return null;
     return {
-      id: `unsupported-provider-mode:${activeProviderStatus?.instanceId ?? "unknown"}:${runtimeMode}:${interactionMode}`,
+      id: `unsupported-provider-input:${unsupportedProviderInputReason?.kind ?? "unknown"}:${activeProviderStatus?.instanceId ?? "unknown"}:${runtimeMode}:${interactionMode}`,
       variant: "warning",
-      icon: <ShieldAlertIcon />,
+      icon:
+        unsupportedProviderInputReason?.kind === "attachment" ? (
+          <PaperclipIcon />
+        ) : (
+          <ShieldAlertIcon />
+        ),
       title: copy.title,
       description: copy.description,
     };
@@ -4707,7 +4717,7 @@ function ChatViewContent(props: ChatViewProps) {
     activeProviderStatus?.instanceId,
     interactionMode,
     runtimeMode,
-    unsupportedProviderModeReason,
+    unsupportedProviderInputReason,
   ]);
   // A woken thread announces itself in the open view, not just the sidebar
   // pill. Dismissing marks the wake as seen (same acknowledgment as the
@@ -4727,7 +4737,7 @@ function ChatViewContent(props: ChatViewProps) {
     };
   }, [acknowledgeActiveThreadWoke, activeThread?.id, activeThreadWokeVisible]);
   // The stack renders items[0] front-most and tucks the rest behind hover, so
-  // ordering is priority: unsupported provider modes, urgent system banners
+  // ordering is priority: unsupported provider inputs, urgent system banners
   // (error/warning variants plus
   // calm-styled live states flagged `urgent`, like update progress), then
   // background liveness — its Stop button is the only stop affordance for
@@ -4791,11 +4801,11 @@ function ChatViewContent(props: ChatViewProps) {
       backgroundLivenessBannerItem === null ? [] : [backgroundLivenessBannerItem];
     const wokeThreadItems = wokeThreadBannerItem === null ? [] : [wokeThreadBannerItem];
     const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
-    const unsupportedProviderModeItems =
-      unsupportedProviderModeBannerItem === null ? [] : [unsupportedProviderModeBannerItem];
+    const unsupportedProviderInputItems =
+      unsupportedProviderInputBannerItem === null ? [] : [unsupportedProviderInputBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
-        ...unsupportedProviderModeItems,
+        ...unsupportedProviderInputItems,
         ...urgentSystemItems,
         ...backgroundLivenessItems,
         ...calmSystemItems,
@@ -4804,7 +4814,7 @@ function ChatViewContent(props: ChatViewProps) {
       ];
     }
     return [
-      ...unsupportedProviderModeItems,
+      ...unsupportedProviderInputItems,
       ...urgentSystemItems,
       ...backgroundLivenessItems,
       ...calmSystemItems,
@@ -4859,7 +4869,7 @@ function ChatViewContent(props: ChatViewProps) {
     parkedThreadBannerItem,
     showBranchMismatchBanner,
     systemComposerBannerItems,
-    unsupportedProviderModeBannerItem,
+    unsupportedProviderInputBannerItem,
     wokeThreadBannerItem,
   ]);
   useEffect(() => {
@@ -6875,7 +6885,7 @@ function ChatViewContent(props: ChatViewProps) {
                                 ? "Sending feedback"
                                 : threadDetailLoading
                                   ? "Messages loading"
-                                  : unsupportedProviderModeReason
+                                  : (unsupportedProviderInputReason?.reason ?? null)
                             }
                             isPreparingWorktree={isPreparingWorktree}
                             externalDrawerAttached={externalComposerDrawerAttached}

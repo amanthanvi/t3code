@@ -36,16 +36,46 @@ export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
 
+function getDirectAnnotationAttachmentCount(input: {
+  readonly existingImages: ReadonlyArray<Pick<ComposerImageAttachment, "id">>;
+  readonly image: Pick<ComposerImageAttachment, "id"> | null;
+}): number {
+  const includesDirectImage =
+    input.image !== null && input.existingImages.some((image) => image.id === input.image?.id);
+  return input.existingImages.length + (input.image !== null && !includesDirectImage ? 1 : 0);
+}
+
 export function getDirectAnnotationAttachmentBlockReason(input: {
   readonly provider: ServerProvider | null | undefined;
   readonly existingImages: ReadonlyArray<Pick<ComposerImageAttachment, "id">>;
   readonly image: Pick<ComposerImageAttachment, "id"> | null;
 }): string | null {
-  const includesDirectImage =
-    input.image !== null && input.existingImages.some((image) => image.id === input.image?.id);
-  const attachmentCount =
-    input.existingImages.length + (input.image !== null && !includesDirectImage ? 1 : 0);
-  return getUnsupportedProviderAttachmentReason(input.provider, attachmentCount);
+  return getUnsupportedProviderAttachmentReason(
+    input.provider,
+    getDirectAnnotationAttachmentCount(input),
+  );
+}
+
+export type UnsupportedProviderInputReason = {
+  readonly kind: "mode" | "attachment";
+  readonly reason: string;
+};
+
+export function getUnsupportedProviderInputReason(input: {
+  readonly provider: ServerProvider | null | undefined;
+  readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: ProviderInteractionMode;
+  readonly attachmentCount: number;
+}): UnsupportedProviderInputReason | null {
+  const modeReason = getUnsupportedProviderModeReason(input);
+  if (modeReason !== null) {
+    return { kind: "mode", reason: modeReason };
+  }
+  const attachmentReason = getUnsupportedProviderAttachmentReason(
+    input.provider,
+    input.attachmentCount,
+  );
+  return attachmentReason === null ? null : { kind: "attachment", reason: attachmentReason };
 }
 
 export function getDirectAnnotationBlockReason(input: {
@@ -55,24 +85,27 @@ export function getDirectAnnotationBlockReason(input: {
   readonly existingImages: ReadonlyArray<Pick<ComposerImageAttachment, "id">>;
   readonly image: Pick<ComposerImageAttachment, "id"> | null;
 }): string | null {
-  return (
-    getUnsupportedProviderModeReason({
-      provider: input.provider,
-      runtimeMode: input.runtimeMode,
-      interactionMode: input.interactionMode,
-    }) ?? getDirectAnnotationAttachmentBlockReason(input)
-  );
+  const reason = getUnsupportedProviderInputReason({
+    provider: input.provider,
+    runtimeMode: input.runtimeMode,
+    interactionMode: input.interactionMode,
+    attachmentCount: getDirectAnnotationAttachmentCount(input),
+  });
+  return reason?.reason ?? null;
 }
 
-export function getUnsupportedProviderModeBannerCopy(reason: string | null): {
+export function getUnsupportedProviderInputBannerCopy(
+  reason: UnsupportedProviderInputReason | null,
+): {
   readonly title: string;
   readonly description: string;
 } | null {
   return reason === null
     ? null
     : {
-        title: "Provider mode unavailable",
-        description: reason,
+        title:
+          reason.kind === "mode" ? "Provider mode unavailable" : "Image attachments unavailable",
+        description: reason.reason,
       };
 }
 
