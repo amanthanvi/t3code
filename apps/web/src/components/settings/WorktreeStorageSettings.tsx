@@ -193,7 +193,6 @@ function EnvironmentPolicyControl({
         </div>
       ) : null}
       <Button
-        size="sm"
         disabled={disabled || draftPolicy === null || !hasChanges}
         onClick={() => draftPolicy && onUpdate(environment.environmentId, draftPolicy)}
       >
