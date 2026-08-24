@@ -8,6 +8,17 @@ type ComposerSubmissionInput = {
   submissionTarget: "provider-turn" | "pending-user-input";
 };
 
+export function shouldBlockComposerSubmissionForProviderAvailability(options: {
+  submissionTarget: ComposerSubmissionInput["submissionTarget"];
+  noProviderAvailable: boolean;
+  isSendDisabled: boolean;
+}): boolean {
+  return (
+    options.submissionTarget === "provider-turn" &&
+    (options.noProviderAvailable || options.isSendDisabled)
+  );
+}
+
 export function getComposerPromptLengthValidationMessage(prompt: string): string | null {
   const excessCharacters = prompt.trim().length - PROVIDER_SEND_TURN_MAX_INPUT_CHARS;
   if (excessCharacters <= 0) return null;

@@ -125,6 +125,7 @@ import { Separator } from "../ui/separator";
 import {
   getComposerPromptLengthValidationMessage,
   getComposerSubmissionValidationMessage,
+  shouldBlockComposerSubmissionForProviderAvailability,
   submitComposerDraft,
 } from "./composerSubmission";
 import { ComposerPromptLengthValidation } from "./ComposerPromptLengthValidation";
@@ -1911,7 +1912,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }, intent: ComposerSubmissionIntent = "foreground") => {
-      if (noProviderAvailable || isSendDisabled) {
+      const submissionTarget = activePendingProgress ? "pending-user-input" : "provider-turn";
+      if (
+        shouldBlockComposerSubmissionForProviderAvailability({
+          submissionTarget,
+          noProviderAvailable,
+          isSendDisabled,
+        })
+      ) {
         event?.preventDefault();
         setProviderInputSubmissionError((error) =>
           updateProviderInputSubmissionError(error, {
@@ -1936,7 +1944,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       const submission = submitComposerDraft({
         prompt: promptRef.current,
-        submissionTarget: activePendingProgress ? "pending-user-input" : "provider-turn",
+        submissionTarget,
         event,
         onSend: (sendEvent) => {
           // ChatView reports its final composed-input preflight through the

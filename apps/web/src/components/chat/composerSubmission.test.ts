@@ -1,7 +1,35 @@
 import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { submitComposerDraft } from "./composerSubmission";
+import {
+  shouldBlockComposerSubmissionForProviderAvailability,
+  submitComposerDraft,
+} from "./composerSubmission";
+
+describe("shouldBlockComposerSubmissionForProviderAvailability", () => {
+  it.each([
+    { noProviderAvailable: true, isSendDisabled: false },
+    { noProviderAvailable: false, isSendDisabled: true },
+    { noProviderAvailable: true, isSendDisabled: true },
+  ])("blocks ordinary provider sends when provider sending is unavailable", (availability) => {
+    expect(
+      shouldBlockComposerSubmissionForProviderAvailability({
+        submissionTarget: "provider-turn",
+        ...availability,
+      }),
+    ).toBe(true);
+  });
+
+  it("allows a pending user-input answer through the provider availability guards", () => {
+    expect(
+      shouldBlockComposerSubmissionForProviderAvailability({
+        submissionTarget: "pending-user-input",
+        noProviderAvailable: true,
+        isSendDisabled: true,
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("submitComposerDraft", () => {
   it("keeps an oversized draft editable and sends a corrected follow-up", () => {
@@ -166,5 +194,19 @@ describe("submitComposerDraft", () => {
     expect(result).toEqual({ validationMessage: null, didDispatch: true });
     expect(onSend).toHaveBeenCalledOnce();
     expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("still honors a final dispatch rejection for pending user input", () => {
+    const preventDefault = vi.fn();
+
+    const result = submitComposerDraft({
+      prompt: "Pending answer",
+      submissionTarget: "pending-user-input",
+      event: { preventDefault },
+      onSend: () => false,
+    });
+
+    expect(result).toEqual({ validationMessage: null, didDispatch: false });
+    expect(preventDefault).toHaveBeenCalledOnce();
   });
 });
