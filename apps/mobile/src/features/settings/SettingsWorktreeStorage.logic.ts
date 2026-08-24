@@ -1,13 +1,26 @@
 import type { EnvironmentId, WorktreeStorageProtectionReason } from "@t3tools/contracts";
 import {
   formatWorktreeStorageBytes,
+  resolveFrozenPrunePlan,
+  worktreeStorageSkippedReason,
   type PruneOutcomeSummary,
+  type WorktreeStorageEnvironmentSummary,
+  type WorktreeStorageSkippedReason,
 } from "@t3tools/client-runtime/state/worktree-storage";
 
 export const MOBILE_WORKTREE_STORAGE_ROUTE = {
   label: "Worktree Storage",
   target: "SettingsWorktreeStorage",
 } as const;
+
+export interface FrozenMobileEnvironmentRef {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+}
+
+export interface FrozenMobileSkippedEnvironment extends FrozenMobileEnvironmentRef {
+  readonly reason: WorktreeStorageSkippedReason;
+}
 
 export function updatePendingEnvironmentIds(
   current: ReadonlySet<EnvironmentId>,
@@ -21,6 +34,51 @@ export function updatePendingEnvironmentIds(
     next.delete(environmentId);
   }
   return next;
+}
+
+export function beginPendingPolicyUpdate(
+  current: ReadonlySet<EnvironmentId>,
+  environmentId: EnvironmentId,
+): ReadonlySet<EnvironmentId> | null {
+  return current.has(environmentId)
+    ? null
+    : updatePendingEnvironmentIds(current, environmentId, true);
+}
+
+export function reconcileConfirmedMobilePrunePlan<
+  T extends WorktreeStorageEnvironmentSummary & { readonly environmentId: EnvironmentId },
+>(
+  currentEnvironments: readonly T[],
+  confirmedTargets: readonly FrozenMobileEnvironmentRef[],
+): {
+  readonly targets: readonly T[];
+  readonly skipped: readonly FrozenMobileSkippedEnvironment[];
+} {
+  const currentPlan = resolveFrozenPrunePlan(
+    currentEnvironments,
+    confirmedTargets.map((environment) => environment.environmentId),
+  );
+  const currentIds = new Set(currentEnvironments.map((environment) => environment.environmentId));
+  return {
+    targets: currentPlan.targets,
+    skipped: [
+      ...currentPlan.skipped.map(
+        (environment): FrozenMobileSkippedEnvironment => ({
+          environmentId: environment.environmentId,
+          label: environment.label,
+          reason: worktreeStorageSkippedReason(environment),
+        }),
+      ),
+      ...confirmedTargets
+        .filter((environment) => !currentIds.has(environment.environmentId))
+        .map(
+          (environment): FrozenMobileSkippedEnvironment => ({
+            ...environment,
+            reason: "unavailable",
+          }),
+        ),
+    ],
+  };
 }
 
 const PROTECTION_LABELS: Readonly<Record<WorktreeStorageProtectionReason, string>> = {

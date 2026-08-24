@@ -3,7 +3,6 @@ import {
   computeWorktreeStorageCoverage,
   formatWorktreeStorageBytes,
   planAcrossEnvironmentPrune,
-  resolveFrozenPrunePlan,
   summarizePruneOutcomes,
   worktreeDisplayName,
   worktreeStorageSkippedReason,
@@ -11,10 +10,12 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  beginPendingPolicyUpdate,
   MOBILE_WORKTREE_STORAGE_ROUTE,
-  updatePendingEnvironmentIds,
   mobileProtectionLabel,
+  reconcileConfirmedMobilePrunePlan,
   summarizeMobilePrune,
+  updatePendingEnvironmentIds,
 } from "./SettingsWorktreeStorage.logic";
 import type { MobileEnvironmentWorktreeStorageStatus } from "../../state/worktree-storage";
 
@@ -37,21 +38,23 @@ function environment(
 }
 
 describe("mobile worktree storage presentation", () => {
+  it("rejects a duplicate policy update before the first update finishes", () => {
+    const environmentId = "first" as EnvironmentId;
+    const pending = beginPendingPolicyUpdate(new Set(), environmentId);
+
+    expect({
+      pending: [...(pending ?? [])],
+      duplicate: beginPendingPolicyUpdate(pending!, environmentId),
+    }).toEqual({ pending: [environmentId], duplicate: null });
+  });
+
   it("tracks overlapping policy updates independently when they finish out of order", () => {
     const firstEnvironmentId = "first" as EnvironmentId;
     const secondEnvironmentId = "second" as EnvironmentId;
     let pendingEnvironmentIds: ReadonlySet<EnvironmentId> = new Set();
 
-    pendingEnvironmentIds = updatePendingEnvironmentIds(
-      pendingEnvironmentIds,
-      firstEnvironmentId,
-      true,
-    );
-    pendingEnvironmentIds = updatePendingEnvironmentIds(
-      pendingEnvironmentIds,
-      secondEnvironmentId,
-      true,
-    );
+    pendingEnvironmentIds = beginPendingPolicyUpdate(pendingEnvironmentIds, firstEnvironmentId)!;
+    pendingEnvironmentIds = beginPendingPolicyUpdate(pendingEnvironmentIds, secondEnvironmentId)!;
     pendingEnvironmentIds = updatePendingEnvironmentIds(
       pendingEnvironmentIds,
       firstEnvironmentId,
@@ -129,13 +132,41 @@ describe("mobile worktree storage presentation", () => {
       partialCount: 1,
       complete: false,
     });
+  });
 
-    const frozenPlan = resolveFrozenPrunePlan(
-      [...environments, environment({ environmentId: "new" as EnvironmentId, label: "New" })],
-      ["ready", "offline"] as EnvironmentId[],
+  it("narrows confirmed prune scope when systems change before native confirmation runs", () => {
+    const readyId = "ready" as EnvironmentId;
+    const offlineId = "offline" as EnvironmentId;
+    const disappearedId = "disappeared" as EnvironmentId;
+    const newlyConnectedId = "new" as EnvironmentId;
+    const result = reconcileConfirmedMobilePrunePlan(
+      [
+        environment({ environmentId: readyId, label: "Ready" }),
+        environment({
+          environmentId: offlineId,
+          label: "Offline",
+          connectionPhase: "offline",
+          state: "offline",
+        }),
+        environment({ environmentId: newlyConnectedId, label: "New" }),
+      ],
+      [
+        { environmentId: readyId, label: "Ready" },
+        { environmentId: offlineId, label: "Offline" },
+        { environmentId: disappearedId, label: "Disappeared" },
+      ],
     );
-    expect(frozenPlan.targets.map((item) => item.environmentId)).toEqual(["ready"]);
-    expect(frozenPlan.skipped.map((item) => item.environmentId)).toEqual(["offline"]);
+
+    expect({
+      targets: result.targets.map(({ environmentId, label }) => ({ environmentId, label })),
+      skipped: result.skipped,
+    }).toEqual({
+      targets: [{ environmentId: readyId, label: "Ready" }],
+      skipped: [
+        { environmentId: offlineId, label: "Offline", reason: "offline" },
+        { environmentId: disappearedId, label: "Disappeared", reason: "unavailable" },
+      ],
+    });
   });
 
   it("formats bounded details, protection reasons, and partial prune summaries", () => {

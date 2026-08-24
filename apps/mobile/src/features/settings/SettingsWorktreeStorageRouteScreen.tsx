@@ -16,13 +16,11 @@ import {
   planAcrossEnvironmentPrune,
   rankWorktreeEntries,
   rankWorktreeProjects,
-  resolveFrozenPrunePlan,
   successfulPruneOutcome,
   summarizePruneOutcomes,
   worktreeDisplayName,
   worktreeStorageSkippedReason,
   type EnvironmentPruneOutcome,
-  type WorktreeStorageSkippedReason,
 } from "@t3tools/client-runtime/state/worktree-storage";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -50,7 +48,11 @@ import {
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "./components/SettingsSection";
 import {
+  beginPendingPolicyUpdate,
+  type FrozenMobileEnvironmentRef,
+  type FrozenMobileSkippedEnvironment,
   mobileProtectionLabel,
+  reconcileConfirmedMobilePrunePlan,
   summarizeMobilePrune,
   updatePendingEnvironmentIds,
 } from "./SettingsWorktreeStorage.logic";
@@ -58,15 +60,6 @@ import {
 const PROJECT_LIMIT = 6;
 const WORKTREE_LIMIT_PER_PROJECT = 3;
 const DEFAULT_INACTIVITY_DAYS = 30;
-
-interface FrozenMobileEnvironmentRef {
-  readonly environmentId: EnvironmentId;
-  readonly label: string;
-}
-
-interface FrozenMobileSkippedEnvironment extends FrozenMobileEnvironmentRef {
-  readonly reason: WorktreeStorageSkippedReason;
-}
 
 function policyLabel(policy: WorktreeAutoPrunePolicy): string {
   switch (policy.mode) {
@@ -122,6 +115,7 @@ function DetailRow({ detail }: { readonly detail: WorktreeStorageDetail }) {
 function PolicyControl(props: {
   readonly environment: MobileEnvironmentWorktreeStorageStatus;
   readonly disabled: boolean;
+  readonly applyDisabled: boolean;
   readonly onUpdate: (environmentId: EnvironmentId, policy: WorktreeAutoPrunePolicy) => void;
 }) {
   const chevronColor = useThemeColor("--color-chevron");
@@ -220,7 +214,7 @@ function PolicyControl(props: {
       <Pressable
         accessibilityLabel={`Apply automatic prune policy for ${props.environment.label}`}
         accessibilityRole="button"
-        disabled={props.disabled || draftPolicy === null || !hasChanges}
+        disabled={props.disabled || props.applyDisabled || draftPolicy === null || !hasChanges}
         onPress={() => draftPolicy && props.onUpdate(props.environment.environmentId, draftPolicy)}
         className="min-h-12 items-center justify-center border-t border-border-subtle px-4 py-3 disabled:opacity-40"
       >
@@ -233,6 +227,7 @@ function PolicyControl(props: {
 function EnvironmentSection(props: {
   readonly environment: MobileEnvironmentWorktreeStorageStatus;
   readonly pruning: boolean;
+  readonly policySavePending: boolean;
   readonly savingPolicy: boolean;
   readonly onConfirmPrune: (environmentId: EnvironmentId) => void;
   readonly onUpdatePolicy: (environmentId: EnvironmentId, policy: WorktreeAutoPrunePolicy) => void;
@@ -352,13 +347,14 @@ function EnvironmentSection(props: {
         <PolicyControl
           environment={props.environment}
           disabled={!canManage || props.savingPolicy}
+          applyDisabled={props.pruning}
           onUpdate={props.onUpdatePolicy}
         />
 
         <Pressable
           accessibilityLabel={`Prune all stale worktrees on ${props.environment.label}`}
           accessibilityRole="button"
-          disabled={!canManage || props.pruning}
+          disabled={!canManage || props.pruning || props.policySavePending}
           onPress={() => props.onConfirmPrune(props.environment.environmentId)}
           className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 disabled:opacity-40"
         >
@@ -401,12 +397,9 @@ export function SettingsWorktreeStorageRouteScreen() {
   environmentsRef.current = environments;
 
   const updatePolicy = async (environmentId: EnvironmentId, policy: WorktreeAutoPrunePolicy) => {
-    if (savingPolicyEnvironmentIdsRef.current.has(environmentId)) return;
-    const pending = updatePendingEnvironmentIds(
-      savingPolicyEnvironmentIdsRef.current,
-      environmentId,
-      true,
-    );
+    if (mutationPending.current) return;
+    const pending = beginPendingPolicyUpdate(savingPolicyEnvironmentIdsRef.current, environmentId);
+    if (pending === null) return;
     savingPolicyEnvironmentIdsRef.current = pending;
     setSavingPolicyEnvironmentIds(pending);
     try {
@@ -436,30 +429,16 @@ export function SettingsWorktreeStorageRouteScreen() {
     confirmedTargets: readonly FrozenMobileEnvironmentRef[],
     initiallySkipped: readonly FrozenMobileSkippedEnvironment[],
   ) => {
-    if (mutationPending.current) return;
+    if (mutationPending.current || savingPolicyEnvironmentIdsRef.current.size > 0) return;
     mutationPending.current = true;
     setPruning(true);
     try {
-      const currentEnvironments = environmentsRef.current;
-      const currentPlan = resolveFrozenPrunePlan(
-        currentEnvironments,
-        confirmedTargets.map((environment) => environment.environmentId),
+      const currentPlan = reconcileConfirmedMobilePrunePlan(
+        environmentsRef.current,
+        confirmedTargets,
       );
       const targets = currentPlan.targets;
-      const currentIds = new Set(
-        currentEnvironments.map((environment) => environment.environmentId),
-      );
-      const disconnectedTargets: FrozenMobileSkippedEnvironment[] = [
-        ...currentPlan.skipped.map((environment) => ({
-          environmentId: environment.environmentId,
-          label: environment.label,
-          reason: worktreeStorageSkippedReason(environment),
-        })),
-        ...confirmedTargets
-          .filter((environment) => !currentIds.has(environment.environmentId))
-          .map((environment) => ({ ...environment, reason: "unavailable" as const })),
-      ];
-      const skippedEnvironments = [...initiallySkipped, ...disconnectedTargets];
+      const skippedEnvironments = [...initiallySkipped, ...currentPlan.skipped];
       const results = await Promise.all(
         targets.map(async (environment) => ({
           environment,
@@ -604,6 +583,7 @@ export function SettingsWorktreeStorageRouteScreen() {
             key={environment.environmentId}
             environment={environment}
             pruning={pruning}
+            policySavePending={savingPolicyEnvironmentIds.size > 0}
             savingPolicy={savingPolicyEnvironmentIds.has(environment.environmentId)}
             onConfirmPrune={(environmentId) => confirmPrune(environmentId)}
             onUpdatePolicy={(environmentId, policy) => void updatePolicy(environmentId, policy)}
@@ -615,7 +595,7 @@ export function SettingsWorktreeStorageRouteScreen() {
             <Pressable
               accessibilityLabel="Prune all stale worktrees across connected systems"
               accessibilityRole="button"
-              disabled={pruning || plan.targets.length === 0}
+              disabled={pruning || savingPolicyEnvironmentIds.size > 0 || plan.targets.length === 0}
               onPress={() => confirmPrune(null)}
               className="min-h-14 flex-row items-center gap-3 p-4 disabled:opacity-40"
             >
