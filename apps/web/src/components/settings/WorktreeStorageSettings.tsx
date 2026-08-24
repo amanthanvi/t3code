@@ -357,7 +357,7 @@ function pruneSummaryDescription(outcomes: readonly EnvironmentPruneOutcome[]): 
 }
 
 export function WorktreeStorageSettings() {
-  useRelativeTimeTick();
+  useRelativeTimeTick(30_000);
   const { environments, coverage, refresh } = useWorktreeStorage();
   const pruneStale = useAtomCommand(worktreeStorageEnvironment.pruneStale, {
     reportFailure: false,
