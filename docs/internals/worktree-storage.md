@@ -22,6 +22,12 @@ The time budget bounds when a scan returns and prevents late filesystem results 
 deletion decision. Node's `lstat` and `readdir` promises are not cancellable, so an operating-system
 request that outlives the deadline may still settle later and is ignored.
 
+The entry budget limits names queued and visited after each directory read. Node's `readdir` still
+materializes one directory's names before that budget is applied, so a pathologically wide single
+directory can require more transient memory than the traversal entry limit suggests. Replacing
+path-based reads with incremental directory handles is the follow-up if this becomes operationally
+significant.
+
 Reports carry explicit `partial`, error, and bounded returned-count fields. Clients may sum the
 known bytes across environments, but must keep offline, unsupported, failed, and partial systems
 qualified instead of treating them as zero or complete.
