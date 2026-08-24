@@ -365,6 +365,46 @@ export function resolveSelectableProviderInstanceEntry(
 }
 
 /**
+ * Resolve the provider instance targeted by a composer draft.
+ *
+ * ChatView and ChatComposer both consume this result: the former derives
+ * capability banners and send restrictions, while the latter builds the
+ * actual turn selection. Keeping the candidate and fallback rules here
+ * prevents those two surfaces from disagreeing after an instance is disabled,
+ * becomes unavailable, or is constrained by a started thread.
+ */
+export function resolveComposerProviderInstanceEntry(input: {
+  readonly entries: ReadonlyArray<ProviderInstanceEntry>;
+  readonly candidateInstanceIds: ReadonlyArray<string | null | undefined>;
+  readonly requestedDriverKind: ProviderDriverKind;
+  readonly lockedProvider: ProviderDriverKind | null;
+  readonly lockedContinuationGroupKey: string | null;
+}): ProviderInstanceEntry | undefined {
+  const isCompatible = (entry: ProviderInstanceEntry) =>
+    (!input.lockedProvider || entry.driverKind === input.lockedProvider) &&
+    (!input.lockedContinuationGroupKey ||
+      entry.continuationGroupKey === input.lockedContinuationGroupKey);
+
+  for (const candidate of input.candidateInstanceIds) {
+    if (!candidate) continue;
+    const match = input.entries.find(
+      (entry) =>
+        entry.instanceId === candidate && entry.enabled && entry.isAvailable && isCompatible(entry),
+    );
+    if (match) return match;
+  }
+
+  const compatibleEntries = input.entries.filter(isCompatible);
+  const requestedDriverEntries = compatibleEntries.filter(
+    (entry) => entry.driverKind === input.requestedDriverKind,
+  );
+  return (
+    resolveSelectableProviderInstanceEntry(requestedDriverEntries, undefined) ??
+    resolveSelectableProviderInstanceEntry(compatibleEntries, undefined)
+  );
+}
+
+/**
  * Resolve the routing key for a selection that may reference an instance
  * id that no longer exists (e.g. a persisted thread selection after the
  * user deleted the custom instance). Returns a ready or non-error fallback,

@@ -505,7 +505,7 @@ const program = Effect.gen(function* () {
   yield* agent.handlePrompt((request) =>
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
-      promptCount += 1;
+      const currentPromptCount = ++promptCount;
 
       if (Number.isFinite(promptDelayMs) && promptDelayMs > 0) {
         yield* Effect.sleep(`${promptDelayMs} millis`);
@@ -515,7 +515,7 @@ const program = Effect.gen(function* () {
         return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
       }
 
-      if (emitStaleXAiPromptCompleteBeforeSecondHang && promptCount === 1) {
+      if (emitStaleXAiPromptCompleteBeforeSecondHang && currentPromptCount === 1) {
         return {
           stopReason: "end_turn",
           _meta: {
@@ -525,7 +525,7 @@ const program = Effect.gen(function* () {
         };
       }
 
-      if (emitStaleXAiPromptCompleteBeforeSecondHang && promptCount === 2) {
+      if (emitStaleXAiPromptCompleteBeforeSecondHang && currentPromptCount === 2) {
         const currentPromptId = promptIdFromRequestMeta(request) ?? "mock-current-xai-prompt-2";
         writeJsonRpcNotification("_x.ai/session/prompt_complete", {
           sessionId: requestedSessionId,
@@ -544,12 +544,12 @@ const program = Effect.gen(function* () {
         return yield* Effect.never;
       }
 
-      if (emitOverlappingXAiPromptCompleteOutOfOrder && promptCount === 1) {
+      if (emitOverlappingXAiPromptCompleteOutOfOrder && currentPromptCount === 1) {
         overlappingFirstPromptId = promptIdFromRequestMeta(request);
         return yield* Effect.never;
       }
 
-      if (emitOverlappingXAiPromptCompleteOutOfOrder && promptCount === 2) {
+      if (emitOverlappingXAiPromptCompleteOutOfOrder && currentPromptCount === 2) {
         const secondPromptId = promptIdFromRequestMeta(request);
         if (overlappingFirstPromptId !== undefined && secondPromptId !== undefined) {
           writeJsonRpcNotification("_x.ai/session/prompt_complete", {
@@ -568,7 +568,7 @@ const program = Effect.gen(function* () {
         return yield* Effect.never;
       }
 
-      if (hangFirstPromptForever && promptCount === 1) {
+      if (hangFirstPromptForever && currentPromptCount === 1) {
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
           update: {
@@ -692,19 +692,19 @@ const program = Effect.gen(function* () {
       }
 
       if (emitToolCalls) {
-        const toolCallId = `tool-call-${promptCount}`;
+        const toolCallId = `tool-call-${currentPromptCount}`;
         const cycledPermission = [
           { kind: "edit" as const, toolName: "Write" },
           { kind: "delete" as const, toolName: "Delete" },
           { kind: "move" as const, toolName: "Move" },
           { kind: "execute" as const, toolName: "Bash" },
-        ][(promptCount - 1) % 4];
+        ][(currentPromptCount - 1) % 4];
         const permissionKind = cycleEditPermissionKinds
           ? (cycledPermission?.kind ?? "execute")
           : "execute";
         const permissionToolName = cycleEditPermissionKinds
           ? (cycledPermission?.toolName ?? "Bash")
-          : alternatePermissionTool && promptCount >= 3
+          : alternatePermissionTool && currentPromptCount >= 3
             ? "run_commands"
             : "Bash";
 
@@ -776,8 +776,8 @@ const program = Effect.gen(function* () {
           update: {
             sessionUpdate: "tool_call_update",
             toolCallId,
-            title: "Terminal",
-            kind: "execute",
+            title: permissionToolName,
+            kind: permissionKind,
             status: "completed",
             rawOutput: {
               exitCode: 0,

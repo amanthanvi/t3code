@@ -73,6 +73,7 @@ import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
 import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
+import { submitThreadComposerIfAllowed } from "./threadComposerSubmission";
 import {
   type ExistingThreadSettingsRouteSession,
   useExistingThreadSettingsRoutePresentation,
@@ -582,7 +583,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     if (inFlightThreadIdsRef.current.has(threadKey)) return;
     inFlightThreadIdsRef.current.add(threadKey);
     try {
-      const messageId = await onSendMessage();
+      const messageId = await submitThreadComposerIfAllowed({
+        canSend,
+        submit: onSendMessage,
+      });
       if (messageId === null) {
         return;
       }
@@ -599,6 +603,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       inFlightThreadIdsRef.current.delete(threadKey);
     }
   }, [
+    canSend,
     onSendMessage,
     props.environmentId,
     props.environmentLabel,

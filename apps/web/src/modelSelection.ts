@@ -26,6 +26,7 @@ import { ModelEsque } from "./components/chat/providerIconUtils";
 import {
   type ProviderInstanceEntry,
   deriveProviderInstanceEntries,
+  isProviderInstancePickerReady,
   NO_PROVIDER_MODEL_SELECTION,
 } from "./providerInstances";
 import { sortModelsForProviderInstance } from "./modelOrdering";
@@ -342,58 +343,35 @@ export function resolveAppModelSelectionState(
   const entries = deriveProviderInstanceEntries(providers).filter(
     (entry) => entry.driverKind !== "cline",
   );
+  const supportsBackgroundSelection = (entry: ProviderInstanceEntry) =>
+    isProviderInstancePickerReady(entry) && entry.models.length > 0;
   const selectedEntry = entries.find(
-    (entry) => entry.instanceId === selection.instanceId && entry.enabled && entry.isAvailable,
+    (entry) => entry.instanceId === selection.instanceId && supportsBackgroundSelection(entry),
   );
-  const entry =
-    selectedEntry ?? entries.find((candidate) => candidate.enabled && candidate.isAvailable);
-  if (entry) {
-    if (entry.driverKind === "cline" && entry.models.length === 0) {
-      return createModelSelection(entry.instanceId, "", []);
-    }
-    // When the instance changed due to fallback (e.g. selected instance was disabled),
-    // don't carry over the old instance's model — use the fallback instance's default.
-    const selectedModel = selectedEntry ? selection.model : null;
-    const model =
-      resolveAppModelSelectionForInstance(entry.instanceId, settings, providers, selectedModel) ??
-      entry.models[0]?.slug ??
-      DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind];
-    if (!model) {
-      return createModelSelection(entry.instanceId, "", []);
-    }
-    const provider = entry.driverKind;
-    const { modelOptionsForDispatch } = getComposerProviderState({
-      provider,
-      model,
-      models: entry.models,
-      modelOptions: selectedEntry ? selection.options : undefined,
-      planModeEnabled: settings.planModeEnabled,
-    });
+  const entry = selectedEntry ?? entries.find(supportsBackgroundSelection);
+  // Snapshots can remain present while an instance is disabled or unavailable.
+  // Background text generation must fail closed instead of synthesizing a
+  // Codex selection from those unusable rows.
+  if (!entry) return NO_PROVIDER_MODEL_SELECTION;
 
-    return createModelSelection(entry.instanceId, model, modelOptionsForDispatch);
+  // When the instance changed due to fallback (e.g. selected instance was disabled),
+  // don't carry over the old instance's model — use the fallback instance's default.
+  const selectedModel = selectedEntry ? selection.model : null;
+  const model =
+    resolveAppModelSelectionForInstance(entry.instanceId, settings, providers, selectedModel) ??
+    entry.models[0]?.slug ??
+    DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind];
+  if (!model) {
+    return createModelSelection(entry.instanceId, "", []);
   }
-
-  if (entries.length === 0) {
-    return NO_PROVIDER_MODEL_SELECTION;
-  }
-
-  const provider = resolveSelectableProvider(
-    providers.filter((candidate) => candidate.driver !== "cline"),
-    null,
-  );
-  const keptSelectedProvider = false;
-
-  // When the provider changed due to fallback (e.g. selected provider was disabled),
-  // don't carry over the old provider's model — use the fallback provider's default.
-  const selectedModel = keptSelectedProvider ? selection.model : null;
-  const model = resolveAppModelSelection(provider, settings, providers, selectedModel);
+  const provider = entry.driverKind;
   const { modelOptionsForDispatch } = getComposerProviderState({
     provider,
     model,
-    models: getProviderModels(providers, provider),
-    modelOptions: keptSelectedProvider ? selection.options : undefined,
+    models: entry.models,
+    modelOptions: selectedEntry ? selection.options : undefined,
     planModeEnabled: settings.planModeEnabled,
   });
 
-  return createModelSelection(defaultInstanceIdForDriver(provider), model, modelOptionsForDispatch);
+  return createModelSelection(entry.instanceId, model, modelOptionsForDispatch);
 }

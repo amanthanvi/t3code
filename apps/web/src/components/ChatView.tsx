@@ -1,7 +1,6 @@
 import {
   type ApprovalRequestId,
   DEFAULT_MODEL,
-  defaultInstanceIdForDriver,
   type EnvironmentId,
   type MessageId,
   type ModelSelection,
@@ -195,12 +194,15 @@ import {
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { useBrowserHistoryStore } from "~/browserHistoryStore";
 import { registerFaviconProjectForThread } from "~/browserFaviconStore";
+import { getProviderModelCapabilities, getUnsupportedProviderModeReason } from "../providerModels";
 import {
-  getProviderModelCapabilities,
-  getUnsupportedProviderModeReason,
-  resolveSelectableProvider,
-} from "../providerModels";
-import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
+  applyProviderInstanceSettings,
+  deriveProviderInstanceEntries,
+  NO_PROVIDER_MODEL_SELECTION,
+  resolveComposerProviderInstanceEntry,
+  resolveProviderDriverKindForInstanceSelection,
+  sortProviderInstanceEntries,
+} from "../providerInstances";
 import {
   useClientSettings,
   useClientSettingsHydrated,
@@ -335,6 +337,7 @@ import {
   shouldReleaseTimelineAnchorForToolActivity,
   shouldShowBranchMismatchBanner,
   getStartedThreadModelChangeBlockReason,
+  getDirectAnnotationAttachmentBlockReason,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
   type LocalDispatchSnapshot,
@@ -2083,6 +2086,7 @@ function ChatViewContent(props: ChatViewProps) {
 
   const selectedProviderByThreadId = composerActiveProvider ?? null;
   const threadProvider =
+    activeThread?.session?.providerInstanceId ??
     activeThread?.modelSelection.instanceId ??
     activeProject?.defaultModelSelection?.instanceId ??
     null;
@@ -2283,11 +2287,57 @@ function ChatViewContent(props: ChatViewProps) {
     versionMismatchServerLabel,
   ]);
   const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
-  const unlockedSelectedProvider = resolveSelectableProvider(
-    providerStatuses,
-    selectedProviderByThreadId ?? threadProvider,
+  const activeProviderInstanceEntries = useMemo(
+    () =>
+      sortProviderInstanceEntries(
+        applyProviderInstanceSettings(deriveProviderInstanceEntries(providerStatuses), settings),
+      ),
+    [providerStatuses, settings],
   );
-  const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
+  const explicitSelectedProviderInstanceId = selectedProviderByThreadId ?? threadProvider;
+  const unlockedSelectedProvider =
+    resolveProviderDriverKindForInstanceSelection(
+      activeProviderInstanceEntries,
+      providerStatuses,
+      explicitSelectedProviderInstanceId,
+    ) ??
+    activeProviderInstanceEntries[0]?.driverKind ??
+    ProviderDriverKind.make("unconfigured");
+  const requestedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
+  const lockedProviderContinuationGroupKey = useMemo(() => {
+    if (!lockedProvider || !activeThread) return null;
+    const lockedInstanceId =
+      activeThread.session?.providerInstanceId ?? activeThread.modelSelection.instanceId;
+    return (
+      activeProviderInstanceEntries.find((entry) => entry.instanceId === lockedInstanceId)
+        ?.continuationGroupKey ?? null
+    );
+  }, [activeProviderInstanceEntries, activeThread, lockedProvider]);
+  const activeProviderEntry = useMemo(
+    () =>
+      resolveComposerProviderInstanceEntry({
+        entries: activeProviderInstanceEntries,
+        candidateInstanceIds: [
+          composerActiveProvider,
+          activeThread?.session?.providerInstanceId,
+          activeThread?.modelSelection.instanceId,
+          activeProject?.defaultModelSelection?.instanceId,
+        ],
+        requestedDriverKind: requestedProvider,
+        lockedProvider,
+        lockedContinuationGroupKey: lockedProviderContinuationGroupKey,
+      }),
+    [
+      activeProject?.defaultModelSelection?.instanceId,
+      activeProviderInstanceEntries,
+      activeThread?.modelSelection.instanceId,
+      activeThread?.session?.providerInstanceId,
+      composerActiveProvider,
+      lockedProvider,
+      lockedProviderContinuationGroupKey,
+      requestedProvider,
+    ],
+  );
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
@@ -2740,28 +2790,10 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
-  // Prefer an instance-id match so a custom Codex instance (e.g.
-  // `codex_personal`) surfaces its own status/message in the banner rather
-  // than the default Codex's. Falls back to first-match-by-kind when no
-  // saved instance id is available or the instance no longer exists.
-  const selectedProviderInstanceId =
-    providerStatuses.find((status) => status.instanceId === selectedProviderByThreadId)
-      ?.instanceId ?? null;
-  const activeProviderInstanceId =
-    selectedProviderInstanceId ??
-    activeThread?.session?.providerInstanceId ??
-    activeThread?.modelSelection.instanceId ??
-    activeProject?.defaultModelSelection?.instanceId ??
-    null;
-  const activeProviderStatus = useMemo(() => {
-    if (activeProviderInstanceId) {
-      return (
-        providerStatuses.find((status) => status.instanceId === activeProviderInstanceId) ?? null
-      );
-    }
-    const defaultInstanceId = defaultInstanceIdForDriver(selectedProvider);
-    return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
-  }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
+  // The status and capabilities must come from the exact entry that the
+  // composer will dispatch. A stale disabled draft selection must not impose
+  // its restrictions while the composer has already fallen back elsewhere.
+  const activeProviderStatus = activeProviderEntry?.snapshot ?? null;
   const unsupportedProviderModeReason = getUnsupportedProviderModeReason({
     provider: activeProviderStatus,
     runtimeMode,
@@ -5168,11 +5200,27 @@ function ChatViewContent(props: ChatViewProps) {
       previewAnnotations: sendContextPreviewAnnotations,
       reviewComments: composerReviewComments,
       selectedProvider: ctxSelectedProvider,
+      selectedProviderStatus: ctxSelectedProviderStatus,
       selectedModel: ctxSelectedModel,
       selectedProviderModels: ctxSelectedProviderModels,
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
     } = sendCtx;
+    const directAnnotationAttachmentBlockReason = getDirectAnnotationAttachmentBlockReason({
+      provider: ctxSelectedProviderStatus,
+      existingImages: sendContextImages,
+      image: directAnnotation?.image ?? null,
+    });
+    if (directAnnotation && directAnnotationAttachmentBlockReason) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "info",
+          title: "Annotation attached to draft",
+          description: directAnnotationAttachmentBlockReason,
+        }),
+      );
+      return;
+    }
     const composerImages =
       directAnnotation?.image &&
       !sendContextImages.some((image) => image.id === directAnnotation.image?.id)

@@ -17,6 +17,9 @@ function provider(input: {
   provider?: ProviderDriverKind;
   instanceId: string;
   models?: ReadonlyArray<string>;
+  enabled?: boolean;
+  availability?: ServerProvider["availability"];
+  status?: ServerProvider["status"];
 }): ServerProvider {
   const driver =
     input.provider ??
@@ -26,10 +29,11 @@ function provider(input: {
   return {
     instanceId: ProviderInstanceId.make(input.instanceId),
     driver,
-    enabled: true,
+    enabled: input.enabled ?? true,
     installed: true,
     version: null,
-    status: "ready",
+    status: input.status ?? "ready",
+    ...(input.availability ? { availability: input.availability } : {}),
     auth: { status: "authenticated" },
     checkedAt: "2026-01-01T00:00:00.000Z",
     models: (input.models ?? []).map((slug) => ({
@@ -388,6 +392,47 @@ describe("instance-scoped model selection", () => {
     };
 
     expect(resolveAppModelSelectionState(settings, providers)).toEqual({
+      instanceId: "t3code_no_provider",
+      model: "",
+    });
+  });
+
+  it("returns no background selection when non-Cline snapshots are all unusable", () => {
+    const providers = [
+      provider({
+        instanceId: "codex",
+        models: ["gpt-5.4"],
+        enabled: false,
+      }),
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId: "claudeAgent",
+        models: ["claude-sonnet-4-6"],
+        availability: "unavailable",
+      }),
+    ];
+
+    expect(resolveAppModelSelectionState(DEFAULT_UNIFIED_SETTINGS, providers)).toEqual({
+      instanceId: "t3code_no_provider",
+      model: "",
+    });
+  });
+
+  it("returns no background selection for errored or empty provider catalogs", () => {
+    const providers = [
+      provider({
+        instanceId: "codex",
+        models: ["gpt-5.4"],
+        status: "error",
+      }),
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId: "claudeAgent",
+        models: [],
+      }),
+    ];
+
+    expect(resolveAppModelSelectionState(DEFAULT_UNIFIED_SETTINGS, providers)).toEqual({
       instanceId: "t3code_no_provider",
       model: "",
     });

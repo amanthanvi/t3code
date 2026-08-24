@@ -25,7 +25,7 @@ const makeProbeRuntime = Effect.gen(function* () {
     clineSettings: { binaryPath: "cline" },
     environment: process.env,
     childProcessSpawner,
-    cwd: process.cwd(),
+    cwd: process.env.T3_CLINE_ACP_PROBE_CWD ?? process.cwd(),
     clientInfo: { name: "t3-cline-probe", version: "0.0.0" },
   });
 });

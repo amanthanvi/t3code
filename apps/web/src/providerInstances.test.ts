@@ -8,6 +8,7 @@ import {
   getDefaultProviderInstanceModel,
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
+  resolveComposerProviderInstanceEntry,
   resolveDefaultProviderModelSelection,
   resolveSelectableProviderInstance,
   resolveProviderDriverKindForInstanceSelection,
@@ -303,6 +304,46 @@ describe("resolveSelectableProviderInstance", () => {
     expect(resolveSelectableProviderInstance(providers, disabled)).toBeUndefined();
     expect(resolveSelectableProviderInstance(providers, unavailable)).toBeUndefined();
     expect(resolveSelectableProviderInstance(providers, unknown)).toBeUndefined();
+  });
+});
+
+describe("resolveComposerProviderInstanceEntry", () => {
+  it("falls back from a disabled draft selection to the same ready instance used for dispatch", () => {
+    const entries = deriveProviderInstanceEntries([
+      provider({
+        provider: ProviderDriverKind.make("cline"),
+        instanceId: "cline",
+        enabled: false,
+      }),
+      provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),
+    ]);
+
+    expect(
+      resolveComposerProviderInstanceEntry({
+        entries,
+        candidateInstanceIds: ["cline"],
+        requestedDriverKind: ProviderDriverKind.make("cline"),
+        lockedProvider: null,
+        lockedContinuationGroupKey: null,
+      })?.instanceId,
+    ).toBe("codex");
+  });
+
+  it("uses the exact selected custom instance instead of its driver's default snapshot", () => {
+    const entries = deriveProviderInstanceEntries([
+      provider({ provider: ProviderDriverKind.make("cline"), instanceId: "cline" }),
+      provider({ provider: ProviderDriverKind.make("cline"), instanceId: "cline_work" }),
+    ]);
+
+    expect(
+      resolveComposerProviderInstanceEntry({
+        entries,
+        candidateInstanceIds: ["cline_work", "cline"],
+        requestedDriverKind: ProviderDriverKind.make("cline"),
+        lockedProvider: null,
+        lockedContinuationGroupKey: null,
+      })?.instanceId,
+    ).toBe("cline_work");
   });
 });
 

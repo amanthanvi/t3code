@@ -58,6 +58,9 @@ export const makeClineAcpRuntime = Effect.fn("makeClineAcpRuntime")(function* (
   const acpContext = yield* Layer.build(
     AcpSessionRuntime.layer({
       ...input,
+      // Cline returns its model config only in the authoritative load response;
+      // replay notifications cannot safely populate the synthetic idle fallback.
+      sessionLoadReplayIdleFallback: false,
       spawn: buildClineAcpSpawnInput(
         input.clineSettings,
         input.cwd,
@@ -138,14 +141,21 @@ export function clineModelsFromSessionConfigOptions(
   const option = findClineModelConfigOption(sessionSetupResult);
   if (!option) return [];
   const current = currentClineModelIdFromSessionSetup(sessionSetupResult);
-  return option.options.flatMap((entry) => {
+  const models = new Map<string, ClineDiscoveredModel>();
+  for (const entry of option.options) {
     const values = "value" in entry ? [entry] : entry.options;
-    return values.map(({ value, name }) => ({
-      slug: value,
-      name,
-      ...(value === current ? { isDefault: true } : {}),
-    }));
-  });
+    for (const { value, name } of values) {
+      const slug = value.trim();
+      if (slug.length === 0 || models.has(slug)) continue;
+      const normalizedName = name.trim();
+      models.set(slug, {
+        slug,
+        name: normalizedName.length > 0 ? normalizedName : slug,
+        ...(slug === current ? { isDefault: true } : {}),
+      });
+    }
+  }
+  return [...models.values()];
 }
 
 export const applyClineAcpModelSelection = Effect.fn("applyClineAcpModelSelection")(function* <

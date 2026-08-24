@@ -6,6 +6,7 @@ import {
 } from "@t3tools/client-runtime/environment";
 import * as Schema from "effect/Schema";
 import {
+  DEFAULT_UNIFIED_SETTINGS,
   defaultInstanceIdForDriver,
   EnvironmentId,
   ProjectId,
@@ -14,6 +15,7 @@ import {
   ThreadId,
   type ModelSelection,
   type ProviderOptionSelection,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 
@@ -60,6 +62,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   COMPOSER_DRAFT_STORAGE_KEY,
   clearComposerDraftsEnvironment,
+  deriveEffectiveComposerModelState,
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThread,
   markPromotedDraftThreadByRef,
@@ -76,6 +79,10 @@ import {
   type TerminalContextDraft,
 } from "./lib/terminalContext";
 import { createDebouncedStorage } from "./lib/storage";
+import {
+  deriveProviderInstanceEntries,
+  resolveComposerProviderInstanceEntry,
+} from "./providerInstances";
 
 function makeImage(input: {
   id: string;
@@ -1284,6 +1291,95 @@ describe("composerDraftStore modelSelection", () => {
   beforeEach(() => {
     resetComposerDraftStore();
   });
+
+  it.each([
+    ["an empty ready catalog", "ready", "authenticated"],
+    ["a checking catalog", "warning", "unknown"],
+    ["an errored catalog", "error", "authenticated"],
+  ] as const)(
+    "does not borrow the default instance model when a custom Cline instance has %s",
+    (_label, status, authStatus) => {
+      const clineDriver = ProviderDriverKind.make("cline");
+      const defaultInstanceId = defaultInstanceIdForDriver(clineDriver);
+      const customInstanceId = ProviderInstanceId.make("cline_work");
+      const provider = (input: {
+        instanceId: ProviderInstanceId;
+        status: ServerProvider["status"];
+        authStatus: ServerProvider["auth"]["status"];
+        models: ServerProvider["models"];
+      }): ServerProvider => ({
+        instanceId: input.instanceId,
+        driver: clineDriver,
+        displayName: input.instanceId === defaultInstanceId ? "Cline" : "Cline Work",
+        enabled: true,
+        installed: true,
+        version: "3.0.57",
+        status: input.status,
+        auth: { status: input.authStatus },
+        checkedAt: "2026-08-23T00:00:00.000Z",
+        models: input.models,
+        slashCommands: [],
+        skills: [],
+      });
+      const providers = [
+        provider({
+          instanceId: defaultInstanceId,
+          status: "ready",
+          authStatus: "authenticated",
+          models: [
+            {
+              slug: "default-account-model",
+              name: "Default account model",
+              isCustom: false,
+              isDefault: true,
+              capabilities: {},
+            },
+          ],
+        }),
+        provider({
+          instanceId: customInstanceId,
+          status,
+          authStatus,
+          models: [],
+        }),
+      ];
+      const selectedEntry = resolveComposerProviderInstanceEntry({
+        entries: deriveProviderInstanceEntries(providers),
+        candidateInstanceIds: [customInstanceId],
+        requestedDriverKind: clineDriver,
+        lockedProvider: null,
+        lockedContinuationGroupKey: null,
+      });
+      const customSelection = createModelSelection(customInstanceId, "retired-custom-model");
+      const draft = {
+        activeProvider: customInstanceId,
+        modelSelectionByProvider: {
+          [defaultInstanceId]: createModelSelection(defaultInstanceId, "default-account-model"),
+          [customInstanceId]: customSelection,
+        },
+      };
+
+      expect(selectedEntry?.instanceId).toBe(customInstanceId);
+      expect(
+        deriveEffectiveComposerModelState({
+          draft,
+          providers,
+          selectedProvider: clineDriver,
+          selectedInstanceId: selectedEntry?.instanceId,
+          threadModelSelection: customSelection,
+          projectModelSelection: null,
+          settings: DEFAULT_UNIFIED_SETTINGS,
+        }).selectedModel,
+      ).toBe("");
+      expect(draft).toEqual({
+        activeProvider: customInstanceId,
+        modelSelectionByProvider: {
+          [defaultInstanceId]: createModelSelection(defaultInstanceId, "default-account-model"),
+          [customInstanceId]: customSelection,
+        },
+      });
+    },
+  );
 
   it("stores a model selection in the draft", () => {
     const store = useComposerDraftStore.getState();

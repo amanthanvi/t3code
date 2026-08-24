@@ -66,7 +66,7 @@ const clineAdapterTestLayer = ServerConfig.layerTest(process.cwd(), {
 
 const makeTestAdapter = (
   binaryPath: string,
-  options?: Pick<ClineAdapterLiveOptions, "sessionStartTimeout">,
+  options?: Pick<ClineAdapterLiveOptions, "beforePromptSerialization" | "sessionStartTimeout">,
 ) => makeClineAdapter(decodeClineSettings({ binaryPath }), options).pipe(Effect.orDie);
 
 it.effect("releases Cline thread locks after serialized work and thread churn", () =>
@@ -181,6 +181,113 @@ it.layer(clineAdapterTestLayer)("ClineAdapterLive", (it) => {
     }),
   );
 
+  it.effect("pairs each concurrent Cline model selection with its serialized prompt", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("cline-concurrent-send-reservation");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cline-acp-concurrent-send-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockClineWrapper({
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        }),
+      );
+      const firstAdmissionReached = yield* Deferred.make<void>();
+      const secondAdmissionReached = yield* Deferred.make<void>();
+      const admissionCount = yield* Ref.make(0);
+      const adapter = yield* makeTestAdapter(wrapperPath, {
+        beforePromptSerialization: Ref.updateAndGet(admissionCount, (count) => count + 1).pipe(
+          Effect.flatMap((count) =>
+            count === 1
+              ? Deferred.succeed(firstAdmissionReached, undefined).pipe(
+                  Effect.andThen(Deferred.await(secondAdmissionReached)),
+                )
+              : Deferred.succeed(secondAdmissionReached, undefined),
+          ),
+        ),
+      });
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const turnCompleted = yield* Deferred.make<void>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)).pipe(
+          Effect.andThen(
+            event.type === "turn.completed"
+              ? Deferred.succeed(turnCompleted, undefined)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cline"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      const firstTurnFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "first concurrent prompt",
+          attachments: [],
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("cline"),
+            model: "composer-2",
+          },
+        })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(firstAdmissionReached);
+      const secondTurnFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "second concurrent prompt",
+          attachments: [],
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("cline"),
+            model: "composer-2[fast=true]",
+          },
+        })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      const results = yield* Effect.all([Fiber.join(firstTurnFiber), Fiber.join(secondTurnFiber)]);
+      yield* Deferred.await(turnCompleted);
+
+      yield* adapter.stopSession(threadId);
+      yield* Fiber.interrupt(eventsFiber);
+      assert.equal(results[0].turnId, results[1].turnId);
+      assert.lengthOf(
+        runtimeEvents.filter((event) => event.type === "turn.started"),
+        1,
+      );
+      assert.lengthOf(
+        runtimeEvents.filter((event) => event.type === "turn.completed"),
+        1,
+      );
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const modelAndPromptOrder = requests.flatMap((entry) => {
+        if (entry.method === "session/set_config_option") {
+          const params = entry.params as {
+            readonly configId?: unknown;
+            readonly value?: unknown;
+          };
+          return params.configId === "model" ? [`model:${String(params.value)}`] : [];
+        }
+        if (entry.method === "session/prompt") {
+          const params = entry.params as {
+            readonly prompt?: ReadonlyArray<{ readonly text?: unknown }>;
+          };
+          return [`prompt:${String(params.prompt?.[0]?.text)}`];
+        }
+        return [];
+      });
+      assert.deepStrictEqual(modelAndPromptOrder, [
+        "model:composer-2",
+        "prompt:first concurrent prompt",
+        "model:composer-2[fast=true]",
+        "prompt:second concurrent prompt",
+      ]);
+    }).pipe(TestClock.withLive),
+  );
+
   it.effect("resumes the exact Cline ACP session through session/load", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("cline-resume-session");
@@ -213,6 +320,54 @@ it.layer(clineAdapterTestLayer)("ClineAdapterLive", (it) => {
       );
       assert.isFalse(requests.some((entry) => entry.method === "session/new"));
     }),
+  );
+
+  it.effect("waits for Cline's authoritative model config after session/load replay", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("cline-resume-replay-idle");
+      const sessionId = "cline-replay-idle-session";
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cline-acp-resume-replay-idle-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockClineWrapper({
+          T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY: "1",
+          T3_ACP_LOAD_SESSION_DELAY_MS: "2500",
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath, {
+        sessionStartTimeout: "5 seconds",
+      });
+
+      const session = yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cline"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        resumeCursor: { schemaVersion: 1, sessionId },
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("cline"),
+          model: "composer-2",
+        },
+      });
+      yield* adapter.stopSession(threadId);
+
+      assert.deepStrictEqual(session.resumeCursor, { schemaVersion: 1, sessionId });
+      assert.equal(session.model, "composer-2");
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      assert.isTrue(
+        requests.some(
+          (entry) =>
+            entry.method === "session/set_config_option" &&
+            (entry.params as { readonly configId?: unknown; readonly value?: unknown }).configId ===
+              "model" &&
+            (entry.params as { readonly value?: unknown }).value === "composer-2",
+        ),
+      );
+      assert.isFalse(requests.some((entry) => entry.method === "session/new"));
+    }).pipe(TestClock.withLive),
   );
 
   it.effect("rejects mixed and image-only turns before prompting Cline ACP", () =>
@@ -590,7 +745,10 @@ it.layer(clineAdapterTestLayer)("ClineAdapterLive", (it) => {
     Effect.gen(function* () {
       const threadId = ThreadId.make("cline-full-access-thread");
       const wrapperPath = yield* Effect.promise(() =>
-        makeMockClineWrapper({ T3_ACP_EMIT_TOOL_CALLS: "1" }),
+        makeMockClineWrapper({
+          T3_ACP_EMIT_TOOL_CALLS: "1",
+          T3_ACP_CYCLE_EDIT_PERMISSION_KINDS: "1",
+        }),
       );
       const adapter = yield* makeTestAdapter(wrapperPath);
 
@@ -625,6 +783,20 @@ it.layer(clineAdapterTestLayer)("ClineAdapterLive", (it) => {
         return assert.fail("expected a turn.completed runtime event");
       }
       assert.equal(completed.payload.state, "completed");
+      const toolCompleted = runtimeEvents.find(
+        (event) => event.type === "item.completed" && event.itemId === "tool-call-1",
+      );
+      assert.isDefined(toolCompleted);
+      if (toolCompleted?.type === "item.completed") {
+        assert.equal(toolCompleted.payload.itemType, "file_change");
+        const rawUpdate = (
+          toolCompleted.raw?.payload as {
+            readonly update?: { readonly title?: string; readonly kind?: string };
+          }
+        )?.update;
+        assert.equal(rawUpdate?.title, "Write");
+        assert.equal(rawUpdate?.kind, "edit");
+      }
     }),
   );
 
@@ -741,7 +913,18 @@ it.layer(clineAdapterTestLayer)("ClineAdapterLive", (it) => {
           T3_ACP_REQUEST_LOG_PATH: requestLogPath,
         }),
       );
-      const adapter = yield* makeTestAdapter(wrapperPath);
+      const promptAdmissionCount = yield* Ref.make(0);
+      const queuedPromptReached = yield* Deferred.make<void>();
+      const adapter = yield* makeTestAdapter(wrapperPath, {
+        beforePromptSerialization: Ref.updateAndGet(
+          promptAdmissionCount,
+          (count) => count + 1,
+        ).pipe(
+          Effect.flatMap((count) =>
+            count === 2 ? Deferred.succeed(queuedPromptReached, undefined) : Effect.void,
+          ),
+        ),
+      });
       const runtimeEvents: ProviderRuntimeEvent[] = [];
       const firstPromptStarted = yield* Deferred.make<void>();
       const turnCompleted = yield* Deferred.make<void>();
@@ -771,9 +954,7 @@ it.layer(clineAdapterTestLayer)("ClineAdapterLive", (it) => {
       const queuedTurnFiber = yield* adapter
         .sendTurn({ threadId, input: "queued steer", attachments: [] })
         .pipe(Effect.forkChild);
-      // Give the queued turn a scheduler turn so it reaches the runtime's
-      // prompt semaphore before cancellation advances the generation.
-      yield* Effect.yieldNow;
+      yield* Deferred.await(queuedPromptReached);
       yield* adapter.interruptTurn(threadId);
       yield* Fiber.join(firstTurnFiber);
       yield* Fiber.join(queuedTurnFiber);

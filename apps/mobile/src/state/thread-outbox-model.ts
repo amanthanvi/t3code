@@ -1,4 +1,3 @@
-import { isTransportConnectionErrorMessage } from "@t3tools/client-runtime/errors";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 import {
   CommandId,
@@ -218,42 +217,17 @@ export function isQueuedThreadCreationSendable(message: QueuedThreadMessage): bo
   return message.creation.workspaceMode !== "worktree" || Boolean(message.creation.branch);
 }
 
-function errorMessage(error: unknown): string | null {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  if (typeof error === "object" && error !== null && "message" in error) {
-    return typeof error.message === "string" ? error.message : null;
-  }
-  return typeof error === "string" ? error : null;
-}
-
-export function shouldRetryThreadOutboxDelivery(error: unknown): boolean {
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "_tag" in error &&
-    error._tag === "ConnectionTransientError"
-  ) {
-    return true;
-  }
-  return isTransportConnectionErrorMessage(errorMessage(error));
-}
-
 export type ThreadOutboxCommandStage = "settings-sync" | "start-turn";
-export type ThreadOutboxFailureAction = "retry" | "discard";
+export type ThreadOutboxFailureAction = "retry";
 
 export function resolveThreadOutboxFailureAction(input: {
   readonly stage: ThreadOutboxCommandStage;
   readonly error: unknown;
   readonly interrupted: boolean;
 }): ThreadOutboxFailureAction {
-  if (
-    input.stage === "settings-sync" ||
-    input.interrupted ||
-    shouldRetryThreadOutboxDelivery(input.error)
-  ) {
-    return "retry";
-  }
-  return "discard";
+  // The outbox is the durable copy of user-authored input. A command failure
+  // can become recoverable after a provider refresh or user edit, so delivery
+  // failures back off but never discard the queued message.
+  void input;
+  return "retry";
 }

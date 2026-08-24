@@ -24,11 +24,24 @@ import {
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 import type { ComposerSubmissionIntent } from "../composer-logic";
 import type { TimelineEntry } from "../session-logic";
+import { getUnsupportedProviderAttachmentReason } from "../providerModels";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
+
+export function getDirectAnnotationAttachmentBlockReason(input: {
+  readonly provider: ServerProvider | null | undefined;
+  readonly existingImages: ReadonlyArray<Pick<ComposerImageAttachment, "id">>;
+  readonly image: Pick<ComposerImageAttachment, "id"> | null;
+}): string | null {
+  const includesDirectImage =
+    input.image !== null && input.existingImages.some((image) => image.id === input.image?.id);
+  const attachmentCount =
+    input.existingImages.length + (input.image !== null && !includesDirectImage ? 1 : 0);
+  return getUnsupportedProviderAttachmentReason(input.provider, attachmentCount);
+}
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 

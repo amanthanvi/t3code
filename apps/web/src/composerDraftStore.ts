@@ -1014,23 +1014,26 @@ export function deriveEffectiveComposerModelState(input: {
 }): EffectiveComposerModelState {
   const baseModelCandidate =
     input.threadModelSelection?.model ?? input.projectModelSelection?.model ?? null;
-  const baseModel =
-    (input.selectedInstanceId
-      ? resolveAppModelSelectionForInstance(
-          input.selectedInstanceId,
-          input.settings,
-          input.providers,
-          baseModelCandidate,
-        )
-      : null) ??
-    resolveAppModelSelection(
-      input.selectedProvider,
-      input.settings,
-      input.providers,
-      baseModelCandidate,
-    ) ??
-    normalizeModelSlug(baseModelCandidate, input.selectedProvider) ??
-    getDefaultServerModel(input.providers, input.selectedProvider);
+  const selectedInstanceId = input.selectedInstanceId
+    ? input.providers.find((provider) => provider.instanceId === input.selectedInstanceId)
+        ?.instanceId
+    : undefined;
+  const selectedInstanceExists = selectedInstanceId !== undefined;
+  const baseModel = selectedInstanceExists
+    ? (resolveAppModelSelectionForInstance(
+        selectedInstanceId,
+        input.settings,
+        input.providers,
+        baseModelCandidate,
+      ) ?? "")
+    : (resolveAppModelSelection(
+        input.selectedProvider,
+        input.settings,
+        input.providers,
+        baseModelCandidate,
+      ) ??
+      normalizeModelSlug(baseModelCandidate, input.selectedProvider) ??
+      getDefaultServerModel(input.providers, input.selectedProvider));
   // Look up the instance's saved selection first; fall back to the
   // driver-kind bucket so legacy kind-keyed drafts still resolve. Every
   // `ProviderDriverKind` literal is a valid `ProviderInstanceId` slug, so the
@@ -1038,25 +1041,33 @@ export function deriveEffectiveComposerModelState(input: {
   const instanceSelection = input.selectedInstanceId
     ? input.draft?.modelSelectionByProvider?.[input.selectedInstanceId]
     : undefined;
-  const legacySelection =
-    input.draft?.modelSelectionByProvider?.[ProviderInstanceId.make(input.selectedProvider)];
+  const legacySelection = selectedInstanceExists
+    ? undefined
+    : input.draft?.modelSelectionByProvider?.[ProviderInstanceId.make(input.selectedProvider)];
   const activeSelection = instanceSelection ?? legacySelection;
   const activeSelectionInstanceId = instanceSelection
     ? (input.selectedInstanceId ?? ProviderInstanceId.make(input.selectedProvider))
     : ProviderInstanceId.make(input.selectedProvider);
   const selectedModel = activeSelection?.model
-    ? (resolveAppModelSelectionForInstance(
-        activeSelectionInstanceId,
-        input.settings,
-        input.providers,
-        activeSelection.model,
-      ) ??
-      resolveAppModelSelection(
-        input.selectedProvider,
-        input.settings,
-        input.providers,
-        activeSelection.model,
-      ))
+    ? selectedInstanceExists
+      ? (resolveAppModelSelectionForInstance(
+          activeSelectionInstanceId,
+          input.settings,
+          input.providers,
+          activeSelection.model,
+        ) ?? "")
+      : (resolveAppModelSelectionForInstance(
+          activeSelectionInstanceId,
+          input.settings,
+          input.providers,
+          activeSelection.model,
+        ) ??
+        resolveAppModelSelection(
+          input.selectedProvider,
+          input.settings,
+          input.providers,
+          activeSelection.model,
+        ))
     : baseModel;
   const modelOptions =
     modelSelectionByProviderToOptions(input.draft?.modelSelectionByProvider) ??

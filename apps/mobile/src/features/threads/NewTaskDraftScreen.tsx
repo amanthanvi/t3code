@@ -58,6 +58,7 @@ import {
   getUnavailableProviderModelReason,
   providerSupportsImageAttachments,
   resolveSelectableModelSelection,
+  shouldShowProviderInteractionModeToggle,
 } from "../../lib/modelOptions";
 import { deriveThreadTitleFromPrompt } from "../../lib/projectThreadStartTurn";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
@@ -1056,8 +1057,11 @@ export function NewTaskDraftScreen(props: {
               onPress={settingsSheetPresentation.open}
             />
             {flow.planModeEnabled &&
-            (flow.interactionMode === "plan" ||
-              flow.selectedModelOption?.showInteractionModeToggle !== false) ? (
+            shouldShowProviderInteractionModeToggle({
+              config: selectedEnvironmentServerConfig,
+              selection: flow.selectedModel,
+              interactionMode: flow.interactionMode,
+            }) ? (
               <ComposerInlineControl
                 accessibilityHint={`Switches to ${flow.interactionMode === "plan" ? "Build" : "Plan"} mode`}
                 accessibilityLabel={`Interaction mode: ${flow.interactionMode === "plan" ? "Plan" : "Build"}`}

@@ -95,7 +95,7 @@ import {
 } from "../composerFooterLayout";
 import { type ComposerPromptEditorHandle, ComposerPromptEditor } from "../ComposerPromptEditor";
 import { ProviderModelPicker } from "./ProviderModelPicker";
-import { hasSelectableProviderModel } from "./ProviderModelPicker.logic";
+import { getComposerProviderAvailability } from "./ProviderModelPicker.logic";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
@@ -240,15 +240,14 @@ import { proposedPlanTitle } from "../../proposedPlan";
 import {
   canUseProviderInteractionModeShortcut,
   getUnsupportedProviderAttachmentReason,
-  getProviderInteractionModeToggle,
   getProviderSupportedRuntimeModes,
 } from "../../providerModels";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
   NO_PROVIDER_MODEL_SELECTION,
+  resolveComposerProviderInstanceEntry,
   resolveProviderDriverKindForInstanceSelection,
-  resolveSelectableProviderInstanceEntry,
   sortProviderInstanceEntries,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
@@ -525,6 +524,7 @@ export interface ChatComposerHandle {
     selectedModelSelection: ModelSelection;
     providerAvailable: boolean;
     selectedProvider: ProviderDriverKind;
+    selectedProviderStatus: ServerProvider | null;
     selectedModel: string;
     selectedProviderModels: ReadonlyArray<ServerProvider["models"][number]>;
   };
@@ -818,44 +818,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   //   4. First enabled entry matching the current driver kind.
   //   5. First enabled entry overall / default instance for the kind.
   //
-  const selectedInstanceId = useMemo<ProviderInstanceId>(() => {
-    const candidates: Array<string | null | undefined> = [
-      composerDraft.activeProvider,
-      activeThread?.session?.providerInstanceId,
-      activeThreadModelSelection?.instanceId,
-      activeProjectDefaultModelSelection?.instanceId,
-    ];
-    for (const candidate of candidates) {
-      if (!candidate) continue;
-      const match = providerInstanceEntries.find(
-        (entry) => entry.instanceId === candidate && entry.enabled && entry.isAvailable,
-      );
-      if (match) {
-        // When locked to a specific driver kind, ignore persisted instance
-        // ids from a different kind or continuation group.
-        if (lockedProvider && match.driverKind !== lockedProvider) continue;
-        if (
-          lockedContinuationGroupKey &&
-          match.continuationGroupKey !== lockedContinuationGroupKey
-        ) {
-          continue;
-        }
-        return match.instanceId;
-      }
-    }
-    const compatibleEntries = providerInstanceEntries.filter(
-      (entry) =>
-        (!lockedProvider || entry.driverKind === lockedProvider) &&
-        (!lockedContinuationGroupKey || entry.continuationGroupKey === lockedContinuationGroupKey),
-    );
-    const requestedDriverEntries = compatibleEntries.filter(
-      (entry) => entry.driverKind === requestedDriverKind,
-    );
-    return (
-      resolveSelectableProviderInstanceEntry(requestedDriverEntries, undefined)?.instanceId ??
-      resolveSelectableProviderInstanceEntry(compatibleEntries, undefined)?.instanceId ??
-      NO_PROVIDER_MODEL_SELECTION.instanceId
-    );
+  const selectedProviderEntry = useMemo(() => {
+    return resolveComposerProviderInstanceEntry({
+      entries: providerInstanceEntries,
+      candidateInstanceIds: [
+        composerDraft.activeProvider,
+        activeThread?.session?.providerInstanceId,
+        activeThreadModelSelection?.instanceId,
+        activeProjectDefaultModelSelection?.instanceId,
+      ],
+      requestedDriverKind,
+      lockedProvider,
+      lockedContinuationGroupKey,
+    });
   }, [
     activeProjectDefaultModelSelection?.instanceId,
     activeThread?.session?.providerInstanceId,
@@ -866,15 +841,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     providerInstanceEntries,
     requestedDriverKind,
   ]);
+  const selectedInstanceId =
+    selectedProviderEntry?.instanceId ?? NO_PROVIDER_MODEL_SELECTION.instanceId;
 
   // Resolve the active instance's snapshot by `instanceId` so a custom
   // instance gets its own slash commands, skills, and model list — not
   // the first snapshot for the same driver kind.
-  const selectedProviderEntry = useMemo(
-    () => providerInstanceEntries.find((entry) => entry.instanceId === selectedInstanceId),
-    [providerInstanceEntries, selectedInstanceId],
-  );
-  const noProviderEntryAvailable = selectedProviderEntry === undefined;
   // The driver kind follows the instance that will actually run the turn,
   // which can differ from the persisted selection when that selection is
   // disabled.
@@ -890,8 +862,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectModelSelection: activeProjectDefaultModelSelection,
     settings,
   });
-  const noProviderAvailable =
-    noProviderEntryAvailable || !hasSelectableProviderModel(selectedModel);
+  const {
+    noProviderEntryAvailable,
+    noSelectableModelAvailable,
+    noProviderAvailable,
+    showProviderModelPicker,
+  } = getComposerProviderAvailability({
+    hasProviderEntry: selectedProviderEntry !== undefined,
+    selectedModel,
+  });
   const selectedProviderStatus = useMemo(
     () => selectedProviderEntry?.snapshot ?? null,
     [selectedProviderEntry],
@@ -940,17 +919,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () => ({
       showInteractionModeToggle:
         planModeUiEnabled &&
-        (interactionMode === "plan" ||
-          getProviderInteractionModeToggle(providerStatuses, selectedProvider)),
+        (interactionMode === "plan" || selectedProviderStatus?.showInteractionModeToggle !== false),
       supportedRuntimeModes: getProviderSupportedRuntimeModes(selectedProviderStatus),
     }),
-    [
-      interactionMode,
-      planModeUiEnabled,
-      providerStatuses,
-      selectedProvider,
-      selectedProviderStatus,
-    ],
+    [interactionMode, planModeUiEnabled, selectedProviderStatus],
   );
   const selectedModelSelection = useMemo<ModelSelection>(
     () => createModelSelection(selectedInstanceId, selectedModel, selectedModelOptionsForDispatch),
@@ -2824,6 +2796,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         selectedModelSelection,
         providerAvailable: !noProviderAvailable,
         selectedProvider,
+        selectedProviderStatus,
         selectedModel,
         selectedProviderModels,
       }),
@@ -2865,6 +2838,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       noProviderAvailable,
       selectedPromptEffort,
       selectedProvider,
+      selectedProviderStatus,
       selectedProviderModels,
     ],
   );
@@ -3295,11 +3269,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           ? "Add feedback to refine the plan, or leave this blank to implement it"
                           : projectSelectionRequired
                             ? "Choose a project above to start a thread"
-                            : noProviderAvailable
+                            : noProviderEntryAvailable
                               ? "Enable a provider in Settings to send a message"
-                              : phase === "disconnected"
-                                ? DISCONNECTED_COMPOSER_PLACEHOLDER
-                                : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                              : noSelectableModelAvailable
+                                ? "No models are available for the selected provider"
+                                : phase === "disconnected"
+                                  ? DISCONNECTED_COMPOSER_PLACEHOLDER
+                                  : "Ask anything, @tag files/folders, $use skills, or / for commands"
                   }
                   disabled={isConnecting || isComposerApprovalState || projectSelectionRequired}
                 />
@@ -3353,7 +3329,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 )}
               >
                 <div className="-m-1 -ms-3.5 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 ps-3.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                  {noProviderAvailable ? (
+                  {!showProviderModelPicker ? (
                     <Button
                       type="button"
                       size="sm"

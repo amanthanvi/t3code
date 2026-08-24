@@ -64,6 +64,8 @@ export interface AcpSessionRuntimeOptions {
   readonly resumeSessionId?: string;
   readonly sessionLoadTimeout?: Duration.Input;
   readonly sessionLoadReplayIdleGap?: Duration.Input;
+  /** Disable only for agents whose replay never exposes authoritative setup state. */
+  readonly sessionLoadReplayIdleFallback?: boolean;
   readonly clientCapabilities?: EffectAcpSchema.InitializeRequest["clientCapabilities"];
   readonly clientInfo: {
     readonly name: string;
@@ -77,6 +79,10 @@ export interface AcpSessionRuntimeOptions {
   readonly authMethodId?: string;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
+  /** Test-only scheduling hook for the prompt registration boundary. */
+  readonly beforePromptRegistration?: Effect.Effect<void>;
+  /** Test-only scheduling hook after cancellation capture and before prompt serialization. */
+  readonly beforePromptSerialization?: Effect.Effect<void>;
   readonly protocolLogging?: {
     readonly logIncoming?: boolean;
     readonly logOutgoing?: boolean;
@@ -207,9 +213,10 @@ export class AcpSessionRuntime extends Context.Service<
      * Sends a prompt turn to the active session.
      * @see https://agentclientprotocol.com/protocol/schema#session/prompt
      */
-    readonly prompt: (
+    readonly prompt: <E = never>(
       payload: Omit<EffectAcpSchema.PromptRequest, "sessionId">,
-    ) => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
+      beforePrompt?: Effect.Effect<void, E>,
+    ) => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError | E>;
     /**
      * Sends a real ACP `session/cancel` notification for the active session.
      * @see https://agentclientprotocol.com/protocol/schema#session/cancel
@@ -309,6 +316,7 @@ export const make = (
     const configOptionsRef = yield* Ref.make(sessionConfigOptionsFromSetup(undefined));
     const startStateRef = yield* Ref.make<AcpStartState>({ _tag: "NotStarted" });
     const promptSerializationSemaphore = yield* Semaphore.make(1);
+    const promptCancellationSemaphore = yield* Semaphore.make(1);
     const promptCancellationGenerationRef = yield* Ref.make(0);
     const activePromptFiberRef = yield* Ref.make<
       Option.Option<Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>>
@@ -607,14 +615,19 @@ export const make = (
             status: "started",
           });
 
-          const idleFiber = yield* waitForSessionLoadReplayIdle({
-            gateRef: sessionLoadGateRef,
-          }).pipe(Effect.forkIn(runtimeScope));
-          const loaded = yield* Effect.raceFirst(
-            acp.agent.loadSession(loadPayload),
-            Fiber.join(idleFiber),
+          const loaded = yield* (
+            options.sessionLoadReplayIdleFallback === false
+              ? acp.agent.loadSession(loadPayload)
+              : Effect.gen(function* () {
+                  const idleFiber = yield* waitForSessionLoadReplayIdle({
+                    gateRef: sessionLoadGateRef,
+                  }).pipe(Effect.forkIn(runtimeScope));
+                  return yield* Effect.raceFirst(
+                    acp.agent.loadSession(loadPayload),
+                    Fiber.join(idleFiber),
+                  ).pipe(Effect.ensuring(Fiber.interrupt(idleFiber).pipe(Effect.ignore)));
+                })
           ).pipe(
-            Effect.ensuring(Fiber.interrupt(idleFiber).pipe(Effect.ignore)),
             Effect.timeoutOption(sessionLoadTimeout),
             Effect.flatMap((result) =>
               Option.match(result, {
@@ -746,9 +759,13 @@ export const make = (
       }),
       getModeState: Ref.get(modeStateRef),
       getConfigOptions: Ref.get(configOptionsRef),
-      prompt: (payload) =>
+      prompt: <E = never>(
+        payload: Omit<EffectAcpSchema.PromptRequest, "sessionId">,
+        beforePrompt?: Effect.Effect<void, E>,
+      ) =>
         Effect.gen(function* () {
           const cancellationGeneration = yield* Ref.get(promptCancellationGenerationRef);
+          yield* options.beforePromptSerialization ?? Effect.void;
           return yield* promptSerializationSemaphore.withPermit(
             Effect.gen(function* () {
               const cancelledResponse = {
@@ -757,6 +774,7 @@ export const make = (
               if ((yield* Ref.get(promptCancellationGenerationRef)) !== cancellationGeneration) {
                 return cancelledResponse;
               }
+              yield* beforePrompt ?? Effect.void;
               const started = yield* getStartedState;
               yield* closeActiveAssistantSegment({
                 queue: eventQueue,
@@ -766,12 +784,34 @@ export const make = (
                 sessionId: started.sessionId,
                 ...payload,
               } satisfies EffectAcpSchema.PromptRequest;
-              const promptRpcFiber = yield* runLoggedRequest(
-                "session/prompt",
-                requestPayload,
-                acp.agent.prompt(requestPayload),
-              ).pipe(Effect.forkIn(runtimeScope));
-              yield* Ref.set(activePromptFiberRef, Option.some(promptRpcFiber));
+              const promptStartGate = yield* Deferred.make<void>();
+              const promptRpcFiber = yield* Deferred.await(promptStartGate).pipe(
+                Effect.andThen(
+                  runLoggedRequest(
+                    "session/prompt",
+                    requestPayload,
+                    acp.agent.prompt(requestPayload),
+                  ),
+                ),
+                Effect.forkIn(runtimeScope),
+              );
+              yield* options.beforePromptRegistration ?? Effect.void;
+              const cancelledBeforeRegistration = yield* promptCancellationSemaphore.withPermit(
+                Effect.gen(function* () {
+                  if (
+                    (yield* Ref.get(promptCancellationGenerationRef)) !== cancellationGeneration
+                  ) {
+                    return true;
+                  }
+                  yield* Ref.set(activePromptFiberRef, Option.some(promptRpcFiber));
+                  return false;
+                }),
+              );
+              if (cancelledBeforeRegistration) {
+                yield* Fiber.interrupt(promptRpcFiber).pipe(Effect.ignore);
+                return cancelledResponse;
+              }
+              yield* Deferred.succeed(promptStartGate, undefined);
               return yield* Fiber.join(promptRpcFiber).pipe(
                 Effect.catchCause((cause) =>
                   Cause.hasInterruptsOnly(cause)
@@ -797,8 +837,12 @@ export const make = (
       cancel: getStartedState.pipe(
         Effect.flatMap((started) =>
           Effect.gen(function* () {
-            yield* Ref.update(promptCancellationGenerationRef, (generation) => generation + 1);
-            const activePromptFiber = yield* Ref.get(activePromptFiberRef);
+            const activePromptFiber = yield* promptCancellationSemaphore.withPermit(
+              Effect.gen(function* () {
+                yield* Ref.update(promptCancellationGenerationRef, (generation) => generation + 1);
+                return yield* Ref.get(activePromptFiberRef);
+              }),
+            );
             if (Option.isSome(activePromptFiber)) {
               yield* Fiber.interrupt(activePromptFiber.value).pipe(Effect.ignore);
             }

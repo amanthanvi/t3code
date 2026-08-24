@@ -249,14 +249,17 @@ function textGenerationSelectionIsSupported(
 }
 
 function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
-  const fallbackEntry = Object.entries(settings.providers).find(
-    ([driver]) =>
+  const fallbackEntry = Object.entries(settings.providers).find(([driver]) => {
+    const candidate = {
+      instanceId: ProviderInstanceId.make(driver),
+      model: DEFAULT_TEXT_GENERATION_MODEL,
+    } satisfies ModelSelection;
+    return (
       driver !== "cline" &&
-      isModelSelectionProviderEnabled(settings, {
-        instanceId: ProviderInstanceId.make(driver),
-        model: DEFAULT_TEXT_GENERATION_MODEL,
-      }),
-  );
+      isModelSelectionProviderEnabled(settings, candidate) &&
+      textGenerationSelectionIsSupported(settings, candidate)
+    );
+  });
   const legacyDriver = fallbackEntry ? ProviderDriverKind.make(fallbackEntry[0]) : undefined;
   const instanceFallback = legacyDriver
     ? undefined

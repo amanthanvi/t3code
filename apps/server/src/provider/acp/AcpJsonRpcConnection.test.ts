@@ -6,6 +6,7 @@ import * as NodeFS from "node:fs";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -300,6 +301,45 @@ describe("AcpSessionRuntime", () => {
       Effect.scoped,
       Effect.provide(NodeServices.layer),
     ),
+  );
+
+  it.effect("cancels a prompt that is waiting to register without starting its RPC", () =>
+    Effect.gen(function* () {
+      const registrationReached = yield* Deferred.make<void>();
+      const releaseRegistration = yield* Deferred.make<void>();
+      const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+      const runtime = yield* AcpSessionRuntime.make({
+        spawn: {
+          command: mockAgentCommand,
+          args: mockAgentArgs,
+        },
+        cwd: process.cwd(),
+        clientInfo: { name: "t3-test", version: "0.0.0" },
+        authMethodId: "test",
+        requestLogger: (event) =>
+          Effect.sync(() => {
+            requestEvents.push(event);
+          }),
+        beforePromptRegistration: Deferred.succeed(registrationReached, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseRegistration)),
+        ),
+      });
+      yield* runtime.start();
+
+      const promptFiber = yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "must not start" }] })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(registrationReached);
+      yield* runtime.cancel;
+      yield* Deferred.succeed(releaseRegistration, undefined);
+
+      expect(yield* Fiber.join(promptFiber)).toMatchObject({ stopReason: "cancelled" });
+      expect(
+        requestEvents.some(
+          (event) => event.method === "session/prompt" && event.status === "started",
+        ),
+      ).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("segments assistant text around ACP tool calls", () =>

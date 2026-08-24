@@ -71,6 +71,7 @@ import {
 import { type ClineAdapterShape } from "../Services/ClineAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
+const isAcpError = Schema.is(EffectAcpErrors.AcpError);
 
 const PROVIDER = ProviderDriverKind.make("cline");
 const CLINE_RESUME_VERSION = 1 as const;
@@ -135,6 +136,8 @@ export interface ClineAdapterLiveOptions {
   readonly resolveSettings?: Effect.Effect<ClineSettings>;
   /** Override only for deterministic startup timeout tests. */
   readonly sessionStartTimeout?: Duration.Input;
+  /** Test-only scheduling hook at the shared ACP prompt serialization boundary. */
+  readonly beforePromptSerialization?: Effect.Effect<void>;
 }
 
 interface PendingApproval {
@@ -569,6 +572,9 @@ export const makeClineAdapter = Effect.fn("makeClineAdapter")(function* (
             cwd,
             forceKillAfter: CLINE_PROCESS_FORCE_KILL_AFTER,
             ...(resumeSessionId ? { resumeSessionId } : {}),
+            ...(options?.beforePromptSerialization
+              ? { beforePromptSerialization: options.beforePromptSerialization }
+              : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
             ...acpNativeLoggers,
           }).pipe(
@@ -673,11 +679,14 @@ export const makeClineAdapter = Effect.fn("makeClineAdapter")(function* (
           });
 
           if (clineModelsFromSessionConfigOptions(started.sessionSetupResult).length === 0) {
+            const replayIdleWithoutConfig =
+              started.sessionSetupResult._meta?.t3SessionLoadReady === "replay_idle";
             return yield* new ProviderAdapterValidationError({
               provider: PROVIDER,
               operation: "startSession",
-              issue:
-                "Cline ACP did not advertise any usable models. Configure a provider and model in Cline, then start a new session.",
+              issue: replayIdleWithoutConfig
+                ? "Cline ACP session/load replay became idle without returning model configuration. Resume cannot safely bind a model; retry after Cline finishes loading the session."
+                : "Cline ACP did not advertise any usable models. Configure a provider and model in Cline, then start a new session.",
             });
           }
 
@@ -833,7 +842,7 @@ export const makeClineAdapter = Effect.fn("makeClineAdapter")(function* (
 
   const sendTurn: ClineAdapterShape["sendTurn"] = Effect.fn("ClineAdapter.sendTurn")(
     function* (input) {
-      const ctx = yield* requireSession(input.threadId);
+      yield* requireSession(input.threadId);
       if (input.interactionMode === "plan") {
         return yield* new ProviderAdapterValidationError({
           provider: PROVIDER,
@@ -857,60 +866,72 @@ export const makeClineAdapter = Effect.fn("makeClineAdapter")(function* (
           issue: "Turn requires non-empty text.",
         });
       }
-      // A sendTurn while a prompt is in flight is a steer: the agent folds
-      // the new prompt into the ongoing work, so the active turn id is
-      // reused instead of opening a new turn.
-      const steeringTurnId = ctx.promptsInFlight > 0 ? ctx.activeTurnId : undefined;
-      const turnId = steeringTurnId ?? TurnId.make(yield* randomUUIDv4);
-      // Count this prompt immediately so a superseded in-flight prompt
-      // resolving from here on does not settle the turn; the matching
-      // decrement is the `ensuring` below.
-      ctx.promptsInFlight += 1;
+      const prepared = yield* withThreadLock(
+        input.threadId,
+        Effect.gen(function* () {
+          const ctx = yield* requireSession(input.threadId);
+          // Reserve the active turn before any provider/configuration yield.
+          // Concurrent sends are steers and must observe the first send's id.
+          const steeringTurnId = ctx.promptsInFlight > 0 ? ctx.activeTurnId : undefined;
+          const turnId = steeringTurnId ?? TurnId.make(yield* randomUUIDv4);
+          ctx.promptsInFlight += 1;
+          ctx.activeTurnId = turnId;
+          if (steeringTurnId === undefined) {
+            ctx.lastPlanFingerprint = undefined;
+          }
+          ctx.session = {
+            ...ctx.session,
+            activeTurnId: turnId,
+            updatedAt: yield* nowIso,
+          };
+          return { ctx, steeringTurnId, turnId };
+        }),
+      );
+      const { ctx, steeringTurnId, turnId } = prepared;
 
       return yield* Effect.gen(function* () {
         const turnModelSelection =
           input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
         const requestedTurnModel = turnModelSelection?.model.trim();
         const model = requestedTurnModel || ctx.session.model;
-        yield* applyRequestedSessionConfiguration({
-          runtime: ctx.acp,
-          threadId: input.threadId,
-          runtimeMode: ctx.session.runtimeMode,
-          interactionMode: input.interactionMode,
-          requestedModelId: model,
-        });
-        ctx.activeTurnId = turnId;
-        if (steeringTurnId === undefined) {
-          ctx.lastPlanFingerprint = undefined;
-        }
-        ctx.session = {
-          ...ctx.session,
-          activeTurnId: turnId,
-          updatedAt: yield* nowIso,
-        };
-
-        if (steeringTurnId === undefined) {
-          yield* offerRuntimeEvent({
-            type: "turn.started",
-            ...(yield* makeEventStamp()),
-            provider: PROVIDER,
-            threadId: input.threadId,
-            turnId,
-            payload: { model },
-          });
-        }
-
         const promptParts: Array<EffectAcpSchema.ContentBlock> = [
           { type: "text", text: promptText },
         ];
 
         const result = yield* ctx.acp
-          .prompt({
-            prompt: promptParts,
-          })
+          .prompt(
+            { prompt: promptParts },
+            Effect.gen(function* () {
+              yield* applyRequestedSessionConfiguration({
+                runtime: ctx.acp,
+                threadId: input.threadId,
+                runtimeMode: ctx.session.runtimeMode,
+                interactionMode: input.interactionMode,
+                requestedModelId: model,
+              });
+              ctx.session = {
+                ...ctx.session,
+                activeTurnId: turnId,
+                updatedAt: yield* nowIso,
+              };
+
+              if (steeringTurnId === undefined) {
+                yield* offerRuntimeEvent({
+                  type: "turn.started",
+                  ...(yield* makeEventStamp()),
+                  provider: PROVIDER,
+                  threadId: input.threadId,
+                  turnId,
+                  payload: { model },
+                });
+              }
+            }),
+          )
           .pipe(
             Effect.mapError((error) =>
-              mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
+              isAcpError(error)
+                ? mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error)
+                : error,
             ),
           );
 
@@ -951,9 +972,12 @@ export const makeClineAdapter = Effect.fn("makeClineAdapter")(function* (
         };
       }).pipe(
         Effect.ensuring(
-          Effect.sync(() => {
-            ctx.promptsInFlight = Math.max(0, ctx.promptsInFlight - 1);
-          }),
+          withThreadLock(
+            input.threadId,
+            Effect.sync(() => {
+              ctx.promptsInFlight = Math.max(0, ctx.promptsInFlight - 1);
+            }),
+          ),
         ),
       );
     },

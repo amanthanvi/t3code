@@ -11,6 +11,7 @@ import {
   deriveProviderInstanceEntries,
   filterTextGenerationProviderInstanceEntries,
   sortProviderInstanceEntries,
+  type ProviderInstanceEntry,
 } from "../../providerInstances";
 import {
   getCustomModelOptionsByInstance,
@@ -51,6 +52,17 @@ export function sourceControlWriterToggleState(input: {
   } as const;
 }
 
+export function hasUsableSourceControlWriterModel(
+  entries: ReadonlyArray<
+    Pick<ProviderInstanceEntry, "enabled" | "isAvailable" | "status" | "models">
+  >,
+): boolean {
+  return entries.some(
+    (entry) =>
+      entry.enabled && entry.isAvailable && entry.status === "ready" && entry.models.length > 0,
+  );
+}
+
 export function SourceControlWritingSettingsSection() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
@@ -76,7 +88,7 @@ export function SourceControlWritingSettingsSection() {
       applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings),
     ),
   );
-  const canUseDedicatedModel = instanceEntries.length > 0;
+  const canUseDedicatedModel = hasUsableSourceControlWriterModel(instanceEntries);
   const dedicatedWriterToggle = sourceControlWriterToggleState({
     hasOverride: usesDedicatedModel,
     hasSupportedModel: canUseDedicatedModel,

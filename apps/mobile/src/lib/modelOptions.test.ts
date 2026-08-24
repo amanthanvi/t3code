@@ -12,6 +12,7 @@ import {
   providerSupportsImageAttachments,
   resolveDefaultableModelSelection,
   resolveSelectableModelSelection,
+  shouldShowProviderInteractionModeToggle,
 } from "./modelOptions";
 
 describe("mobile model options", () => {
@@ -143,7 +144,7 @@ describe("mobile model options", () => {
     expect(resolveSelectableModelSelection(null, disabled)).toBe(disabled);
   });
 
-  it("does not synthesize Cline selections missing from the online catalog", () => {
+  it("preserves but blocks Cline selections missing from the online catalog", () => {
     const config = {
       providers: [
         {
@@ -162,7 +163,10 @@ describe("mobile model options", () => {
       model: "composer-2",
     };
 
-    expect(resolveSelectableModelSelection(config, stale)).toBeNull();
+    expect(resolveSelectableModelSelection(config, stale)).toBe(stale);
+    expect(getUnavailableProviderModelReason({ config, selection: stale })).toContain(
+      "Choose another model",
+    );
     expect(buildModelOptions(config, stale)).toEqual([]);
     const changedCatalog = {
       ...config,
@@ -181,7 +185,10 @@ describe("mobile model options", () => {
         },
       ],
     } as unknown as ServerConfig;
-    expect(resolveSelectableModelSelection(changedCatalog, stale)).toBeNull();
+    expect(resolveSelectableModelSelection(changedCatalog, stale)).toBe(stale);
+    expect(
+      getUnavailableProviderModelReason({ config: changedCatalog, selection: stale }),
+    ).toContain("Choose another model");
     expect(
       buildModelOptions(changedCatalog, stale).map((option) => option.selection.model),
     ).toEqual(["current-account-model"]);
@@ -206,6 +213,7 @@ describe("mobile model options", () => {
           installed: true,
           status: "warning",
           auth: { status: "unknown" },
+          showInteractionModeToggle: false,
           supportsImageAttachments: false,
           models: [],
         },
@@ -244,6 +252,20 @@ describe("mobile model options", () => {
         attachmentCount: 1,
       }),
     ).not.toBeNull();
+    expect(
+      shouldShowProviderInteractionModeToggle({
+        config,
+        selection,
+        interactionMode: "default",
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowProviderInteractionModeToggle({
+        config,
+        selection,
+        interactionMode: "plan",
+      }),
+    ).toBe(true);
   });
 
   it("preserves carried Cline modes but blocks them until the user chooses supported modes", () => {

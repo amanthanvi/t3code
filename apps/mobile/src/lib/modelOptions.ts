@@ -62,6 +62,20 @@ export function getUnsupportedProviderModeReason(input: {
   return null;
 }
 
+export function shouldShowProviderInteractionModeToggle(input: {
+  readonly config: T3ServerConfig | null | undefined;
+  readonly selection: ModelSelection | null | undefined;
+  readonly interactionMode: ProviderInteractionMode;
+}): boolean {
+  if (input.interactionMode === "plan") {
+    return true;
+  }
+  const provider = input.config?.providers.find(
+    (candidate) => candidate.instanceId === input.selection?.instanceId,
+  );
+  return provider?.showInteractionModeToggle !== false;
+}
+
 export function getUnsupportedProviderAttachmentReason(input: {
   readonly config: T3ServerConfig | null | undefined;
   readonly selection: ModelSelection | null | undefined;
@@ -107,14 +121,15 @@ export function getUnavailableProviderModelReason(input: {
     (candidate) => candidate.instanceId === input.selection?.instanceId,
   );
   if (
-    provider?.driver === "cline" &&
-    provider.status === "warning" &&
-    provider.auth.status === "unknown" &&
-    !provider.models.some((candidate) => candidate.slug === input.selection?.model)
+    provider?.driver !== "cline" ||
+    provider.models.some((candidate) => candidate.slug === input.selection?.model)
   ) {
+    return null;
+  }
+  if (provider.status === "warning" && provider.auth.status === "unknown") {
     return `${providerDisplayLabel(provider)} is still checking its model catalog. Wait for the provider check to finish.`;
   }
-  return null;
+  return `${providerDisplayLabel(provider)} no longer offers the selected model. Choose another model to continue.`;
 }
 
 function providerDisplayLabel(provider: {
@@ -167,8 +182,10 @@ function hasUnadvertisedClineSelection(
  * A stored model selection is only usable when its provider instance is
  * currently enabled, installed, and authenticated on the server. Returns the
  * selection unchanged when usable, otherwise `null` so callers fall through to
- * the server's default model. A missing config (environment offline) cannot be
- * validated, so stored selections pass through untouched.
+ * the server's default model. A usable Cline instance keeps an unadvertised
+ * selection intact so the UI can identify and block the stale model without
+ * silently rerouting the draft. A missing config (environment offline) cannot
+ * be validated, so stored selections pass through untouched.
  */
 export function resolveSelectableModelSelection(
   config: T3ServerConfig | null | undefined,
@@ -180,9 +197,6 @@ export function resolveSelectableModelSelection(
   const provider = config.providers.find(
     (candidate) => candidate.instanceId === selection.instanceId,
   );
-  if (hasUnadvertisedClineSelection(config, selection)) {
-    return null;
-  }
   return provider &&
     provider.enabled &&
     provider.installed &&

@@ -20,7 +20,6 @@ import {
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxFailureAction,
   resolveQueuedThreadSettings,
-  shouldRetryThreadOutboxDelivery,
   threadOutboxRetryDelayMs,
   type QueuedThreadMessage,
 } from "./thread-outbox-model";
@@ -75,7 +74,14 @@ describe("thread outbox", () => {
           auth: { status: "authenticated" },
           supportedRuntimeModes: ["full-access"],
           supportsImageAttachments: false,
-          models: [],
+          models: [
+            {
+              slug: "current-account-model",
+              name: "Current account model",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
         },
       ],
     } as unknown as ServerConfig;
@@ -98,6 +104,49 @@ describe("thread outbox", () => {
         interactionMode: "default",
       }),
     ).toContain("Remove the images");
+  });
+
+  it("keeps queued Cline input when its selected model leaves the live catalog", () => {
+    const message = queuedMessage({
+      messageId: "message-stale-cline-model",
+      createdAt: "2026-08-23T00:00:00.000Z",
+    });
+    const modelSelection = {
+      instanceId: ProviderInstanceId.make("cline"),
+      model: "retired-account-model",
+    };
+    const config = {
+      providers: [
+        {
+          instanceId: "cline",
+          driver: "cline",
+          displayName: "Cline",
+          enabled: true,
+          installed: true,
+          status: "ready",
+          auth: { status: "authenticated" },
+          supportedRuntimeModes: ["full-access"],
+          models: [
+            {
+              slug: "current-account-model",
+              name: "Current account model",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    expect(
+      getQueuedDeliveryUnsupportedProviderInputReason({
+        config,
+        message,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      }),
+    ).toContain("Choose another model");
   });
 
   it("groups messages by scoped thread and preserves creation order", () => {
@@ -648,18 +697,7 @@ describe("thread outbox", () => {
     expect(isQueuedThreadCreationSendable(base)).toBe(false);
   });
 
-  it("retries transport failures but drops deterministic command failures", () => {
-    expect(shouldRetryThreadOutboxDelivery(new Error("Socket is not connected"))).toBe(true);
-    expect(
-      shouldRetryThreadOutboxDelivery({
-        _tag: "ConnectionTransientError",
-        message: "temporarily unavailable",
-      }),
-    ).toBe(true);
-    expect(shouldRetryThreadOutboxDelivery(new Error("Thread no longer exists"))).toBe(false);
-  });
-
-  it("retains queued messages when settings synchronization fails before startTurn", () => {
+  it("retains queued messages when command delivery fails", () => {
     const deterministicFailure = new Error("Thread no longer exists");
 
     expect(
@@ -675,6 +713,6 @@ describe("thread outbox", () => {
         error: deterministicFailure,
         interrupted: false,
       }),
-    ).toBe("discard");
+    ).toBe("retry");
   });
 });

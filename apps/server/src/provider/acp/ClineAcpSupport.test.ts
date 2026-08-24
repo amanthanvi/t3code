@@ -167,6 +167,41 @@ describe("cline ACP support", () => {
     ]);
   });
 
+  it("normalizes model values and names before filtering and deduplicating the catalog", () => {
+    const models = clineModelsFromSessionConfigOptions({
+      sessionId: "ses_1",
+      configOptions: [
+        modelSelectOption({
+          currentValue: " model-a ",
+          options: [
+            {
+              group: "primary",
+              name: "Primary",
+              options: [
+                { value: "   ", name: "Ignored" },
+                { value: " model-a ", name: "  Model A  " },
+                { value: "model-a", name: "Duplicate" },
+              ],
+            },
+            {
+              group: "other",
+              name: "Other",
+              options: [
+                { value: " model-b ", name: "   " },
+                { value: "model-b", name: "Duplicate B" },
+              ],
+            },
+          ],
+        }),
+      ],
+    });
+
+    expect(models).toEqual([
+      { slug: "model-a", name: "Model A", isDefault: true },
+      { slug: "model-b", name: "model-b" },
+    ]);
+  });
+
   it("returns no models without a select config option for models", () => {
     const models = clineModelsFromSessionConfigOptions({
       sessionId: "ses_1",
