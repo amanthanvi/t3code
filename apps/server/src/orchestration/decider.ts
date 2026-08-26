@@ -834,7 +834,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command.regenerateTitle === undefined &&
         command.modelSelection === undefined &&
         command.branch === undefined &&
-        command.expectedBranch === undefined;
+        command.expectedBranch === undefined &&
+        command.linkedPullRequest === undefined;
       const updatedAt = isWorktreePathOnlyCas ? thread.updatedAt : occurredAt;
       return {
         ...(yield* withEventBase({
@@ -865,6 +866,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             : {}),
           ...(branch !== undefined ? { branch } : {}),
           ...(worktreePath !== undefined ? { worktreePath } : {}),
+          ...(command.linkedPullRequest !== undefined
+            ? { linkedPullRequest: command.linkedPullRequest }
+            : {}),
           updatedAt,
         },
       };
