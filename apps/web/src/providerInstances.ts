@@ -15,6 +15,7 @@
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
+  getProviderDriverCapabilities,
   PROVIDER_DISPLAY_NAMES,
   resolveProviderInstanceEnabled,
   type ModelSelection,
@@ -292,7 +293,9 @@ export function sortProviderInstanceEntries(
 export function filterTextGenerationProviderInstanceEntries(
   entries: ReadonlyArray<ProviderInstanceEntry>,
 ): ReadonlyArray<ProviderInstanceEntry> {
-  return entries.filter((entry) => entry.driverKind !== "cline");
+  return entries.filter(
+    (entry) => getProviderDriverCapabilities(entry.driverKind).supportsTextGeneration,
+  );
 }
 
 /**
@@ -434,8 +437,12 @@ export function resolveDefaultProviderModelSelection(
     const entry = deriveProviderInstanceEntries(providers).find(
       (candidate) => candidate.instanceId === instanceId,
     );
+    // A selection outside the advertised catalog is only preserved when the
+    // catalog is not authoritative (i.e. custom or stale slugs may still
+    // dispatch).
     if (
-      entry?.driverKind !== "cline" ||
+      !entry ||
+      !getProviderDriverCapabilities(entry.driverKind).modelCatalogIsAuthoritative ||
       entry.models.some((model) => model.slug === selection.model)
     ) {
       return selection;

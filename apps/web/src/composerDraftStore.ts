@@ -1049,25 +1049,20 @@ export function deriveEffectiveComposerModelState(input: {
     ? (input.selectedInstanceId ?? ProviderInstanceId.make(input.selectedProvider))
     : ProviderInstanceId.make(input.selectedProvider);
   const selectedModel = activeSelection?.model
-    ? selectedInstanceExists
-      ? (resolveAppModelSelectionForInstance(
-          activeSelectionInstanceId,
-          input.settings,
-          input.providers,
-          activeSelection.model,
-        ) ?? "")
-      : (resolveAppModelSelectionForInstance(
-          activeSelectionInstanceId,
-          input.settings,
-          input.providers,
-          activeSelection.model,
-        ) ??
-        resolveAppModelSelection(
-          input.selectedProvider,
-          input.settings,
-          input.providers,
-          activeSelection.model,
-        ))
+    ? (resolveAppModelSelectionForInstance(
+        activeSelectionInstanceId,
+        input.settings,
+        input.providers,
+        activeSelection.model,
+      ) ??
+      (selectedInstanceExists
+        ? ""
+        : resolveAppModelSelection(
+            input.selectedProvider,
+            input.settings,
+            input.providers,
+            activeSelection.model,
+          )))
     : baseModel;
   const modelOptions =
     modelSelectionByProviderToOptions(input.draft?.modelSelectionByProvider) ??

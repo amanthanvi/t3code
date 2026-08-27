@@ -2,33 +2,32 @@ import {
   DEFAULT_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
+  getProviderDriverCapabilities,
   ProviderDriverKind,
   type ModelCapabilities,
   type ProviderInstanceId,
-  type RuntimeMode,
+  type ProviderInteractionMode,
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import { createModelCapabilities, normalizeModelSlug } from "@t3tools/shared/model";
+import {
+  formatProviderDriverKindLabel,
+  getUnsupportedProviderAttachmentReason as getSharedUnsupportedProviderAttachmentReason,
+  providerShowsInteractionModeToggle,
+} from "@t3tools/shared/providerCapabilities";
+
+export { ALL_RUNTIME_MODES } from "@t3tools/contracts";
+export {
+  formatProviderDriverKindLabel,
+  getProviderSupportedRuntimeModes,
+  getUnsupportedProviderModeReason,
+} from "@t3tools/shared/providerCapabilities";
 
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
-export const ALL_RUNTIME_MODES: ReadonlyArray<RuntimeMode> = [
-  "approval-required",
-  "auto-accept-edits",
-  "auto",
-  "full-access",
-];
-
-export function formatProviderDriverKindLabel(provider: ProviderDriverKind): string {
-  return provider
-    .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .replace(/[_-]+/g, " ")
-    .trim()
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-}
 
 export function getProviderModels(
   providers: ReadonlyArray<ServerProvider>,
@@ -60,48 +59,26 @@ export function getProviderInteractionModeToggle(
   return getProviderSnapshot(providers, provider)?.showInteractionModeToggle ?? true;
 }
 
-export function getProviderSupportedRuntimeModes(
-  provider: ServerProvider | null | undefined,
-): ReadonlyArray<RuntimeMode> {
-  return provider?.supportedRuntimeModes ?? ALL_RUNTIME_MODES;
-}
-
-export function getUnsupportedProviderModeReason(input: {
-  readonly provider: ServerProvider | null | undefined;
-  readonly runtimeMode: RuntimeMode;
-  readonly interactionMode: "default" | "plan";
-}): string | null {
-  const label =
-    input.provider?.displayName?.trim() ||
-    (input.provider ? formatProviderDriverKindLabel(input.provider.driver) : "This provider");
-  if (!getProviderSupportedRuntimeModes(input.provider).includes(input.runtimeMode)) {
-    return `${label} does not support the selected access mode. Choose Full access to continue.`;
-  }
-  if (input.interactionMode === "plan" && input.provider?.showInteractionModeToggle === false) {
-    return `${label} does not support Plan mode. Choose Build to continue.`;
-  }
-  return null;
-}
-
 export function canUseProviderInteractionModeShortcut(input: {
   readonly planModeUiEnabled: boolean;
   readonly showInteractionModeToggle: boolean;
-  readonly interactionMode: "default" | "plan";
+  readonly interactionMode: ProviderInteractionMode;
 }): boolean {
   return (
-    input.planModeUiEnabled && (input.showInteractionModeToggle || input.interactionMode === "plan")
+    input.planModeUiEnabled &&
+    providerShowsInteractionModeToggle(
+      { showInteractionModeToggle: input.showInteractionModeToggle },
+      input.interactionMode,
+    )
   );
 }
 
+/** Positional wrapper over the shared rule for existing web callers. */
 export function getUnsupportedProviderAttachmentReason(
   provider: ServerProvider | null | undefined,
   attachmentCount: number,
 ): string | null {
-  if (attachmentCount === 0 || provider?.supportsImageAttachments !== false) {
-    return null;
-  }
-  const label = provider.displayName?.trim() || formatProviderDriverKindLabel(provider.driver);
-  return `${label} does not support image attachments. Remove the images to continue.`;
+  return getSharedUnsupportedProviderAttachmentReason({ provider, attachmentCount });
 }
 
 export function isProviderEnabled(
@@ -173,9 +150,10 @@ export function getDefaultServerModel(
   provider: ProviderDriverKind,
 ): string {
   const models = getProviderModels(providers, provider);
-  if (provider === "cline" && models.length === 0) {
-    // Cline's model catalog is account-scoped. An empty catalog is an
-    // actionable provider error, not a reason to synthesize a Codex model.
+  if (getProviderDriverCapabilities(provider).modelCatalogIsAuthoritative && models.length === 0) {
+    // When the advertised catalog is the only source of truth (e.g.
+    // account-scoped catalogs), an empty catalog is an actionable provider
+    // error, not a reason to synthesize a default model.
     return "";
   }
   return (

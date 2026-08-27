@@ -24,7 +24,6 @@ import {
   ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
   getDirectAnnotationBlockReason,
   getStartedThreadModelChangeBlockReason,
-  getDirectAnnotationAttachmentBlockReason,
   getUnsupportedProviderInputBannerCopy,
   getUnsupportedProviderInputReason,
   hasEnvironmentReconnectWarningGraceElapsed,
@@ -69,8 +68,10 @@ const providerWithoutImageAttachments: ServerProvider = {
 describe("direct preview annotation attachments", () => {
   it("blocks a direct screenshot before dispatch when the selected instance rejects images", () => {
     expect(
-      getDirectAnnotationAttachmentBlockReason({
+      getDirectAnnotationBlockReason({
         provider: providerWithoutImageAttachments,
+        runtimeMode: "full-access",
+        interactionMode: "default",
         existingImages: [],
         image: { id: "annotation-image" },
       }),
@@ -79,8 +80,10 @@ describe("direct preview annotation attachments", () => {
 
   it("allows a structured annotation when it has no screenshot attachment", () => {
     expect(
-      getDirectAnnotationAttachmentBlockReason({
+      getDirectAnnotationBlockReason({
         provider: providerWithoutImageAttachments,
+        runtimeMode: "full-access",
+        interactionMode: "default",
         existingImages: [],
         image: null,
       }),

@@ -2,6 +2,7 @@ import {
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
+  getProviderDriverCapabilities,
   type ModelSelection,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -26,6 +27,7 @@ import { ModelEsque } from "./components/chat/providerIconUtils";
 import {
   type ProviderInstanceEntry,
   deriveProviderInstanceEntries,
+  filterTextGenerationProviderInstanceEntries,
   isProviderInstancePickerReady,
   NO_PROVIDER_MODEL_SELECTION,
 } from "./providerInstances";
@@ -171,8 +173,9 @@ export function getAppModelOptions(
   // settings and the initial render before the first write both still
   // see the user's authored custom models.
   const defaultInstanceId = defaultInstanceIdForDriver(provider);
-  const customModels =
-    provider === "cline" ? [] : readInstanceCustomModels(settings, defaultInstanceId, provider);
+  const customModels = getProviderDriverCapabilities(provider).supportsCustomModels
+    ? readInstanceCustomModels(settings, defaultInstanceId, provider)
+    : [];
   for (const slug of normalizeCustomModelSlugs(customModels, builtInModelSlugs)) {
     if (seen.has(slug)) {
       continue;
@@ -215,10 +218,9 @@ export function getAppModelOptionsForInstance(
     ),
   );
 
-  const customModels =
-    entry.driverKind === "cline"
-      ? []
-      : readInstanceCustomModels(settings, entry.instanceId, entry.driverKind);
+  const customModels = getProviderDriverCapabilities(entry.driverKind).supportsCustomModels
+    ? readInstanceCustomModels(settings, entry.instanceId, entry.driverKind)
+    : [];
   for (const slug of normalizeCustomModelSlugs(customModels, builtInModelSlugs)) {
     if (seen.has(slug)) {
       continue;
@@ -340,8 +342,8 @@ export function resolveAppModelSelectionState(
     instanceId: DEFAULT_TEXT_GENERATION_INSTANCE_ID,
     model: DEFAULT_TEXT_GENERATION_MODEL,
   };
-  const entries = deriveProviderInstanceEntries(providers).filter(
-    (entry) => entry.driverKind !== "cline",
+  const entries = filterTextGenerationProviderInstanceEntries(
+    deriveProviderInstanceEntries(providers),
   );
   const supportsBackgroundSelection = (entry: ProviderInstanceEntry) =>
     isProviderInstancePickerReady(entry) && entry.models.length > 0;

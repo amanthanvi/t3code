@@ -40,20 +40,12 @@ function getDirectAnnotationAttachmentCount(input: {
   readonly existingImages: ReadonlyArray<Pick<ComposerImageAttachment, "id">>;
   readonly image: Pick<ComposerImageAttachment, "id"> | null;
 }): number {
-  const includesDirectImage =
-    input.image !== null && input.existingImages.some((image) => image.id === input.image?.id);
-  return input.existingImages.length + (input.image !== null && !includesDirectImage ? 1 : 0);
-}
-
-export function getDirectAnnotationAttachmentBlockReason(input: {
-  readonly provider: ServerProvider | null | undefined;
-  readonly existingImages: ReadonlyArray<Pick<ComposerImageAttachment, "id">>;
-  readonly image: Pick<ComposerImageAttachment, "id"> | null;
-}): string | null {
-  return getUnsupportedProviderAttachmentReason(
-    input.provider,
-    getDirectAnnotationAttachmentCount(input),
-  );
+  const image = input.image;
+  if (image === null) {
+    return input.existingImages.length;
+  }
+  const includesDirectImage = input.existingImages.some((existing) => existing.id === image.id);
+  return input.existingImages.length + (includesDirectImage ? 0 : 1);
 }
 
 export type UnsupportedProviderInputReason = {

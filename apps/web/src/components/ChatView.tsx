@@ -2800,12 +2800,18 @@ function ChatViewContent(props: ChatViewProps) {
   // composer will dispatch. A stale disabled draft selection must not impose
   // its restrictions while the composer has already fallen back elsewhere.
   const activeProviderStatus = activeProviderEntry?.snapshot ?? null;
-  const unsupportedProviderInputReason = getUnsupportedProviderInputReason({
-    provider: activeProviderStatus,
-    runtimeMode,
-    interactionMode,
-    attachmentCount: composerImageCount,
-  });
+  // Memoized because the result is a fresh object consumed by the banner
+  // memos below; recomputing on every render would defeat them mid-stream.
+  const unsupportedProviderInputReason = useMemo(
+    () =>
+      getUnsupportedProviderInputReason({
+        provider: activeProviderStatus,
+        runtimeMode,
+        interactionMode,
+        attachmentCount: composerImageCount,
+      }),
+    [activeProviderStatus, runtimeMode, interactionMode, composerImageCount],
+  );
   const providerStatusBannerKey = getProviderStatusBannerKey(activeProviderStatus);
   const [dismissedProviderStatusBannerKey, setDismissedProviderStatusBannerKey] = useState<
     string | null
