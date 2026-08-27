@@ -180,6 +180,38 @@ describe("worktree directory sizing", () => {
   it.each([
     ["measurement", measureDirectoryNoFollowPromise],
     ["discovery", discoverWorktreeDirectoriesNoFollowPromise],
+  ] as const)(
+    "observes a %s lstat rejection that settles after the deadline",
+    async (_scanKind, scan) => {
+      vi.useFakeTimers();
+      let rejectLstat: ((cause: Error) => void) | undefined;
+      const fileSystem = {
+        lstat: () =>
+          new Promise<never>((_resolve, reject) => {
+            rejectLstat = reject;
+          }),
+        readdir: () => Promise.resolve([]),
+      };
+      const resultPromise = scan(
+        "/late-rejection",
+        { maxEntries: 10, maxDurationMs: 100, maxFailures: 10 },
+        fileSystem,
+      );
+
+      await vi.advanceTimersByTimeAsync(100);
+      const result = await resultPromise;
+      expect(result.failures).toHaveLength(1);
+      expect(result.failures[0]?.operation).toBe("time-budget");
+
+      // Without observation this late rejection would be unhandled and fail the run.
+      rejectLstat?.(new Error("late filesystem failure"));
+      await vi.advanceTimersByTimeAsync(0);
+    },
+  );
+
+  it.each([
+    ["measurement", measureDirectoryNoFollowPromise],
+    ["discovery", discoverWorktreeDirectoriesNoFollowPromise],
   ] as const)("reports a late %s lstat result at the deadline", async (_scanKind, scan) => {
     vi.spyOn(Date, "now")
       .mockReturnValueOnce(0)

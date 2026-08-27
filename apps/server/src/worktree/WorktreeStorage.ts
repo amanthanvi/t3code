@@ -1533,22 +1533,22 @@ export const make = Effect.gen(function* () {
     ),
     Effect.forkScoped,
   );
-  yield* Effect.forever(
-    Effect.sleep(AUTO_SWEEP_INTERVAL).pipe(
-      Effect.andThen(
-        settings.getSettings.pipe(
-          Effect.flatMap((current) =>
-            shouldRunAutomaticFallback(current.worktreeAutoPrunePolicy)
-              ? runConfiguredAutomaticPrune()
-              : Effect.void,
-          ),
-          Effect.catch((cause) =>
-            Effect.logWarning("Fallback automatic worktree prune failed", { cause }),
-          ),
-        ),
-      ),
+  const fallbackSweep = settings.getSettings.pipe(
+    Effect.flatMap((current) =>
+      shouldRunAutomaticFallback(current.worktreeAutoPrunePolicy)
+        ? runConfiguredAutomaticPrune()
+        : Effect.void,
     ),
-  ).pipe(Effect.forkScoped);
+    Effect.catch((cause) =>
+      Effect.logWarning("Fallback automatic worktree prune failed", { cause }),
+    ),
+  );
+  // Sweep before the first sleep so a server restarted more often than the
+  // interval still runs inactivity pruning; the event triggers above drop the
+  // initial policy and only fire for on-settle or policy changes.
+  yield* Effect.forever(fallbackSweep.pipe(Effect.andThen(Effect.sleep(AUTO_SWEEP_INTERVAL)))).pipe(
+    Effect.forkScoped,
+  );
 
   return {
     getReport: getReport(),

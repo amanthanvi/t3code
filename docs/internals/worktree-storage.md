@@ -83,8 +83,9 @@ inspection and must not replace non-force removal with forced deletion.
 Automatic pruning is hosted by each server and defaults to `off`.
 
 - `on-settle` runs when that policy is enabled or changed and when a thread settles or is archived.
-- `after-inactive-days` runs when that policy is enabled or changed and on the bounded periodic
-  fallback sweep.
+- `after-inactive-days` runs when that policy is enabled or changed, once at server startup, and
+  on the bounded periodic fallback sweep, so servers restarted more often than the sweep interval
+  still prune.
 
 Unrelated settings changes do not trigger a scan. Both automatic modes call the same serialized,
 revalidating prune path as the manual RPC.

@@ -62,8 +62,12 @@ async function runBeforeDeadline<A>(
 
   let timeout: ReturnType<typeof NodeTimers.setTimeout> | undefined;
   try {
+    const pending = operation();
+    // Late settlements are ignored, but the promise must stay observed so a
+    // rejection after the deadline cannot become an unhandled rejection.
+    pending.catch(() => undefined);
     return await Promise.race([
-      operation(),
+      pending,
       new Promise<typeof deadlineExceeded>((resolve) => {
         timeout = NodeTimers.setTimeout(() => resolve(deadlineExceeded), remainingMs);
       }),

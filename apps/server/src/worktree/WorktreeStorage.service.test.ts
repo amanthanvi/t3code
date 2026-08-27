@@ -10,10 +10,12 @@ import {
   type OrchestrationEvent,
   type OrchestrationProjectShell,
   type OrchestrationThreadShell,
+  type WorktreeAutoPrunePolicy,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterEach, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -119,6 +121,7 @@ const makeHarness = Effect.fn("WorktreeStorage.serviceTest.makeHarness")(functio
   readonly defectOnSecondClear?: boolean;
   readonly unassigned?: boolean;
   readonly sharedAcrossProjects?: boolean;
+  readonly policy?: WorktreeAutoPrunePolicy;
 }) {
   const root = yield* Effect.promise(() =>
     NodeFSP.mkdtemp(NodePath.join(process.cwd(), ".worktree-storage-service-test-")),
@@ -323,7 +326,7 @@ const makeHarness = Effect.fn("WorktreeStorage.serviceTest.makeHarness")(functio
   const dependencies = Layer.mergeAll(
     NodeServices.layer,
     configLayer,
-    ServerSettings.layerTest({ worktreeAutoPrunePolicy: { mode: "off" } }),
+    ServerSettings.layerTest({ worktreeAutoPrunePolicy: input.policy ?? { mode: "off" } }),
     engineLayer,
     projectionLayer,
     Layer.mock(ProviderService.ProviderService)({ listSessions: () => Effect.succeed([]) }),
@@ -395,6 +398,27 @@ it.effect("runs reservation, removal, restoration, and fresh report service flow
       expect(mismatchResult.removedCount).toBe(0);
       expect(mismatch.threadPath).toBe(mismatch.reboundPath);
       expect(mismatch.removeCallCount).toBe(0);
+    }),
+  ),
+);
+
+it.live("sweeps inactivity-stale worktrees at startup without waiting for the interval", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        remove: "success",
+        policy: { mode: "after-inactive-days", inactivityDays: 30 },
+      });
+      yield* harness.program;
+
+      yield* Effect.gen(function* () {
+        while (harness.removeCallCount === 0) {
+          yield* Effect.sleep(Duration.millis(20));
+        }
+      }).pipe(Effect.timeout(Duration.seconds(10)));
+
+      expect(harness.removeCallCount).toBe(1);
+      expect(harness.threadPath).toBeNull();
     }),
   ),
 );
