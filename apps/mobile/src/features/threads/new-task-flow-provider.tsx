@@ -31,9 +31,7 @@ import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import {
   buildModelOptions,
-  getUnsupportedProviderAttachmentReason,
-  getUnsupportedProviderModeReason,
-  getUnavailableProviderModelReason,
+  getProviderSendBlockReason,
   groupByProvider,
   resolveDefaultableModelSelection,
   resolveSelectableModelSelection,
@@ -146,7 +144,7 @@ type NewTaskFlowContextValue = {
   readonly currentCheckoutBranchName: string | null;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
-  readonly unsupportedProviderModeReason: string | null;
+  readonly providerSendBlockReason: string | null;
   readonly planModeEnabled: boolean;
   readonly expandedProvider: string | null;
   readonly environments: ReadonlyArray<{
@@ -437,22 +435,13 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     modelOptions.find((option) => option.isDefault)?.selection ??
     modelOptions[0]?.selection ??
     null;
-  const unsupportedProviderModeReason =
-    getUnavailableProviderModelReason({
-      config: selectedEnvironmentServerConfig,
-      selection: selectedModel,
-    }) ??
-    getUnsupportedProviderModeReason({
-      config: selectedEnvironmentServerConfig,
-      selection: selectedModel,
-      runtimeMode,
-      interactionMode,
-    }) ??
-    getUnsupportedProviderAttachmentReason({
-      config: selectedEnvironmentServerConfig,
-      selection: selectedModel,
-      attachmentCount: attachments.length,
-    });
+  const providerSendBlockReason = getProviderSendBlockReason({
+    config: selectedEnvironmentServerConfig,
+    selection: selectedModel,
+    runtimeMode,
+    interactionMode,
+    attachmentCount: attachments.length,
+  });
   const selectedModelKey = selectedModel
     ? `${selectedModel.instanceId}:${selectedModel.model}`
     : null;
@@ -506,7 +495,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     [selectedModel, selectedProjectDraftKey],
   );
 
-  const providerGroups = useMemo(() => groupByProvider(modelOptions), [modelOptions]);
+  const providerGroups = useMemo(
+    () => groupByProvider(modelOptions, selectedEnvironmentServerConfig),
+    [modelOptions, selectedEnvironmentServerConfig],
+  );
   const setPrompt = useCallback(
     (value: string) => {
       if (!selectedProjectDraftKey) {
@@ -874,19 +866,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         queuedInteractionMode: editingPendingTask?.interactionMode,
       });
       if (
-        getUnavailableProviderModelReason({
-          config: selectedEnvironmentServerConfig,
-          selection: draftModelSelection,
-        }) !== null ||
-        getUnsupportedProviderModeReason({
+        getProviderSendBlockReason({
           config: selectedEnvironmentServerConfig,
           selection: draftModelSelection,
           runtimeMode: draftRuntimeMode,
           interactionMode: draftInteractionMode,
-        }) !== null ||
-        getUnsupportedProviderAttachmentReason({
-          config: selectedEnvironmentServerConfig,
-          selection: draftModelSelection,
           attachmentCount: draft.attachments.length,
         }) !== null
       ) {
@@ -1062,7 +1046,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       currentCheckoutBranchName,
       runtimeMode,
       interactionMode,
-      unsupportedProviderModeReason,
+      providerSendBlockReason,
       planModeEnabled,
       expandedProvider,
       environments,
@@ -1115,7 +1099,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       filteredBranches,
       finishEditingPendingTask,
       interactionMode,
-      unsupportedProviderModeReason,
+      providerSendBlockReason,
       planModeEnabled,
       loadBranches,
       loadMoreBranches,

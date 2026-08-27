@@ -18,8 +18,8 @@ import {
   isQueuedThreadCreationSendable,
   modelSelectionsEqual,
   resolveThreadOutboxDeliveryAction,
-  resolveThreadOutboxFailureAction,
   resolveQueuedThreadSettings,
+  shouldAutoRetryThreadOutboxDelivery,
   threadOutboxRetryDelayMs,
   type QueuedThreadMessage,
 } from "./thread-outbox-model";
@@ -236,6 +236,13 @@ describe("thread outbox", () => {
     expect([1, 2, 3, 4, 5, 6].map(threadOutboxRetryDelayMs)).toEqual([
       1_000, 2_000, 4_000, 8_000, 16_000, 16_000,
     ]);
+  });
+
+  it("bounds automatic delivery retries instead of retrying forever", () => {
+    expect(shouldAutoRetryThreadOutboxDelivery(1)).toBe(true);
+    expect(shouldAutoRetryThreadOutboxDelivery(7)).toBe(true);
+    expect(shouldAutoRetryThreadOutboxDelivery(8)).toBe(false);
+    expect(shouldAutoRetryThreadOutboxDelivery(9)).toBe(false);
   });
 
   it("serializes mutations even when an earlier mutation is slower", async () => {
@@ -695,24 +702,5 @@ describe("thread outbox", () => {
       false,
     );
     expect(isQueuedThreadCreationSendable(base)).toBe(false);
-  });
-
-  it("retains queued messages when command delivery fails", () => {
-    const deterministicFailure = new Error("Thread no longer exists");
-
-    expect(
-      resolveThreadOutboxFailureAction({
-        stage: "settings-sync",
-        error: deterministicFailure,
-        interrupted: false,
-      }),
-    ).toBe("retry");
-    expect(
-      resolveThreadOutboxFailureAction({
-        stage: "start-turn",
-        error: deterministicFailure,
-        interrupted: false,
-      }),
-    ).toBe("retry");
   });
 });

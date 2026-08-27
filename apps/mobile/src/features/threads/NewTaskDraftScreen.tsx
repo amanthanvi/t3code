@@ -53,9 +53,8 @@ import {
 } from "../../state/use-composer-drafts";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
 import {
+  getProviderSendBlockAlert,
   getUnsupportedProviderAttachmentReason,
-  getUnsupportedProviderModeReason,
-  getUnavailableProviderModelReason,
   providerSupportsImageAttachments,
   resolveSelectableModelSelection,
   shouldShowProviderInteractionModeToggle,
@@ -677,31 +676,15 @@ export function NewTaskDraftScreen(props: {
       ? (draft.interactionMode ?? flow.interactionMode)
       : "default";
     const initialMessageText = draft.text.trim();
-    const unavailableModelReason = getUnavailableProviderModelReason({
-      config: selectedEnvironmentServerConfig,
-      selection: modelSelection,
-    });
-    if (unavailableModelReason !== null) {
-      Alert.alert("Provider still checking", unavailableModelReason);
-      return;
-    }
-    const unsupportedProviderModeReason = getUnsupportedProviderModeReason({
+    const sendBlockAlert = getProviderSendBlockAlert({
       config: selectedEnvironmentServerConfig,
       selection: modelSelection,
       runtimeMode,
       interactionMode,
-    });
-    if (unsupportedProviderModeReason !== null) {
-      Alert.alert("Change provider mode", unsupportedProviderModeReason);
-      return;
-    }
-    const unsupportedAttachmentReason = getUnsupportedProviderAttachmentReason({
-      config: selectedEnvironmentServerConfig,
-      selection: modelSelection,
       attachmentCount: draft.attachments.length,
     });
-    if (unsupportedAttachmentReason !== null) {
-      Alert.alert("Remove attachments", unsupportedAttachmentReason);
+    if (sendBlockAlert !== null) {
+      Alert.alert(sendBlockAlert.title, sendBlockAlert.message);
       return;
     }
 
@@ -848,7 +831,7 @@ export function NewTaskDraftScreen(props: {
     isIncomingShareReady &&
     !isImportingShare &&
     !flow.submitting &&
-    flow.unsupportedProviderModeReason === null &&
+    flow.providerSendBlockReason === null &&
     !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
   const promptEditor = (
     <ComposerEditor

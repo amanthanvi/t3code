@@ -1,14 +1,24 @@
-import type {
-  ModelCapabilities,
-  ModelSelection,
-  ProviderInteractionMode,
-  RuntimeMode,
-  ServerConfig as T3ServerConfig,
+import {
+  getProviderDriverCapabilities,
+  type ModelCapabilities,
+  type ModelSelection,
+  type ProviderInteractionMode,
+  type RuntimeMode,
+  type ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
+import {
+  getProviderSupportedRuntimeModes,
+  getUnsupportedProviderAttachmentReason as sharedUnsupportedProviderAttachmentReason,
+  getUnsupportedProviderModeReason as sharedUnsupportedProviderModeReason,
+  providerCapabilityLabel,
+  providerShowsInteractionModeToggle,
+} from "@t3tools/shared/providerCapabilities";
+
+type ConfiguredProvider = T3ServerConfig["providers"][number];
 
 export type ModelOption = {
   readonly key: string;
@@ -20,9 +30,6 @@ export type ModelOption = {
   readonly isDefault: boolean;
   readonly isLegacy: boolean;
   readonly capabilities: ModelCapabilities | null;
-  readonly supportedRuntimeModes: ReadonlyArray<RuntimeMode>;
-  readonly showInteractionModeToggle: boolean;
-  readonly supportsImageAttachments: boolean;
   readonly selection: ModelSelection;
 };
 
@@ -35,12 +42,12 @@ export type ProviderGroup = {
   readonly models: ReadonlyArray<ModelOption>;
 };
 
-export const ALL_RUNTIME_MODES: ReadonlyArray<RuntimeMode> = [
-  "approval-required",
-  "auto-accept-edits",
-  "auto",
-  "full-access",
-];
+function findProvider(
+  config: T3ServerConfig | null | undefined,
+  selection: ModelSelection | null | undefined,
+): ConfiguredProvider | undefined {
+  return config?.providers.find((candidate) => candidate.instanceId === selection?.instanceId);
+}
 
 export function getUnsupportedProviderModeReason(input: {
   readonly config: T3ServerConfig | null | undefined;
@@ -48,18 +55,13 @@ export function getUnsupportedProviderModeReason(input: {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
 }): string | null {
-  const provider = input.config?.providers.find(
-    (candidate) => candidate.instanceId === input.selection?.instanceId,
-  );
+  const provider = findProvider(input.config, input.selection);
   if (!provider) return null;
-  const supported = provider.supportedRuntimeModes ?? ALL_RUNTIME_MODES;
-  if (!supported.includes(input.runtimeMode)) {
-    return `${providerDisplayLabel(provider)} does not support the selected access mode. Choose Full access to continue.`;
-  }
-  if (input.interactionMode === "plan" && provider.showInteractionModeToggle === false) {
-    return `${providerDisplayLabel(provider)} does not support Plan mode. Choose Build to continue.`;
-  }
-  return null;
+  return sharedUnsupportedProviderModeReason({
+    provider,
+    runtimeMode: input.runtimeMode,
+    interactionMode: input.interactionMode,
+  });
 }
 
 export function shouldShowProviderInteractionModeToggle(input: {
@@ -67,13 +69,10 @@ export function shouldShowProviderInteractionModeToggle(input: {
   readonly selection: ModelSelection | null | undefined;
   readonly interactionMode: ProviderInteractionMode;
 }): boolean {
-  if (input.interactionMode === "plan") {
-    return true;
-  }
-  const provider = input.config?.providers.find(
-    (candidate) => candidate.instanceId === input.selection?.instanceId,
+  return providerShowsInteractionModeToggle(
+    findProvider(input.config, input.selection),
+    input.interactionMode,
   );
-  return provider?.showInteractionModeToggle !== false;
 }
 
 export function getUnsupportedProviderAttachmentReason(input: {
@@ -81,22 +80,17 @@ export function getUnsupportedProviderAttachmentReason(input: {
   readonly selection: ModelSelection | null | undefined;
   readonly attachmentCount: number;
 }): string | null {
-  if (input.attachmentCount === 0) return null;
-  const provider = input.config?.providers.find(
-    (candidate) => candidate.instanceId === input.selection?.instanceId,
-  );
-  if (provider?.supportsImageAttachments !== false) return null;
-  return `${providerDisplayLabel(provider)} does not support image attachments. Remove the images to continue.`;
+  return sharedUnsupportedProviderAttachmentReason({
+    provider: findProvider(input.config, input.selection),
+    attachmentCount: input.attachmentCount,
+  });
 }
 
 export function providerSupportsImageAttachments(input: {
   readonly config: T3ServerConfig | null | undefined;
   readonly selection: ModelSelection | null | undefined;
 }): boolean {
-  const provider = input.config?.providers.find(
-    (candidate) => candidate.instanceId === input.selection?.instanceId,
-  );
-  return provider?.supportsImageAttachments !== false;
+  return findProvider(input.config, input.selection)?.supportsImageAttachments !== false;
 }
 
 export function getProviderSendBlockReason(input: {
@@ -106,10 +100,50 @@ export function getProviderSendBlockReason(input: {
   readonly interactionMode: ProviderInteractionMode;
   readonly attachmentCount: number;
 }): string | null {
+  return getProviderSendBlockAlert(input)?.message ?? null;
+}
+
+/**
+ * The first reason the provider would reject this send, paired with the
+ * alert title matching its kind. Single source for every send-gate alert so
+ * the composer, the new-task editor, and the outbox agree on copy.
+ */
+export function getProviderSendBlockAlert(input: {
+  readonly config: T3ServerConfig | null | undefined;
+  readonly selection: ModelSelection | null | undefined;
+  readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: ProviderInteractionMode;
+  readonly attachmentCount: number;
+}): { readonly title: string; readonly message: string } | null {
+  const unavailableModelReason = getUnavailableProviderModelReason(input);
+  if (unavailableModelReason !== null) {
+    return { title: "Provider still checking", message: unavailableModelReason };
+  }
+  const unsupportedModeReason = getUnsupportedProviderModeReason(input);
+  if (unsupportedModeReason !== null) {
+    return { title: "Change provider mode", message: unsupportedModeReason };
+  }
+  const unsupportedAttachmentReason = getUnsupportedProviderAttachmentReason(input);
+  if (unsupportedAttachmentReason !== null) {
+    return { title: "Remove attachments", message: unsupportedAttachmentReason };
+  }
+  return null;
+}
+
+/**
+ * Whether `selection` names a model outside the provider's advertised
+ * catalog on a driver whose catalog is authoritative (e.g. Cline's
+ * account-scoped catalog). Such selections must be blocked rather than
+ * dispatched or backfilled with synthesized defaults.
+ */
+function hasUnadvertisedAuthoritativeCatalogSelection(
+  provider: ConfiguredProvider | undefined,
+  selection: ModelSelection | null | undefined,
+): boolean {
   return (
-    getUnavailableProviderModelReason(input) ??
-    getUnsupportedProviderModeReason(input) ??
-    getUnsupportedProviderAttachmentReason(input)
+    provider !== undefined &&
+    getProviderDriverCapabilities(provider.driver).modelCatalogIsAuthoritative &&
+    !provider.models.some((candidate) => candidate.slug === selection?.model)
   );
 }
 
@@ -117,30 +151,14 @@ export function getUnavailableProviderModelReason(input: {
   readonly config: T3ServerConfig | null | undefined;
   readonly selection: ModelSelection | null | undefined;
 }): string | null {
-  const provider = input.config?.providers.find(
-    (candidate) => candidate.instanceId === input.selection?.instanceId,
-  );
-  if (
-    provider?.driver !== "cline" ||
-    provider.models.some((candidate) => candidate.slug === input.selection?.model)
-  ) {
+  const provider = findProvider(input.config, input.selection);
+  if (!hasUnadvertisedAuthoritativeCatalogSelection(provider, input.selection)) {
     return null;
   }
-  if (provider.status === "warning" && provider.auth.status === "unknown") {
-    return `${providerDisplayLabel(provider)} is still checking its model catalog. Wait for the provider check to finish.`;
+  if (provider?.status === "warning" && provider.auth.status === "unknown") {
+    return `${providerCapabilityLabel(provider)} is still checking its model catalog. Wait for the provider check to finish.`;
   }
-  return `${providerDisplayLabel(provider)} no longer offers the selected model. Choose another model to continue.`;
-}
-
-function providerDisplayLabel(provider: {
-  readonly displayName?: string | undefined;
-  readonly driver: string;
-  readonly instanceId: string;
-}): string {
-  if (provider.displayName) return provider.displayName;
-  if (provider.driver === "codex") return "Codex";
-  if (provider.driver === "claudeAgent") return "Claude";
-  return provider.instanceId;
+  return `${providerCapabilityLabel(provider)} no longer offers the selected model. Choose another model to continue.`;
 }
 
 function normalizeSelectionOptions(
@@ -164,20 +182,6 @@ function normalizeSelectionOptions(
       };
 }
 
-function hasUnadvertisedClineSelection(
-  config: T3ServerConfig | null | undefined,
-  selection: ModelSelection,
-): boolean {
-  const provider = config?.providers.find(
-    (candidate) => candidate.instanceId === selection.instanceId,
-  );
-  return (
-    provider?.driver === "cline" &&
-    !(provider.status === "warning" && provider.auth.status === "unknown") &&
-    !provider.models.some((candidate) => candidate.slug === selection.model)
-  );
-}
-
 /**
  * A stored model selection is only usable when its provider instance is
  * currently enabled, installed, and authenticated on the server. Returns the
@@ -194,9 +198,7 @@ export function resolveSelectableModelSelection(
   if (!selection || !config) {
     return selection;
   }
-  const provider = config.providers.find(
-    (candidate) => candidate.instanceId === selection.instanceId,
-  );
+  const provider = findProvider(config, selection);
   return provider &&
     provider.enabled &&
     provider.installed &&
@@ -220,7 +222,7 @@ export function resolveDefaultableModelSelection(
   if (!usable || !config) {
     return usable;
   }
-  const provider = config.providers.find((candidate) => candidate.instanceId === usable.instanceId);
+  const provider = findProvider(config, usable);
   const model = provider?.models.find((candidate) => candidate.slug === usable.model);
   return model?.isLegacy === true ? null : usable;
 }
@@ -236,7 +238,7 @@ export function buildModelOptions(
       continue;
     }
 
-    const providerLabel = providerDisplayLabel(provider);
+    const providerLabel = providerCapabilityLabel(provider);
     for (const model of provider.models) {
       const key = `${provider.instanceId}:${model.slug}`;
       options.set(key, {
@@ -249,9 +251,6 @@ export function buildModelOptions(
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
         capabilities: model.capabilities,
-        supportedRuntimeModes: provider.supportedRuntimeModes ?? ALL_RUNTIME_MODES,
-        showInteractionModeToggle: provider.showInteractionModeToggle ?? true,
-        supportsImageAttachments: provider.supportsImageAttachments ?? true,
         selection: normalizeSelectionOptions(
           {
             instanceId: provider.instanceId,
@@ -263,17 +262,12 @@ export function buildModelOptions(
     }
   }
 
-  const fallbackProvider = config?.providers.find(
-    (provider) => provider.instanceId === fallbackModelSelection?.instanceId,
+  const fallbackProvider = findProvider(config, fallbackModelSelection);
+  const canInjectFallback = !hasUnadvertisedAuthoritativeCatalogSelection(
+    fallbackProvider,
+    fallbackModelSelection,
   );
-  const canInjectFallback =
-    fallbackProvider?.driver !== "cline" ||
-    fallbackProvider.models.some((model) => model.slug === fallbackModelSelection?.model);
-  if (
-    fallbackModelSelection &&
-    canInjectFallback &&
-    !hasUnadvertisedClineSelection(config, fallbackModelSelection)
-  ) {
+  if (fallbackModelSelection && canInjectFallback) {
     const key = `${fallbackModelSelection.instanceId}:${fallbackModelSelection.model}`;
     const existing = options.get(key);
     if (existing) {
@@ -293,9 +287,6 @@ export function buildModelOptions(
         isDefault: false,
         isLegacy: false,
         capabilities: null,
-        supportedRuntimeModes: ALL_RUNTIME_MODES,
-        showInteractionModeToggle: true,
-        supportsImageAttachments: true,
         selection: fallbackModelSelection,
       });
     }
@@ -304,14 +295,14 @@ export function buildModelOptions(
   return [...options.values()];
 }
 
-export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyArray<ProviderGroup> {
+export function groupByProvider(
+  options: ReadonlyArray<ModelOption>,
+  config: T3ServerConfig | null | undefined,
+): ReadonlyArray<ProviderGroup> {
   const groups = new Map<
     string,
     {
       providerLabel: string;
-      supportedRuntimeModes: ReadonlyArray<RuntimeMode>;
-      showInteractionModeToggle: boolean;
-      supportsImageAttachments: boolean;
       models: ModelOption[];
     }
   >();
@@ -322,20 +313,23 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
     } else {
       groups.set(option.providerKey, {
         providerLabel: option.providerLabel,
-        supportedRuntimeModes: option.supportedRuntimeModes,
-        showInteractionModeToggle: option.showInteractionModeToggle,
-        supportsImageAttachments: option.supportsImageAttachments,
         models: [option],
       });
     }
   }
 
-  return [...groups.entries()].map(([providerKey, group]) => ({
-    providerKey,
-    providerLabel: group.providerLabel,
-    supportedRuntimeModes: group.supportedRuntimeModes,
-    showInteractionModeToggle: group.showInteractionModeToggle,
-    supportsImageAttachments: group.supportsImageAttachments,
-    models: group.models,
-  }));
+  return [...groups.entries()].map(([providerKey, group]) => {
+    // A fallback-injected group's provider may be absent from the config
+    // (environment offline); the shared helpers then grant every capability,
+    // matching how such selections were treated before.
+    const provider = config?.providers.find((candidate) => candidate.instanceId === providerKey);
+    return {
+      providerKey,
+      providerLabel: group.providerLabel,
+      supportedRuntimeModes: getProviderSupportedRuntimeModes(provider),
+      showInteractionModeToggle: provider?.showInteractionModeToggle ?? true,
+      supportsImageAttachments: provider?.supportsImageAttachments ?? true,
+      models: group.models,
+    };
+  });
 }

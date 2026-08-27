@@ -20,14 +20,11 @@ import * as Schema from "effect/Schema";
 import { DraftComposerImageAttachmentSchema } from "../lib/composer-image-schema";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
-import {
-  getUnsupportedProviderAttachmentReason,
-  getUnsupportedProviderModeReason,
-  getUnavailableProviderModelReason,
-} from "../lib/modelOptions";
+import { getProviderSendBlockReason } from "../lib/modelOptions";
 
 const THREAD_OUTBOX_SCHEMA_VERSION = 3;
 const THREAD_OUTBOX_MAX_RETRY_DELAY_MS = 16_000;
+const THREAD_OUTBOX_MAX_AUTO_RETRY_ATTEMPTS = 8;
 
 const QueuedThreadCreationSchema = Schema.Struct({
   projectId: ProjectId,
@@ -92,23 +89,13 @@ export function getQueuedDeliveryUnsupportedProviderInputReason(input: {
   readonly runtimeMode: RuntimeModeType;
   readonly interactionMode: ProviderInteractionModeType;
 }): string | null {
-  return (
-    getUnavailableProviderModelReason({
-      config: input.config,
-      selection: input.modelSelection,
-    }) ??
-    getUnsupportedProviderModeReason({
-      config: input.config,
-      selection: input.modelSelection,
-      runtimeMode: input.runtimeMode,
-      interactionMode: input.interactionMode,
-    }) ??
-    getUnsupportedProviderAttachmentReason({
-      config: input.config,
-      selection: input.modelSelection,
-      attachmentCount: input.message.attachments.length,
-    })
-  );
+  return getProviderSendBlockReason({
+    config: input.config,
+    selection: input.modelSelection,
+    runtimeMode: input.runtimeMode,
+    interactionMode: input.interactionMode,
+    attachmentCount: input.message.attachments.length,
+  });
 }
 
 export interface ThreadSettingsSnapshot {
@@ -177,6 +164,19 @@ export function threadOutboxRetryDelayMs(attempt: number): number {
   return Math.min(1_000 * 2 ** Math.max(0, attempt - 1), THREAD_OUTBOX_MAX_RETRY_DELAY_MS);
 }
 
+/**
+ * The outbox is the durable copy of user-authored input. A command failure
+ * can become recoverable after a provider refresh or user edit, so delivery
+ * failures back off but never discard the queued message. Automatic retries
+ * still stop after a bounded number of attempts — a permanently failing
+ * message must not re-issue RPCs forever — after which the message is parked
+ * until a user interaction (foregrounding the app, editing the message)
+ * grants a fresh attempt budget.
+ */
+export function shouldAutoRetryThreadOutboxDelivery(attempt: number): boolean {
+  return attempt < THREAD_OUTBOX_MAX_AUTO_RETRY_ATTEMPTS;
+}
+
 export type ThreadOutboxDeliveryAction = "wait" | "remove" | "send";
 
 export function resolveThreadOutboxDeliveryAction(input: {
@@ -218,16 +218,3 @@ export function isQueuedThreadCreationSendable(message: QueuedThreadMessage): bo
 }
 
 export type ThreadOutboxCommandStage = "settings-sync" | "start-turn";
-export type ThreadOutboxFailureAction = "retry";
-
-export function resolveThreadOutboxFailureAction(input: {
-  readonly stage: ThreadOutboxCommandStage;
-  readonly error: unknown;
-  readonly interrupted: boolean;
-}): ThreadOutboxFailureAction {
-  // The outbox is the durable copy of user-authored input. A command failure
-  // can become recoverable after a provider refresh or user edit, so delivery
-  // failures back off but never discard the queued message.
-  void input;
-  return "retry";
-}

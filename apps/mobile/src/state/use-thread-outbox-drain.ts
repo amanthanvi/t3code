@@ -11,10 +11,9 @@ import {
   type MessageId,
 } from "@t3tools/contracts";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
-import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert } from "react-native";
+import { Alert, AppState } from "react-native";
 
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn";
@@ -32,8 +31,8 @@ import {
   getQueuedDeliveryUnsupportedProviderInputReason,
   modelSelectionsEqual,
   resolveThreadOutboxDeliveryAction,
-  resolveThreadOutboxFailureAction,
   resolveQueuedThreadSettings,
+  shouldAutoRetryThreadOutboxDelivery,
   threadOutboxRetryDelayMs,
   type QueuedThreadCreation,
   type QueuedThreadMessage,
@@ -46,7 +45,10 @@ import {
   useThreadOutboxMessages,
   useThreadOutboxShellStatuses,
 } from "./use-thread-outbox";
-import { useRemoteConnectionStatus } from "./use-remote-environment-registry";
+import {
+  setPendingConnectionError,
+  useRemoteConnectionStatus,
+} from "./use-remote-environment-registry";
 
 export const dispatchingQueuedMessageIdAtom = Atom.make<MessageId | null>(null).pipe(
   Atom.keepAlive,
@@ -110,17 +112,77 @@ export function useThreadOutboxDrain(): void {
   const retryAttemptRef = useRef(new Map<MessageId, number>());
   const retryNotBeforeRef = useRef(new Map<MessageId, number>());
   const retryTimersRef = useRef(new Map<MessageId, ReturnType<typeof setTimeout>>());
+  // Messages whose automatic attempt budget ran out. They stay queued (and
+  // visible in the outbox UI) but get no further scheduled retries until a
+  // user interaction resets the budget.
+  const parkedMessageIdsRef = useRef(new Set<MessageId>());
   const modeWarningShownRef = useRef(new Set<MessageId>());
 
   useEffect(() => {
     ensureThreadOutboxLoaded();
+    // Returning to the foreground is the user-attention signal that grants
+    // parked messages a fresh automatic attempt budget.
+    const appStateSubscription = AppState.addEventListener("change", (state) => {
+      if (state !== "active" || parkedMessageIdsRef.current.size === 0) {
+        return;
+      }
+      for (const messageId of parkedMessageIdsRef.current) {
+        retryAttemptRef.current.delete(messageId);
+        retryNotBeforeRef.current.delete(messageId);
+      }
+      parkedMessageIdsRef.current.clear();
+      setRetryTick((current) => current + 1);
+    });
     return () => {
+      appStateSubscription.remove();
       for (const timer of retryTimersRef.current.values()) {
         clearTimeout(timer);
       }
       retryTimersRef.current.clear();
     };
   }, []);
+
+  // Retry bookkeeping and the shown-warning set are keyed by message id;
+  // forget ids whose messages left the queue (sent, removed, or rolled back)
+  // so the maps do not grow for the lifetime of the app.
+  useEffect(() => {
+    const liveMessageIds = new Set<MessageId>();
+    for (const queue of Object.values(queuedMessagesByThreadKey)) {
+      for (const message of queue) {
+        liveMessageIds.add(message.messageId);
+      }
+    }
+    const trackedMessageIds = new Set<MessageId>([
+      ...retryAttemptRef.current.keys(),
+      ...retryNotBeforeRef.current.keys(),
+      ...retryTimersRef.current.keys(),
+      ...parkedMessageIdsRef.current,
+      ...modeWarningShownRef.current,
+    ]);
+    for (const messageId of trackedMessageIds) {
+      if (liveMessageIds.has(messageId)) {
+        continue;
+      }
+      retryAttemptRef.current.delete(messageId);
+      retryNotBeforeRef.current.delete(messageId);
+      parkedMessageIdsRef.current.delete(messageId);
+      modeWarningShownRef.current.delete(messageId);
+      const timer = retryTimersRef.current.get(messageId);
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        retryTimersRef.current.delete(messageId);
+      }
+    }
+    // Opening a parked message in the editor is a user interaction: give it
+    // a fresh attempt budget for when the edit is saved.
+    for (const messageId of parkedMessageIdsRef.current) {
+      if (editingQueuedMessageIds[messageId]) {
+        parkedMessageIdsRef.current.delete(messageId);
+        retryAttemptRef.current.delete(messageId);
+        retryNotBeforeRef.current.delete(messageId);
+      }
+    }
+  }, [editingQueuedMessageIds, queuedMessagesByThreadKey]);
 
   const makeDeliveryHelpers = useCallback((queuedMessage: QueuedThreadMessage) => {
     const reportFailure = (
@@ -130,21 +192,14 @@ export function useThreadOutboxDrain(): void {
       if (!AsyncResult.isFailure(commandResult)) {
         return false;
       }
-      const action = resolveThreadOutboxFailureAction({
-        stage,
-        error: Cause.squash(commandResult.cause),
-        interrupted: Cause.hasInterruptsOnly(commandResult.cause),
-      });
-      const retry = action === "retry";
       console.warn("[thread-outbox] queued message delivery failed", {
         environmentId: queuedMessage.environmentId,
         threadId: queuedMessage.threadId,
         messageId: queuedMessage.messageId,
         stage,
         cause: commandResult.cause,
-        retry,
       });
-      return retry;
+      return true;
     };
     const completeDelivery = async (
       deliveryResult: AtomCommandResult<unknown, unknown>,
@@ -299,6 +354,9 @@ export function useThreadOutboxDrain(): void {
       if (editingQueuedMessageIds[nextQueuedMessage.messageId]) {
         continue;
       }
+      if (parkedMessageIdsRef.current.has(nextQueuedMessage.messageId)) {
+        continue;
+      }
       if ((retryNotBeforeRef.current.get(nextQueuedMessage.messageId) ?? 0) > Date.now()) {
         continue;
       }
@@ -426,12 +484,23 @@ export function useThreadOutboxDrain(): void {
 
           const retryAttempt = (retryAttemptRef.current.get(nextQueuedMessage.messageId) ?? 0) + 1;
           retryAttemptRef.current.set(nextQueuedMessage.messageId, retryAttempt);
-          const retryDelayMs = threadOutboxRetryDelayMs(retryAttempt);
-          retryNotBeforeRef.current.set(nextQueuedMessage.messageId, Date.now() + retryDelayMs);
           const pendingTimer = retryTimersRef.current.get(nextQueuedMessage.messageId);
           if (pendingTimer !== undefined) {
             clearTimeout(pendingTimer);
+            retryTimersRef.current.delete(nextQueuedMessage.messageId);
           }
+          if (!shouldAutoRetryThreadOutboxDelivery(retryAttempt)) {
+            // Parked, never discarded: the message stays queued and visible.
+            // Foregrounding the app or editing the message resets the attempt
+            // budget and resumes delivery.
+            parkedMessageIdsRef.current.add(nextQueuedMessage.messageId);
+            setPendingConnectionError(
+              "A queued message could not be delivered after repeated attempts. It stays in the outbox; reopen the app or edit it to try again.",
+            );
+            return;
+          }
+          const retryDelayMs = threadOutboxRetryDelayMs(retryAttempt);
+          retryNotBeforeRef.current.set(nextQueuedMessage.messageId, Date.now() + retryDelayMs);
           const retryTimer = setTimeout(() => {
             retryTimersRef.current.delete(nextQueuedMessage.messageId);
             setRetryTick((current) => current + 1);

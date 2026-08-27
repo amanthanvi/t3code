@@ -4,6 +4,7 @@ import { ProviderInstanceId, type ServerConfig } from "@t3tools/contracts";
 
 import {
   buildModelOptions,
+  getProviderSendBlockAlert,
   getUnsupportedProviderAttachmentReason,
   getUnsupportedProviderModeReason,
   getUnavailableProviderModelReason,
@@ -45,7 +46,7 @@ describe("mobile model options", () => {
       ],
     } as unknown as ServerConfig;
 
-    expect(groupByProvider(buildModelOptions(config, null))).toMatchObject([
+    expect(groupByProvider(buildModelOptions(config, null), config)).toMatchObject([
       {
         providerKey: "codex",
         providerLabel: "Codex",
@@ -321,7 +322,7 @@ describe("mobile model options", () => {
         interactionMode: "default",
       }),
     ).toBeNull();
-    expect(groupByProvider(buildModelOptions(config, selection))[0]).toMatchObject({
+    expect(groupByProvider(buildModelOptions(config, selection), config)[0]).toMatchObject({
       supportedRuntimeModes: ["full-access"],
       showInteractionModeToggle: false,
       supportsImageAttachments: false,
@@ -341,6 +342,42 @@ describe("mobile model options", () => {
         attachmentCount: 1,
       }),
     ).toContain("Remove the images");
+    expect(
+      getProviderSendBlockAlert({
+        config,
+        selection,
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        attachmentCount: 0,
+      }),
+    ).toMatchObject({ title: "Change provider mode" });
+    expect(
+      getProviderSendBlockAlert({
+        config,
+        selection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        attachmentCount: 1,
+      }),
+    ).toMatchObject({ title: "Remove attachments" });
+    expect(
+      getProviderSendBlockAlert({
+        config,
+        selection: { ...selection, model: "retired-model" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        attachmentCount: 0,
+      }),
+    ).toMatchObject({ title: "Provider still checking" });
+    expect(
+      getProviderSendBlockAlert({
+        config,
+        selection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        attachmentCount: 0,
+      }),
+    ).toBeNull();
   });
 
   it("keeps legacy models out of implicit defaults", () => {

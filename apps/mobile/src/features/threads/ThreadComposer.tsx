@@ -73,7 +73,6 @@ import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
 import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
-import { submitThreadComposerIfAllowed } from "./threadComposerSubmission";
 import {
   type ExistingThreadSettingsRouteSession,
   useExistingThreadSettingsRoutePresentation,
@@ -583,10 +582,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     if (inFlightThreadIdsRef.current.has(threadKey)) return;
     inFlightThreadIdsRef.current.add(threadKey);
     try {
-      const messageId = await submitThreadComposerIfAllowed({
-        canSend,
-        submit: onSendMessage,
-      });
+      // A blocked send must not touch the draft, so onSendMessage is only
+      // invoked when sending is allowed.
+      const messageId = canSend ? await onSendMessage() : null;
       if (messageId === null) {
         return;
       }
@@ -658,7 +656,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     () => buildModelOptions(props.serverConfig, currentModelSelection),
     [props.serverConfig, currentModelSelection],
   );
-  const providerGroups = useMemo(() => groupByProvider(modelOptions), [modelOptions]);
+  const providerGroups = useMemo(
+    () => groupByProvider(modelOptions, props.serverConfig),
+    [modelOptions, props.serverConfig],
+  );
   // An existing thread is bound to its harness: sessions can't move between
   // provider instances, so the picker only offers the thread's own group.
   const threadProviderGroups = useMemo(
