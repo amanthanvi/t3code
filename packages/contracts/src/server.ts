@@ -171,6 +171,15 @@ export const ServerProvider = Schema.Struct({
   continuation: Schema.optional(ServerProviderContinuation),
   showInteractionModeToggle: Schema.optional(Schema.Boolean),
   requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),
+  // Optional for wire compatibility. Absence means supported; drivers that
+  // cannot safely run automatic background prompts set this to false.
+  supportsTextGeneration: Schema.optional(Schema.Boolean),
+  // Optional for wire compatibility. True when the driver's advertised model
+  // catalog is the complete set of dispatchable models (for example a
+  // command-backed catalog): user custom models are not supported, selections
+  // outside a nonempty catalog heal to the catalog default, and dispatch
+  // waits for a ready nonempty catalog.
+  hasAuthoritativeModelCatalog: Schema.optional(Schema.Boolean),
   enabled: Schema.Boolean,
   installed: Schema.Boolean,
   version: Schema.NullOr(TrimmedNonEmptyString),
@@ -212,6 +221,29 @@ export type ServerProviders = typeof ServerProviders.Type;
  */
 export const isProviderAvailable = (snapshot: ServerProvider): boolean =>
   snapshot.availability !== "unavailable";
+
+/** Legacy snapshots predate this capability flag and remain supported. */
+export const providerSupportsTextGeneration = (snapshot: ServerProvider): boolean =>
+  snapshot.supportsTextGeneration !== false;
+
+/** Legacy snapshots predate this capability flag; absence means permissive. */
+export const providerHasAuthoritativeModelCatalog = (
+  snapshot: Pick<ServerProvider, "hasAuthoritativeModelCatalog">,
+): boolean => snapshot.hasAuthoritativeModelCatalog === true;
+
+/**
+ * Whether a stored selection names a model outside a provider's authoritative,
+ * nonempty catalog. Such selections must heal to the catalog's default rather
+ * than dispatching a slug the provider will reject. An empty catalog means the
+ * probe has not completed, so the stored selection is preserved.
+ */
+export const modelSelectionRequiresCatalogHealing = (
+  snapshot: Pick<ServerProvider, "hasAuthoritativeModelCatalog" | "models">,
+  model: string,
+): boolean =>
+  providerHasAuthoritativeModelCatalog(snapshot) &&
+  snapshot.models.length > 0 &&
+  !snapshot.models.some((candidate) => candidate.slug === model);
 
 export const ServerObservability = Schema.Struct({
   logsDirectoryPath: TrimmedNonEmptyString,

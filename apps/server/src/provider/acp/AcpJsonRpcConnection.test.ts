@@ -6,6 +6,7 @@ import * as NodeFS from "node:fs";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -267,6 +268,203 @@ describe("AcpSessionRuntime", () => {
       Effect.scoped,
       Effect.provide(NodeServices.layer),
     ),
+  );
+
+  it.effect("cancels when cancellation lands before the prompt fiber is registered", () => {
+    return Effect.gen(function* () {
+      const promptFiberCreated = yield* Deferred.make<void>();
+      const releaseRegistration = yield* Deferred.make<void>();
+      const runtime = yield* AcpSessionRuntime.make({
+        spawn: {
+          command: mockAgentCommand,
+          args: mockAgentArgs,
+          env: {
+            T3_ACP_HANG_FIRST_PROMPT_FOREVER: "1",
+          },
+        },
+        cwd: process.cwd(),
+        clientInfo: { name: "t3-test", version: "0.0.0" },
+        authMethodId: "test",
+        beforePromptFiberRegistration: Deferred.succeed(promptFiberCreated, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseRegistration)),
+        ),
+      });
+      yield* runtime.start();
+
+      const promptFiber = yield* runtime
+        .prompt({
+          prompt: [{ type: "text", text: "cancel during registration" }],
+        })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+
+      yield* Deferred.await(promptFiberCreated);
+      yield* runtime.cancel;
+      yield* Deferred.succeed(releaseRegistration, undefined);
+
+      expect(yield* Fiber.join(promptFiber)).toMatchObject({ stopReason: "cancelled" });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+  });
+
+  it.effect("cleans up an interrupted prompt registration before the next prompt starts", () => {
+    return Effect.gen(function* () {
+      const registrationReached = yield* Deferred.make<void>();
+      let activePromptRpcs = 0;
+      let maximumActivePromptRpcs = 0;
+      let blockNextRegistration = true;
+      const promptRequestStatuses: Array<AcpSessionRuntime.AcpSessionRequestLogEvent["status"]> =
+        [];
+      const runtime = yield* AcpSessionRuntime.make({
+        spawn: {
+          command: mockAgentCommand,
+          args: mockAgentArgs,
+        },
+        cwd: process.cwd(),
+        clientInfo: { name: "t3-test", version: "0.0.0" },
+        authMethodId: "test",
+        beforePromptFiberRegistration: Effect.suspend(() => {
+          if (!blockNextRegistration) return Effect.void;
+          blockNextRegistration = false;
+          return Deferred.succeed(registrationReached, undefined).pipe(
+            Effect.andThen(Effect.never),
+          );
+        }),
+        onPromptRpcFiberExit: Effect.sync(() => {
+          activePromptRpcs = Math.max(0, activePromptRpcs - 1);
+        }),
+        requestLogger: (event) =>
+          event.method !== "session/prompt"
+            ? Effect.void
+            : Effect.sync(() => {
+                promptRequestStatuses.push(event.status);
+                if (event.status === "started") {
+                  activePromptRpcs += 1;
+                  maximumActivePromptRpcs = Math.max(maximumActivePromptRpcs, activePromptRpcs);
+                }
+              }),
+      });
+      yield* runtime.start();
+
+      const firstPrompt = yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "interrupt registration" }] })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(registrationReached);
+      // The forked RPC is release-gated on registration, so it must not have
+      // reached the transport while registration is still pending. A cancel
+      // in this window therefore cannot be outrun by the prompt write.
+      expect(promptRequestStatuses).toEqual([]);
+      // Interrupt blocks until the prompt's lifecycle cleanup (including the
+      // interruption of the gated, never-released RPC fiber) has completed.
+      yield* Fiber.interrupt(firstPrompt);
+
+      expect(activePromptRpcs).toBe(0);
+      expect(yield* runtime.prompt({ prompt: [{ type: "text", text: "second" }] })).toMatchObject({
+        stopReason: "end_turn",
+      });
+      expect(maximumActivePromptRpcs).toBe(1);
+      expect(activePromptRpcs).toBe(0);
+      expect(promptRequestStatuses).toEqual(["started", "succeeded"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+  });
+
+  it.effect("fails cancellation when the active prompt does not acknowledge it in time", () => {
+    return Effect.gen(function* () {
+      const promptFiberCreated = yield* Deferred.make<void>();
+      const cancellationWaiting = yield* Deferred.make<void>();
+      const runtime = yield* AcpSessionRuntime.make({
+        spawn: {
+          command: mockAgentCommand,
+          args: mockAgentArgs,
+          env: {
+            T3_ACP_HANG_FIRST_PROMPT_FOREVER: "1",
+            T3_ACP_IGNORE_PROMPT_CANCEL_SETTLEMENT: "1",
+          },
+        },
+        cwd: process.cwd(),
+        clientInfo: { name: "t3-test", version: "0.0.0" },
+        authMethodId: "test",
+        cancelSettleTimeout: "1 second",
+        beforePromptFiberRegistration: Deferred.succeed(promptFiberCreated, undefined),
+        beforeCancelSettlementWait: Deferred.succeed(cancellationWaiting, undefined),
+      });
+      yield* runtime.start();
+
+      const promptFiber = yield* runtime
+        .prompt({
+          prompt: [{ type: "text", text: "ignore cancellation" }],
+        })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(promptFiberCreated);
+      const cancellation = yield* runtime.cancel.pipe(Effect.flip, Effect.forkChild);
+      yield* Deferred.await(cancellationWaiting);
+      yield* TestClock.adjust("1 second");
+
+      expect(yield* Fiber.join(cancellation)).toMatchObject({
+        _tag: "AcpTransportError",
+        method: "session/cancel",
+      });
+      expect(yield* Fiber.join(promptFiber)).toMatchObject({ stopReason: "cancelled" });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+  });
+
+  it.effect("fails cancellation when the transport write never settles", () => {
+    return Effect.gen(function* () {
+      const transportWriteStarted = yield* Deferred.make<void>();
+      const neverReleaseTransport = yield* Deferred.make<void>();
+      const runtime = yield* AcpSessionRuntime.make({
+        spawn: {
+          command: mockAgentCommand,
+          args: mockAgentArgs,
+        },
+        cwd: process.cwd(),
+        clientInfo: { name: "t3-test", version: "0.0.0" },
+        authMethodId: "test",
+        cancelTransportTimeout: "1 second",
+        beforeCancelTransportWrite: Deferred.succeed(transportWriteStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(neverReleaseTransport)),
+        ),
+      });
+      yield* runtime.start();
+
+      const cancellation = yield* runtime.cancel.pipe(Effect.flip, Effect.forkChild);
+      yield* Deferred.await(transportWriteStarted);
+      yield* TestClock.adjust("1 second");
+
+      expect(yield* Fiber.join(cancellation)).toMatchObject({
+        _tag: "AcpTransportError",
+        method: "session/cancel",
+        detail: expect.stringContaining("cancellation transport did not complete"),
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+  });
+
+  it.effect(
+    "cancels locally without waiting for the transport when no cancellation bound is set",
+    () => {
+      return Effect.gen(function* () {
+        const transportWriteStarted = yield* Deferred.make<void>();
+        const releaseTransport = yield* Deferred.make<void>();
+        const runtime = yield* AcpSessionRuntime.make({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+          beforeCancelTransportWrite: Deferred.succeed(transportWriteStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseTransport)),
+          ),
+        });
+        yield* runtime.start();
+
+        // Providers that configured neither cancellation bound keep the
+        // fire-and-forget semantics: local cancellation settles immediately
+        // and a stuck transport write cannot block it.
+        yield* runtime.cancel;
+        yield* Deferred.await(transportWriteStarted);
+        yield* Deferred.succeed(releaseTransport, undefined);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+    },
   );
 
   it.effect("segments assistant text around ACP tool calls", () =>

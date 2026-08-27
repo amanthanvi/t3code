@@ -15,6 +15,8 @@ function provider(input: {
   provider?: ProviderDriverKind;
   instanceId: string;
   models?: ReadonlyArray<string>;
+  supportsTextGeneration?: boolean;
+  hasAuthoritativeModelCatalog?: boolean;
 }): ServerProvider {
   const driver =
     input.provider ??
@@ -30,6 +32,12 @@ function provider(input: {
     status: "ready",
     auth: { status: "authenticated" },
     checkedAt: "2026-01-01T00:00:00.000Z",
+    ...(input.supportsTextGeneration === undefined
+      ? {}
+      : { supportsTextGeneration: input.supportsTextGeneration }),
+    ...(input.hasAuthoritativeModelCatalog === undefined
+      ? {}
+      : { hasAuthoritativeModelCatalog: input.hasAuthoritativeModelCatalog }),
     models: (input.models ?? []).map((slug) => ({
       slug,
       name: slug,
@@ -174,6 +182,40 @@ describe("instance-scoped model selection", () => {
     expect(getAppModelOptionsForInstance(settings, grok).map((option) => option.slug)).toContain(
       "grok-test-custom-model",
     );
+  });
+
+  it("ignores persisted Kilo custom models outside the authoritative command catalog", () => {
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("kilo"),
+        instanceId: "kilo",
+        models: ["kilo/live"],
+        hasAuthoritativeModelCatalog: true,
+      }),
+    ];
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      providerInstances: {
+        ...settingsWithProviderInstances().providerInstances,
+        [ProviderInstanceId.make("kilo")]: {
+          driver: ProviderDriverKind.make("kilo"),
+          config: { customModels: ["kilo/stale"] },
+        },
+      },
+    };
+    const kilo = deriveProviderInstanceEntries(providers)[0]!;
+
+    expect(getAppModelOptionsForInstance(settings, kilo).map((option) => option.slug)).toEqual([
+      "kilo/live",
+    ]);
+    expect(
+      resolveAppModelSelectionForInstance(
+        ProviderInstanceId.make("kilo"),
+        settings,
+        providers,
+        "kilo/stale",
+      ),
+    ).toBe("kilo/live");
   });
 
   it("does not inject an unknown selected slug into the stock instance list", () => {
@@ -321,6 +363,85 @@ describe("instance-scoped model selection", () => {
     expect(resolveAppModelSelectionState(settings, providers)).toEqual({
       instanceId: ProviderInstanceId.make("claude_openrouter"),
       model: "openai/gpt-5.5",
+    });
+  });
+
+  it("heals Kilo background selection to a safe custom provider instance", () => {
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("kilo"),
+        instanceId: "kilo",
+        models: ["__t3_provider_default__", "kilo/openrouter/free"],
+        supportsTextGeneration: false,
+      }),
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId: "claude_openrouter",
+        models: ["claude-sonnet-4-6"],
+      }),
+    ];
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      textGenerationModelSelection: createModelSelection(
+        ProviderInstanceId.make("kilo"),
+        "__t3_provider_default__",
+      ),
+    };
+
+    expect(resolveAppModelSelectionState(settings, providers)).toEqual({
+      instanceId: ProviderInstanceId.make("claude_openrouter"),
+      model: "claude-sonnet-4-6",
+    });
+  });
+
+  it("preserves the stored selection while provider snapshots are still loading", () => {
+    const selection = createModelSelection(
+      ProviderInstanceId.make("claude_openrouter"),
+      "openai/gpt-5.5",
+    );
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      textGenerationModelSelection: selection,
+    };
+
+    expect(resolveAppModelSelectionState(settings, undefined)).toBe(selection);
+  });
+
+  it("returns the no-provider sentinel for an authoritative empty snapshot", () => {
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      textGenerationModelSelection: createModelSelection(
+        ProviderInstanceId.make("claude_openrouter"),
+        "openai/gpt-5.5",
+      ),
+    };
+
+    expect(resolveAppModelSelectionState(settings, [])).toEqual({
+      instanceId: ProviderInstanceId.make("t3code_no_provider"),
+      model: "",
+    });
+  });
+
+  it("returns the no-provider sentinel when only Kilo can run interactive prompts", () => {
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("kilo"),
+        instanceId: "kilo",
+        models: ["__t3_provider_default__", "kilo/openrouter/free"],
+        supportsTextGeneration: false,
+      }),
+    ];
+    const settings: UnifiedSettings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      textGenerationModelSelection: createModelSelection(
+        ProviderInstanceId.make("kilo"),
+        "__t3_provider_default__",
+      ),
+    };
+
+    expect(resolveAppModelSelectionState(settings, providers)).toEqual({
+      instanceId: ProviderInstanceId.make("t3code_no_provider"),
+      model: "",
     });
   });
 });

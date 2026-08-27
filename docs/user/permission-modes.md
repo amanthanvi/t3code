@@ -44,4 +44,10 @@ with prompting enabled and a restricted workspace while **Full access** disables
 labels above describe what you get; the exact per-provider translation is internal and may
 change.
 
+For Kilo Code, **Supervised**, **Auto-accept edits**, and **Auto** disable Kilo plugins and
+project-local Kilo configuration for that session. Kilo can otherwise start repository-declared
+plugins or local MCP commands before an approval reaches T3 Code. This also means project-local
+Kilo instructions and settings are unavailable in those modes. **Full access** keeps the normal
+Kilo extension and project-configuration behavior.
+
 Mobile offers the same four modes with the same labels and descriptions.

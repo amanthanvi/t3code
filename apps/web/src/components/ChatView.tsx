@@ -5392,6 +5392,19 @@ function ChatViewContent(props: ChatViewProps) {
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
     } = sendCtx;
+    // A provider that hides the Plan/Build toggle offers no way out of a plan
+    // mode carried in from a draft or another provider, so dispatch through
+    // such a provider forces "default" (the next send persists it back to the
+    // thread). Resolved from the selection this send actually uses, which can
+    // differ from the composer's persisted provider when that one is disabled.
+    const dispatchProviderStatus =
+      providerStatuses.find(
+        (status) => status.instanceId === ctxSelectedModelSelection.instanceId,
+      ) ?? null;
+    const dispatchInteractionMode =
+      interactionMode === "plan" && dispatchProviderStatus?.showInteractionModeToggle === false
+        ? DEFAULT_INTERACTION_MODE
+        : interactionMode;
     const composerImages =
       directAnnotation?.image &&
       !sendContextImages.some((image) => image.id === directAnnotation.image?.id)
@@ -5804,7 +5817,7 @@ function ChatViewContent(props: ChatViewProps) {
           ? { branch: localCheckoutBranchMismatch.currentBranch }
           : {}),
         runtimeMode,
-        interactionMode,
+        interactionMode: dispatchInteractionMode,
       });
       if (settingsResult._tag === "Failure") {
         failure = settingsResult;
@@ -5828,7 +5841,7 @@ function ChatViewContent(props: ChatViewProps) {
                       title,
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,
-                      interactionMode,
+                      interactionMode: dispatchInteractionMode,
                       branch: activeThreadBranch,
                       worktreePath: activeThread.worktreePath,
                       createdAt: activeThread.createdAt,
@@ -5869,7 +5882,7 @@ function ChatViewContent(props: ChatViewProps) {
           modelSelection: ctxSelectedModelSelection,
           titleSeed: title,
           runtimeMode,
-          interactionMode,
+          interactionMode: dispatchInteractionMode,
           ...(bootstrap ? { bootstrap } : {}),
           createdAt: messageCreatedAt,
         },

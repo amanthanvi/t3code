@@ -185,11 +185,16 @@ const buildEntry = <R>(input: {
       })
       .pipe(Effect.provideService(Scope.Scope, childScope), Effect.result);
     if (createResult._tag === "Failure") {
-      yield* Effect.logError("Failed to create provider instance", {
-        instanceId: rawInstanceId,
-        driver: entry.driver,
-        detail: createResult.failure.detail,
-      });
+      yield* Effect.logError("Failed to create provider instance").pipe(
+        Effect.annotateLogs({
+          instanceId: rawInstanceId,
+          driver: entry.driver,
+          detail: createResult.failure.detail,
+          ...(createResult.failure.cause === undefined
+            ? {}
+            : { cause: createResult.failure.cause }),
+        }),
+      );
       yield* Scope.close(childScope, Exit.void).pipe(Effect.ignore);
       return {
         kind: "unavailable" as const,

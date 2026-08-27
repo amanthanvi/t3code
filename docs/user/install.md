@@ -54,16 +54,27 @@ yay -S t3code-nightly-bin
 T3 Code drives provider CLIs; it does not ship them. Install the CLI for each provider you want
 to use, then authenticate it.
 
-| Provider   | CLI                                                   | Default binary | Log in with           |
-| ---------- | ----------------------------------------------------- | -------------- | --------------------- |
-| Codex      | [Codex CLI](https://developers.openai.com/codex/cli)  | `codex`        | `codex login`         |
-| Claude     | [Claude Code](https://claude.com/product/claude-code) | `claude`       | `claude auth login`   |
-| Cursor     | [Cursor CLI](https://cursor.com/cli)                  | `cursor-agent` | `agent login`         |
-| Grok Build | [Grok Build CLI](https://x.ai/cli)                    | `grok`         | `grok login`          |
-| OpenCode   | [OpenCode](https://opencode.ai)                       | `opencode`     | `opencode auth login` |
+| Provider   | CLI                                                         | Default binary | Log in with             |
+| ---------- | ----------------------------------------------------------- | -------------- | ----------------------- |
+| Codex      | [Codex CLI](https://developers.openai.com/codex/cli)        | `codex`        | `codex login`           |
+| Claude     | [Claude Code](https://claude.com/product/claude-code)       | `claude`       | `claude auth login`     |
+| Cursor     | [Cursor CLI](https://cursor.com/cli)                        | `cursor-agent` | `agent login`           |
+| Grok Build | [Grok Build CLI](https://x.ai/cli)                          | `grok`         | `grok login`            |
+| Kilo Code  | [Kilo CLI](https://kilo.ai/docs/code-with-ai/platforms/cli) | `kilo`         | `kilo`, then `/connect` |
+| OpenCode   | [OpenCode](https://opencode.ai)                             | `opencode`     | `opencode auth login`   |
 
-Codex and Claude are on by default. Cursor, Grok Build, and OpenCode are off by default; turn
-them on in **Settings** → the provider's card when you want to use them.
+Codex and Claude are on by default. Cursor, Grok Build, Kilo Code, and OpenCode are off by
+default; turn them on in **Settings** → the provider's card when you want to use them.
+
+Kilo Code runs through its ACP bridge and requires Kilo 7.4.23 or newer; use `kilo upgrade` if
+Settings reports an older version. Kilo 7.4 does not forward its question tool through ACP, so
+follow-up questions are not currently shown in T3 Code. Provider-side conversation rollback is
+also unavailable; T3 Code reports rollback as unsupported instead of desynchronizing the two
+histories. Settings can verify the Kilo CLI and model catalog with `kilo models` but cannot confirm
+login status, so run `kilo` and add credentials with `/connect` (or manage them with `kilo auth`)
+before starting paid-model turns. Kilo is available for
+interactive threads but not for automatic text generation such as thread titles or source-control
+writing; those settings use another enabled provider instance.
 
 Cursor is the one to watch: install Cursor CLI, which provides the `cursor-agent` binary that
 T3 Code looks for, but authenticate with `agent login`, not `cursor-agent login`.

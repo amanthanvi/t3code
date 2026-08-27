@@ -6,6 +6,7 @@ import {
   ServerProvider,
   ServerProviders,
   ServerUpsertKeybindingResult,
+  providerSupportsTextGeneration,
 } from "./server.ts";
 
 const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
@@ -45,6 +46,18 @@ describe("ServerProvider", () => {
     expect(parsed.skills).toEqual([]);
     expect(parsed.versionAdvisory).toBeUndefined();
     expect(parsed.updateState).toBeUndefined();
+    expect(providerSupportsTextGeneration(parsed)).toBe(true);
+  });
+
+  it("decodes an explicit automatic text-generation opt-out", () => {
+    const parsed = decodeServerProvider({
+      ...baseProviderSnapshot,
+      driver: "kilo",
+      instanceId: "kilo",
+      supportsTextGeneration: false,
+    });
+
+    expect(providerSupportsTextGeneration(parsed)).toBe(false);
   });
 
   it("defaults one-click update support when decoding older advisory snapshots", () => {

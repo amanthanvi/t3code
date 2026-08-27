@@ -15,6 +15,7 @@ import * as Result from "effect/Result";
 import { useState, type ReactNode } from "react";
 import {
   isProviderDriverKind,
+  providerHasAuthoritativeModelCatalog,
   resolveProviderInstanceEnabled,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
@@ -442,7 +443,13 @@ export function ProviderInstanceCard({
     ? instance.driver
     : null;
 
-  const customModels = readConfigStringArray(instance.config, "customModels");
+  // An authoritative catalog rejects unadvertised values. Preserve legacy
+  // config blobs, but do not render them as selectable rows.
+  const supportsCustomModels =
+    liveProvider === undefined || !providerHasAuthoritativeModelCatalog(liveProvider);
+  const customModels = supportsCustomModels
+    ? readConfigStringArray(instance.config, "customModels")
+    : [];
   // Server-returned models may lag behind settings writes. Treat probe
   // models as the source for built-ins only; custom rows come directly
   // from the current instance config so add/remove reflects immediately.
@@ -781,6 +788,7 @@ export function ProviderInstanceCard({
                 hiddenModels={hiddenModels}
                 favoriteModels={favoriteModels}
                 modelOrder={modelOrder}
+                supportsCustomModels={supportsCustomModels}
                 onChange={updateCustomModels}
                 onHiddenModelsChange={onHiddenModelsChange}
                 onFavoriteModelsChange={onFavoriteModelsChange}

@@ -52,7 +52,10 @@ import {
   type ComposerDraft,
 } from "../../state/use-composer-drafts";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
-import { resolveSelectableModelSelection } from "../../lib/modelOptions";
+import {
+  resolveDispatchableModelSelection,
+  resolveSelectableModelSelection,
+} from "../../lib/modelOptions";
 import { deriveThreadTitleFromPrompt } from "../../lib/projectThreadStartTurn";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { enqueueThreadOutboxMessage, removeThreadOutboxMessage } from "../../state/thread-outbox";
@@ -646,11 +649,14 @@ export function NewTaskDraftScreen(props: {
     // Snapshot read keeps just-typed selector state; the availability gate
     // still applies so a stored selection on a disabled provider falls back
     // to the flow's resolved model.
-    const modelSelection =
+    const selectableModelSelection =
       resolveSelectableModelSelection(
         selectedEnvironmentServerConfig,
         draft.modelSelection ?? null,
       ) ?? flow.selectedModel;
+    const modelSelection = environmentConnected
+      ? resolveDispatchableModelSelection(selectedEnvironmentServerConfig, selectableModelSelection)
+      : selectableModelSelection;
     const workspaceMode = draft.workspaceSelection?.mode ?? flow.workspaceMode;
     const selectedBranchName = draft.workspaceSelection?.branch ?? flow.selectedBranchName;
     const selectedWorktreePath =
@@ -801,6 +807,7 @@ export function NewTaskDraftScreen(props: {
   const canStart =
     Boolean(flow.selectedProject) &&
     Boolean(flow.selectedModel) &&
+    (!environmentConnected || flow.selectedModelReadyForDispatch) &&
     flow.prompt.trim().length > 0 &&
     isIncomingShareReady &&
     !isImportingShare &&
@@ -1003,7 +1010,11 @@ export function NewTaskDraftScreen(props: {
               iconNode={
                 <ProviderIcon provider={flow.selectedModelOption?.providerDriver} size={16} />
               }
-              label={flow.selectedModelOption?.label ?? "Choose model"}
+              label={
+                !environmentConnected || flow.selectedModelReadyForDispatch
+                  ? (flow.selectedModelOption?.label ?? "Choose model")
+                  : "Checking models…"
+              }
               maxWidth={152}
               onPress={settingsSheetPresentation.open}
             />

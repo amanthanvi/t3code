@@ -49,7 +49,7 @@ const mobileEndorsementRows = [
       </h1>
 
       <p class="hero-sub">
-        Orchestrate Claude Code, Codex, OpenCode, Cursor, and Grok from one surface.
+        Orchestrate Claude Code, Codex, OpenCode, Cursor, Grok, and Kilo Code from one surface.
         Bring your own subscription. Fork the whole thing.
       </p>
 
@@ -187,7 +187,7 @@ const mobileEndorsementRows = [
         <h2>Bring your own sub</h2>
         <p>
           T3 Code doesn't resell tokens. Plug in Claude Code, Codex, OpenCode,
-          Cursor, or Grok with the credentials you already have — we orchestrate
+          Cursor, Grok, or Kilo Code with the credentials you already have — we orchestrate
           them, you keep your plan.
         </p>
       </div>
@@ -226,6 +226,13 @@ const mobileEndorsementRows = [
           <div class="harness-meta">
             <div class="harness-name">Grok CLI</div>
             <div class="harness-tag">grok login</div>
+          </div>
+        </div>
+        <div class="harness">
+          <div class="harness-mark"><img src="/harnesses/kilo-dark.svg" alt="" /></div>
+          <div class="harness-meta">
+            <div class="harness-name">Kilo Code</div>
+            <div class="harness-tag">kilo auth login</div>
           </div>
         </div>
       </div>
@@ -811,7 +818,7 @@ const mobileEndorsementRows = [
 
   .harness-grid {
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 0;
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -822,10 +829,12 @@ const mobileEndorsementRows = [
     padding: 22px 20px;
     display: flex; align-items: center; gap: 14px;
     border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent);
     transition: background 0.2s ease;
   }
-  .harness:last-child { border-right: 0; }
+  .harness:nth-child(3n) { border-right: 0; }
+  .harness:nth-child(n + 4) { border-bottom: 0; }
   .harness:hover { background: rgba(255, 255, 255, 0.025); }
 
   .harness-mark {
@@ -1266,10 +1275,8 @@ const mobileEndorsementRows = [
     .harness-grid { grid-template-columns: 1fr 1fr; }
     .harness { border-right: 0; border-bottom: 1px solid var(--border); }
     .harness:nth-child(odd) { border-right: 1px solid var(--border); }
-    .harness:nth-child(5):last-child {
-      grid-column: 1 / -1;
-      border-right: 0;
-    }
+    .harness:nth-child(n) { border-bottom: 1px solid var(--border); }
+    .harness:nth-child(n + 5) { border-bottom: 0; }
     .git-inner { grid-template-columns: 1fr; gap: 40px; }
     .open-grid { grid-template-columns: 1fr; }
   }
@@ -1306,5 +1313,15 @@ const mobileEndorsementRows = [
     .endorsement-card p {
       font-size: 13px;
     }
+  }
+
+  @media (max-width: 520px) {
+    .harness-grid { grid-template-columns: 1fr; }
+    .harness,
+    .harness:nth-child(n) {
+      border-right: 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .harness:last-child { border-bottom: 0; }
   }
 </style>

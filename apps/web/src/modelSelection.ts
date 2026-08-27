@@ -4,6 +4,7 @@ import {
   defaultInstanceIdForDriver,
   type ModelSelection,
   ProviderDriverKind,
+  providerHasAuthoritativeModelCatalog,
   ProviderInstanceId,
   type ServerProvider,
   type ServerSettingsPatch,
@@ -23,7 +24,11 @@ import {
   resolveSelectableProvider,
 } from "./providerModels";
 import { ModelEsque } from "./components/chat/providerIconUtils";
-import { type ProviderInstanceEntry, deriveProviderInstanceEntries } from "./providerInstances";
+import {
+  NO_PROVIDER_MODEL_SELECTION,
+  type ProviderInstanceEntry,
+  deriveProviderInstanceEntries,
+} from "./providerInstances";
 import { sortModelsForProviderInstance } from "./modelOrdering";
 
 const MAX_CUSTOM_MODEL_COUNT = 32;
@@ -65,7 +70,7 @@ function readInstanceCustomModels(
   }
   const legacyProviders = settings.providers as Record<
     string,
-    { readonly customModels: ReadonlyArray<string> } | undefined
+    { readonly customModels?: ReadonlyArray<string> } | undefined
   >;
   return legacyProviders[driverKind]?.customModels ?? [];
 }
@@ -166,7 +171,14 @@ export function getAppModelOptions(
   // settings and the initial render before the first write both still
   // see the user's authored custom models.
   const defaultInstanceId = defaultInstanceIdForDriver(provider);
-  const customModels = readInstanceCustomModels(settings, defaultInstanceId, provider);
+  const defaultInstanceSnapshot = providers.find(
+    (candidate) => candidate.instanceId === defaultInstanceId,
+  );
+  const customModels =
+    defaultInstanceSnapshot !== undefined &&
+    providerHasAuthoritativeModelCatalog(defaultInstanceSnapshot)
+      ? []
+      : readInstanceCustomModels(settings, defaultInstanceId, provider);
   for (const slug of normalizeCustomModelSlugs(customModels, builtInModelSlugs)) {
     if (seen.has(slug)) {
       continue;
@@ -209,7 +221,9 @@ export function getAppModelOptionsForInstance(
     ),
   );
 
-  const customModels = readInstanceCustomModels(settings, entry.instanceId, entry.driverKind);
+  const customModels = providerHasAuthoritativeModelCatalog(entry.snapshot)
+    ? []
+    : readInstanceCustomModels(settings, entry.instanceId, entry.driverKind);
   for (const slug of normalizeCustomModelSlugs(customModels, builtInModelSlugs)) {
     if (seen.has(slug)) {
       continue;
@@ -323,20 +337,35 @@ export function resolvePlanAgentHealPatch(input: {
   return Object.keys(patch).length > 0 ? patch : null;
 }
 
+/**
+ * `providers` is `undefined` while the provider snapshot has not arrived yet
+ * (bootstrap/reconnect); the stored routing identity is preserved untouched.
+ * An authoritative empty array means no background provider exists.
+ */
 export function resolveAppModelSelectionState(
   settings: UnifiedSettings,
-  providers: ReadonlyArray<ServerProvider>,
+  providers: ReadonlyArray<ServerProvider> | undefined,
 ): ModelSelection {
   const selection = settings.textGenerationModelSelection ?? {
     instanceId: DEFAULT_TEXT_GENERATION_INSTANCE_ID,
     model: DEFAULT_TEXT_GENERATION_MODEL,
   };
+  if (providers === undefined) {
+    return selection;
+  }
   const entries = deriveProviderInstanceEntries(providers);
   const selectedEntry = entries.find(
-    (entry) => entry.instanceId === selection.instanceId && entry.enabled && entry.isAvailable,
+    (entry) =>
+      entry.instanceId === selection.instanceId &&
+      entry.enabled &&
+      entry.isAvailable &&
+      entry.supportsTextGeneration,
   );
   const entry =
-    selectedEntry ?? entries.find((candidate) => candidate.enabled && candidate.isAvailable);
+    selectedEntry ??
+    entries.find(
+      (candidate) => candidate.enabled && candidate.isAvailable && candidate.supportsTextGeneration,
+    );
   if (entry) {
     // When the instance changed due to fallback (e.g. selected instance was disabled),
     // don't carry over the old instance's model — use the fallback instance's default.
@@ -360,20 +389,5 @@ export function resolveAppModelSelectionState(
     return createModelSelection(entry.instanceId, model, modelOptionsForDispatch);
   }
 
-  const provider = resolveSelectableProvider(providers, null);
-  const keptSelectedProvider = false;
-
-  // When the provider changed due to fallback (e.g. selected provider was disabled),
-  // don't carry over the old provider's model — use the fallback provider's default.
-  const selectedModel = keptSelectedProvider ? selection.model : null;
-  const model = resolveAppModelSelection(provider, settings, providers, selectedModel);
-  const { modelOptionsForDispatch } = getComposerProviderState({
-    provider,
-    model,
-    models: getProviderModels(providers, provider),
-    modelOptions: keptSelectedProvider ? selection.options : undefined,
-    planModeEnabled: settings.planModeEnabled,
-  });
-
-  return createModelSelection(defaultInstanceIdForDriver(provider), model, modelOptionsForDispatch);
+  return NO_PROVIDER_MODEL_SELECTION;
 }

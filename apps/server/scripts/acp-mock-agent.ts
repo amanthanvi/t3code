@@ -2,6 +2,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -13,7 +14,11 @@ import type * as AcpSchema from "effect-acp/schema";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
+const environmentLogPath = process.env.T3_ACP_ENV_LOG_PATH;
+const ignoreSigterm = process.env.T3_ACP_IGNORE_SIGTERM === "1";
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
+const permissionScenario = process.env.T3_ACP_PERMISSION_SCENARIO ?? "same-execute";
+const hangInitialize = process.env.T3_ACP_HANG_INITIALIZE === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
@@ -23,7 +28,9 @@ const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLET
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
 const hangFirstPromptForever = process.env.T3_ACP_HANG_FIRST_PROMPT_FOREVER === "1";
+const emitPromptStartedBeforeHang = process.env.T3_ACP_EMIT_PROMPT_STARTED_BEFORE_HANG === "1";
 const emitLateUpdateAfterCancel = process.env.T3_ACP_EMIT_LATE_UPDATE_AFTER_CANCEL === "1";
+const ignorePromptCancelSettlement = process.env.T3_ACP_IGNORE_PROMPT_CANCEL_SETTLEMENT === "1";
 const omitXAiPromptCompleteStopReason =
   process.env.T3_ACP_OMIT_XAI_PROMPT_COMPLETE_STOP_REASON === "1";
 const failLoadSession = process.env.T3_ACP_FAIL_LOAD_SESSION === "1";
@@ -37,9 +44,13 @@ const emitOverlappingXAiPromptCompleteOutOfOrder =
   process.env.T3_ACP_EMIT_OVERLAPPING_XAI_PROMPT_COMPLETE_OUT_OF_ORDER === "1";
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
+const hangSetConfigOption = process.env.T3_ACP_HANG_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
+const setConfigDelayMs = Number(process.env.T3_ACP_SET_CONFIG_DELAY_MS ?? "0");
+const setConfigDelayAfter = Number(process.env.T3_ACP_SET_CONFIG_DELAY_AFTER ?? "0");
+const setConfigMarkerPath = process.env.T3_ACP_SET_CONFIG_MARKER_PATH;
 const permissionOptionIds = {
   allowOnce: process.env.T3_ACP_ALLOW_ONCE_OPTION_ID ?? "allow-once",
   allowAlways: process.env.T3_ACP_ALLOW_ALWAYS_OPTION_ID ?? "allow-always",
@@ -54,8 +65,23 @@ let currentReasoning = "medium";
 let currentContext = "272k";
 let currentFast = false;
 let promptCount = 0;
+let setConfigCount = 0;
 let overlappingFirstPromptId: string | undefined;
 const cancelledSessions = new Set<string>();
+const promptCancelSignals = new Map<string, Deferred.Deferred<void>>();
+
+if (environmentLogPath) {
+  NodeFS.writeFileSync(
+    environmentLogPath,
+    JSON.stringify({
+      KILO_PURE: process.env.KILO_PURE,
+      KILO_DISABLE_PROJECT_CONFIG: process.env.KILO_DISABLE_PROJECT_CONFIG,
+      KILO_DISABLE_EXTERNAL_SKILLS: process.env.KILO_DISABLE_EXTERNAL_SKILLS,
+      KILO_DISABLE_SKILL_SHELL: process.env.KILO_DISABLE_SKILL_SHELL,
+    }),
+    "utf8",
+  );
+}
 
 function promptIdFromRequestMeta(
   request: Pick<AcpSchema.PromptRequest, "_meta">,
@@ -81,6 +107,7 @@ function writeJsonRpcNotification(method: string, params: unknown): void {
 
 process.once("SIGTERM", () => {
   logExit("SIGTERM");
+  if (ignoreSigterm) return;
   process.exit(0);
 });
 
@@ -253,6 +280,29 @@ function availableModels(): ReadonlyArray<{
   }));
 }
 
+function inlineAgentModes(): ReadonlyArray<AcpSchema.SessionMode> {
+  try {
+    const config = JSON.parse(process.env.KILO_CONFIG_CONTENT ?? "{}") as unknown;
+    if (typeof config !== "object" || config === null || !("agent" in config)) return [];
+    const agents = config.agent;
+    if (typeof agents !== "object" || agents === null || Array.isArray(agents)) return [];
+    return Object.entries(agents).flatMap(([id, value]) => {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) return [];
+      const displayName = "displayName" in value ? value.displayName : undefined;
+      const description = "description" in value ? value.description : undefined;
+      return [
+        {
+          id,
+          name: typeof displayName === "string" ? displayName : id,
+          ...(typeof description === "string" ? { description } : {}),
+        },
+      ];
+    });
+  } catch {
+    return [];
+  }
+}
+
 const availableModes: ReadonlyArray<AcpSchema.SessionMode> = [
   {
     id: "ask",
@@ -269,6 +319,7 @@ const availableModes: ReadonlyArray<AcpSchema.SessionMode> = [
     name: "Code",
     description: "Write and modify code with full tool access",
   },
+  ...inlineAgentModes(),
 ];
 
 function modeState(): AcpSchema.SessionModeState {
@@ -297,7 +348,10 @@ const program = Effect.gen(function* () {
   const agent = yield* EffectAcpAgent.AcpAgent;
 
   yield* agent.handleInitialize((request) =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
+      if (hangInitialize) {
+        return yield* Effect.never;
+      }
       parameterizedModelPicker =
         request.clientCapabilities?._meta?.parameterizedModelPicker === true;
       return {
@@ -398,6 +452,20 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleSetSessionConfigOption((request) =>
     Effect.gen(function* () {
+      setConfigCount += 1;
+      if (hangSetConfigOption) {
+        return yield* Effect.never;
+      }
+      if (
+        setConfigCount > setConfigDelayAfter &&
+        Number.isFinite(setConfigDelayMs) &&
+        setConfigDelayMs > 0
+      ) {
+        if (setConfigMarkerPath) {
+          yield* Effect.sync(() => NodeFS.appendFileSync(setConfigMarkerPath, "started\n", "utf8"));
+        }
+        yield* Effect.sleep(`${setConfigDelayMs} millis`);
+      }
       if (exitOnSetConfigOption) {
         return yield* Effect.sync(() => {
           process.exit(7);
@@ -438,7 +506,6 @@ const program = Effect.gen(function* () {
       const cancelledSessionId = String(sessionId ?? "mock-session-1");
       cancelledSessions.add(cancelledSessionId);
       if (emitLateUpdateAfterCancel) {
-        yield* Effect.sleep("50 millis");
         yield* Effect.sync(() => {
           writeJsonRpcNotification("session/update", {
             sessionId: cancelledSessionId,
@@ -448,6 +515,10 @@ const program = Effect.gen(function* () {
             },
           });
         });
+      }
+      const promptCancelSignal = promptCancelSignals.get(cancelledSessionId);
+      if (promptCancelSignal && !ignorePromptCancelSettlement) {
+        yield* Deferred.succeed(promptCancelSignal, undefined);
       }
     }),
   );
@@ -519,7 +590,29 @@ const program = Effect.gen(function* () {
       }
 
       if (hangPromptForever || (hangFirstPromptForever && promptCount === 1)) {
-        return yield* Effect.never;
+        if (cancelledSessions.delete(requestedSessionId)) {
+          return { stopReason: "cancelled" as const };
+        }
+        const promptCancelSignal = yield* Deferred.make<void>();
+        promptCancelSignals.set(requestedSessionId, promptCancelSignal);
+        if (emitPromptStartedBeforeHang) {
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "prompt reached mock" },
+            },
+          });
+        }
+        yield* Deferred.await(promptCancelSignal).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              promptCancelSignals.delete(requestedSessionId);
+              cancelledSessions.delete(requestedSessionId);
+            }),
+          ),
+        );
+        return { stopReason: "cancelled" as const };
       }
 
       if (emitXAiPromptCompleteThenHang) {
@@ -631,19 +724,46 @@ const program = Effect.gen(function* () {
       }
 
       if (emitToolCalls) {
-        const toolCallId = "tool-call-1";
+        const toolCallId = `tool-call-${promptCount}`;
+        const defaultCommand = "cat server/package.json";
+        const command =
+          permissionScenario === "different-execute" && promptCount > 1
+            ? "rm -rf build-output"
+            : defaultCommand;
+        const isOther = permissionScenario === "different-other";
+        const isMalformed = permissionScenario === "malformed";
+        const isEdit = permissionScenario === "edit";
+        const kind: AcpSchema.ToolKind = isEdit
+          ? "edit"
+          : isOther || isMalformed
+            ? "other"
+            : "execute";
+        const title = isEdit
+          ? "server/package.json"
+          : isOther
+            ? promptCount > 1
+              ? "custom-tool-b"
+              : "custom-tool-a"
+            : isMalformed
+              ? ""
+              : `\`${command}\``;
+        const rawInput = isEdit
+          ? { filePath: "server/package.json", oldString: "old", newString: "new" }
+          : isOther
+            ? { action: title }
+            : isMalformed
+              ? undefined
+              : { command };
 
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
           update: {
             sessionUpdate: "tool_call",
             toolCallId,
-            title: "Terminal",
-            kind: "execute",
+            title,
+            kind,
             status: "pending",
-            rawInput: {
-              command: ["cat", "server/package.json"],
-            },
+            ...(rawInput ? { rawInput } : {}),
           },
         });
 
@@ -660,15 +780,16 @@ const program = Effect.gen(function* () {
           sessionId: requestedSessionId,
           toolCall: {
             toolCallId,
-            title: "`cat server/package.json`",
-            kind: "execute",
+            title,
+            kind,
             status: "pending",
+            ...(rawInput ? { rawInput } : {}),
             content: [
               {
                 type: "content",
                 content: {
                   type: "text",
-                  text: "Not in allowlist: cat server/package.json",
+                  text: title ? `Not in allowlist: ${title}` : "Permission required",
                 },
               },
             ],
@@ -693,8 +814,8 @@ const program = Effect.gen(function* () {
           update: {
             sessionUpdate: "tool_call_update",
             toolCallId,
-            title: "Terminal",
-            kind: "execute",
+            title,
+            kind,
             status: "completed",
             rawOutput: {
               exitCode: 0,
@@ -708,7 +829,7 @@ const program = Effect.gen(function* () {
           sessionId: requestedSessionId,
           update: {
             sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text: "hello from mock" },
+            content: { type: "text", text: promptResponseText ?? "hello from mock" },
           },
         });
 

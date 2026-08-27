@@ -9,6 +9,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   type MessageId,
+  type ModelSelection,
 } from "@t3tools/contracts";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
@@ -20,7 +21,7 @@ import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn"
 import { toUploadChatImageAttachments } from "../lib/composerImages";
 import { randomHex } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
-import { useProjects, useThreadShells } from "./entities";
+import { useProjects, useServerConfigs, useThreadShells } from "./entities";
 import {
   confirmThreadOutboxMessageQueued,
   ensureThreadOutboxLoaded,
@@ -31,12 +32,14 @@ import {
   modelSelectionsEqual,
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxFailureAction,
+  resolveQueuedThreadDispatchModelSelection,
   resolveQueuedThreadSettings,
   threadOutboxRetryDelayMs,
   type QueuedThreadCreation,
   type QueuedThreadMessage,
   type ThreadOutboxCommandStage,
 } from "./thread-outbox-model";
+import { environmentServerConfigsAtom } from "./server";
 import { threadEnvironment } from "./threads";
 import { useAtomCommand } from "./use-atom-command";
 import {
@@ -102,6 +105,7 @@ export function useThreadOutboxDrain(): void {
   const shellStatuses = useThreadOutboxShellStatuses();
   const threads = useThreadShells();
   const projects = useProjects();
+  const serverConfigs = useServerConfigs();
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const [retryTick, setRetryTick] = useState(0);
   const retryAttemptRef = useRef(new Map<MessageId, number>());
@@ -166,8 +170,12 @@ export function useThreadOutboxDrain(): void {
   }, []);
 
   const sendQueuedMessage = useCallback(
-    async (queuedMessage: QueuedThreadMessage, thread: EnvironmentThreadShell) => {
-      const settings = resolveQueuedThreadSettings(queuedMessage, thread);
+    async (
+      queuedMessage: QueuedThreadMessage,
+      thread: EnvironmentThreadShell,
+      modelSelection: ModelSelection,
+    ) => {
+      const settings = { ...resolveQueuedThreadSettings(queuedMessage, thread), modelSelection };
       const { reportFailure, completeDelivery } = makeDeliveryHelpers(queuedMessage);
 
       if (!modelSelectionsEqual(settings.modelSelection, thread.modelSelection)) {
@@ -250,11 +258,8 @@ export function useThreadOutboxDrain(): void {
       queuedMessage: QueuedThreadMessage,
       creation: QueuedThreadCreation,
       projectCwd: string,
+      modelSelection: ModelSelection,
     ) => {
-      const modelSelection = queuedMessage.modelSelection;
-      if (modelSelection === undefined) {
-        return false;
-      }
       const { completeDelivery } = makeDeliveryHelpers(queuedMessage);
       const deliveryResult = await startTurn({
         environmentId: queuedMessage.environmentId,
@@ -319,6 +324,17 @@ export function useThreadOutboxDrain(): void {
       if (deliveryAction === "wait") {
         continue;
       }
+      // Cheap pre-gate only; the delivery closure re-derives this from the
+      // same atom source after the confirmation await, and that later read is
+      // the authoritative one.
+      const dispatchModelSelection = resolveQueuedThreadDispatchModelSelection(
+        appAtomRegistry.get(environmentServerConfigsAtom).get(nextQueuedMessage.environmentId),
+        nextQueuedMessage,
+        thread,
+      );
+      if (deliveryAction === "send" && dispatchModelSelection === null) {
+        continue;
+      }
       // The live project shell is preferred for the workspace path, with the
       // snapshot taken at enqueue time as the fallback so a task never dies
       // just because its project shell is not loaded.
@@ -368,15 +384,31 @@ export function useThreadOutboxDrain(): void {
         if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[nextQueuedMessage.messageId]) {
           return true;
         }
-        return deliveryAction === "remove"
-          ? removeQueuedMessage("[thread-outbox] failed to remove message for a missing thread")
-          : creation !== undefined
-            ? creationProjectCwd !== null
-              ? sendQueuedCreation(nextQueuedMessage, creation, creationProjectCwd)
-              : removeQueuedMessage("[thread-outbox] dropped pending task for a missing project")
-            : thread !== undefined
-              ? sendQueuedMessage(nextQueuedMessage, thread)
-              : Promise.resolve(false);
+        const currentDispatchModelSelection = resolveQueuedThreadDispatchModelSelection(
+          appAtomRegistry.get(environmentServerConfigsAtom).get(nextQueuedMessage.environmentId),
+          nextQueuedMessage,
+          thread,
+        );
+        if (deliveryAction === "remove") {
+          return removeQueuedMessage(
+            "[thread-outbox] failed to remove message for a missing thread",
+          );
+        }
+        if (currentDispatchModelSelection === null) {
+          return true;
+        }
+        return creation !== undefined
+          ? creationProjectCwd !== null
+            ? sendQueuedCreation(
+                nextQueuedMessage,
+                creation,
+                creationProjectCwd,
+                currentDispatchModelSelection,
+              )
+            : removeQueuedMessage("[thread-outbox] dropped pending task for a missing project")
+          : thread !== undefined
+            ? sendQueuedMessage(nextQueuedMessage, thread, currentDispatchModelSelection)
+            : Promise.resolve(false);
       });
       void delivery
         .then((sent) => {
@@ -417,6 +449,7 @@ export function useThreadOutboxDrain(): void {
     projects,
     queuedMessagesByThreadKey,
     retryTick,
+    serverConfigs,
     sendQueuedCreation,
     sendQueuedMessage,
     shellStatuses,

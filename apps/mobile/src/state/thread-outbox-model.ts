@@ -14,11 +14,13 @@ import {
   type ProjectId as ProjectIdType,
   type ProviderInteractionMode as ProviderInteractionModeType,
   type RuntimeMode as RuntimeModeType,
+  type ServerConfig,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { DraftComposerImageAttachmentSchema } from "../lib/composer-image-schema";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
+import { resolveDispatchableModelSelection } from "../lib/modelOptions";
 import { scopedThreadKey } from "../lib/scopedEntities";
 
 const THREAD_OUTBOX_SCHEMA_VERSION = 3;
@@ -95,6 +97,20 @@ export function resolveQueuedThreadSettings(
     runtimeMode: message.runtimeMode ?? thread.runtimeMode,
     interactionMode: message.interactionMode ?? thread.interactionMode,
   };
+}
+
+export function resolveQueuedThreadDispatchModelSelection(
+  config: ServerConfig | null | undefined,
+  message: QueuedThreadMessage,
+  thread: ThreadSettingsSnapshot | undefined,
+): ModelSelectionType | null {
+  const selection =
+    message.creation !== undefined
+      ? (message.modelSelection ?? null)
+      : thread !== undefined
+        ? resolveQueuedThreadSettings(message, thread).modelSelection
+        : null;
+  return resolveDispatchableModelSelection(config, selection);
 }
 
 export function modelSelectionsEqual(left: ModelSelectionType, right: ModelSelectionType): boolean {

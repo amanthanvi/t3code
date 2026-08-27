@@ -15,7 +15,9 @@
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
+  modelSelectionRequiresCatalogHealing,
   PROVIDER_DISPLAY_NAMES,
+  providerSupportsTextGeneration,
   resolveProviderInstanceEnabled,
   type ModelSelection,
   type ProviderDriverKind,
@@ -61,8 +63,27 @@ export interface ProviderInstanceEntry {
   readonly isDefault: boolean;
   /** True when `availability === "unavailable"` is absent or "available". */
   readonly isAvailable: boolean;
+  readonly supportsTextGeneration: boolean;
   readonly snapshot: ServerProvider;
   readonly models: ReadonlyArray<ServerProviderModel>;
+}
+
+/**
+ * Whether a resolved selection names a real enabled text-generation instance.
+ * Local empty-state values are intentionally identified through catalog
+ * absence, not a reserved string pair that a configured instance could use.
+ */
+export function hasSelectableTextGenerationProviderSelection(
+  selection: ModelSelection,
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+): boolean {
+  return entries.some(
+    (entry) =>
+      entry.instanceId === selection.instanceId &&
+      entry.enabled &&
+      entry.isAvailable &&
+      entry.supportsTextGeneration,
+  );
 }
 
 /**
@@ -194,6 +215,7 @@ export function deriveProviderInstanceEntries(
       status: snapshot.status,
       isDefault,
       isAvailable: snapshot.availability !== "unavailable",
+      supportsTextGeneration: providerSupportsTextGeneration(snapshot),
       snapshot,
       models: snapshot.models,
     } satisfies ProviderInstanceEntry;
@@ -247,13 +269,32 @@ export function applyProviderInstanceSettings(
 
   return entries.map((entry) => {
     const explicitInstance = settings.providerInstances?.[entry.instanceId];
-    const enabled = explicitInstance
-      ? resolveProviderInstanceEnabled(explicitInstance)
+    const configuredEnabled = explicitInstance
+      ? explicitInstance.driver === entry.driverKind &&
+        resolveProviderInstanceEnabled(explicitInstance)
       : entry.isDefault
         ? (legacyProviders[entry.driverKind]?.enabled ?? entry.enabled)
         : false;
+    const enabled = entry.isAvailable && configuredEnabled;
     return enabled === entry.enabled ? entry : { ...entry, enabled };
   });
+}
+
+/**
+ * Apply settings-owned enablement to provider snapshots before selection logic
+ * consumes them. This keeps routing resolution and picker visibility on the
+ * same state while streamed probes reconcile an enable/disable settings write.
+ */
+export function applyProviderInstanceSettingsToSnapshots(
+  providers: ReadonlyArray<ServerProvider>,
+  settings: Pick<ServerSettings, "providerInstances" | "providers">,
+): ReadonlyArray<ServerProvider> {
+  return applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings).map(
+    (entry) =>
+      entry.enabled === entry.snapshot.enabled
+        ? entry.snapshot
+        : { ...entry.snapshot, enabled: entry.enabled },
+  );
 }
 
 /**
@@ -383,7 +424,14 @@ export function resolveDefaultProviderModelSelection(
 ): ModelSelection | null {
   const instanceId = resolveSelectableProviderInstance(providers, selection?.instanceId);
   if (instanceId === undefined) return null;
-  if (selection?.instanceId === instanceId) return selection;
+  if (selection?.instanceId === instanceId) {
+    const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+    if (provider && modelSelectionRequiresCatalogHealing(provider, selection.model)) {
+      const model = getDefaultProviderInstanceModel(providers, instanceId);
+      return model ? { instanceId, model } : null;
+    }
+    return selection;
+  }
   const model = getDefaultProviderInstanceModel(providers, instanceId);
   return model ? { instanceId, model } : null;
 }

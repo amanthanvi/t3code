@@ -62,6 +62,8 @@ interface ProviderModelsSectionProps {
   readonly favoriteModels: ReadonlyArray<string>;
   /** Explicit user-authored model ordering for this provider instance. */
   readonly modelOrder: ReadonlyArray<string>;
+  /** Whether this driver accepts values outside its live model catalog. */
+  readonly supportsCustomModels?: boolean;
   /**
    * Commit the new custom-model list. Caller is responsible for routing the
    * write to the correct storage (legacy `settings.providers[kind]` vs.
@@ -92,6 +94,7 @@ export function ProviderModelsSection({
   hiddenModels,
   favoriteModels,
   modelOrder,
+  supportsCustomModels = true,
   onChange,
   onHiddenModelsChange,
   onFavoriteModelsChange,
@@ -273,7 +276,7 @@ export function ProviderModelsSection({
                 {isHidden ? (
                   <span className="text-[10px] text-muted-foreground">hidden</span>
                 ) : null}
-                {model.isCustom ? (
+                {supportsCustomModels && model.isCustom ? (
                   <span className="text-[10px] text-muted-foreground">custom</span>
                 ) : null}
               </div>
@@ -376,29 +379,33 @@ export function ProviderModelsSection({
         })}
       </div>
 
-      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-        <Input
-          id={`provider-instance-${instanceId}-custom-model`}
-          value={input}
-          onChange={(event) => {
-            setInput(event.target.value);
-            if (error) setError(null);
-          }}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter") return;
-            event.preventDefault();
-            handleAdd();
-          }}
-          placeholder={driverKind ? CUSTOM_MODEL_PLACEHOLDER_BY_KIND[driverKind] : "model-slug"}
-          spellCheck={false}
-        />
-        <Button className="shrink-0" variant="outline" onClick={handleAdd}>
-          <PlusIcon className="size-3.5" />
-          Add
-        </Button>
-      </div>
+      {supportsCustomModels ? (
+        <>
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+            <Input
+              id={`provider-instance-${instanceId}-custom-model`}
+              value={input}
+              onChange={(event) => {
+                setInput(event.target.value);
+                if (error) setError(null);
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") return;
+                event.preventDefault();
+                handleAdd();
+              }}
+              placeholder={driverKind ? CUSTOM_MODEL_PLACEHOLDER_BY_KIND[driverKind] : "model-slug"}
+              spellCheck={false}
+            />
+            <Button className="shrink-0" variant="outline" onClick={handleAdd}>
+              <PlusIcon className="size-3.5" />
+              Add
+            </Button>
+          </div>
 
-      {error ? <p className="mt-2 text-xs text-destructive">{error}</p> : null}
+          {error ? <p className="mt-2 text-xs text-destructive">{error}</p> : null}
+        </>
+      ) : null}
     </div>
   );
 }

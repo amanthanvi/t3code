@@ -57,6 +57,8 @@ export interface ServerProviderPresentation {
   readonly badgeLabel?: string;
   readonly showInteractionModeToggle?: boolean;
   readonly requiresNewThreadForModelChange?: boolean;
+  readonly supportsTextGeneration?: boolean;
+  readonly hasAuthoritativeModelCatalog?: boolean;
 }
 
 export type ServerProviderDraft = Omit<ServerProvider, "instanceId" | "driver">;
@@ -72,14 +74,52 @@ export function isCommandMissingCause(error: unknown): boolean {
   return error instanceof PlatformError.PlatformError && error.reason._tag === "NotFound";
 }
 
-export const spawnAndCollect = (binaryPath: string, command: ChildProcess.Command) =>
+export class ProviderCommandOutputTooLargeError extends Schema.TaggedErrorClass<ProviderCommandOutputTooLargeError>()(
+  "ProviderCommandOutputTooLargeError",
+  {
+    binaryPath: Schema.String,
+    maxOutputBytes: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Provider command ${this.binaryPath} produced more than ${this.maxOutputBytes} bytes of output.`;
+  }
+}
+
+/** Fails the stream as soon as cumulative output exceeds the byte budget. */
+const boundedOutputStream = <E>(
+  stream: Stream.Stream<Uint8Array, E>,
+  binaryPath: string,
+  maxOutputBytes: number,
+): Stream.Stream<Uint8Array, E | ProviderCommandOutputTooLargeError> => {
+  let collectedBytes = 0;
+  return Stream.mapEffect(stream, (chunk) => {
+    collectedBytes += chunk.byteLength;
+    return collectedBytes > maxOutputBytes
+      ? Effect.fail(new ProviderCommandOutputTooLargeError({ binaryPath, maxOutputBytes }))
+      : Effect.succeed(chunk);
+  });
+};
+
+export const spawnAndCollect = (
+  binaryPath: string,
+  command: ChildProcess.Command,
+  options?: { readonly maxOutputBytes?: number },
+) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const child = yield* spawner.spawn(command);
+    const maxOutputBytes = options?.maxOutputBytes;
+    const bounded = <E>(
+      stream: Stream.Stream<Uint8Array, E>,
+    ): Stream.Stream<Uint8Array, E | ProviderCommandOutputTooLargeError> =>
+      maxOutputBytes === undefined
+        ? stream
+        : boundedOutputStream(stream, binaryPath, maxOutputBytes);
     const [stdout, stderr, exitCode] = yield* Effect.all(
       [
-        collectStreamAsString(child.stdout),
-        collectStreamAsString(child.stderr),
+        collectStreamAsString(bounded(child.stdout)),
+        collectStreamAsString(bounded(child.stderr)),
         child.exitCode.pipe(Effect.map(Number)),
       ],
       { concurrency: "unbounded" },
@@ -238,6 +278,12 @@ export function buildServerProvider(input: {
       : {}),
     ...(typeof input.presentation.requiresNewThreadForModelChange === "boolean"
       ? { requiresNewThreadForModelChange: input.presentation.requiresNewThreadForModelChange }
+      : {}),
+    ...(typeof input.presentation.supportsTextGeneration === "boolean"
+      ? { supportsTextGeneration: input.presentation.supportsTextGeneration }
+      : {}),
+    ...(typeof input.presentation.hasAuthoritativeModelCatalog === "boolean"
+      ? { hasAuthoritativeModelCatalog: input.presentation.hasAuthoritativeModelCatalog }
       : {}),
     enabled: input.enabled,
     installed: input.probe.installed,

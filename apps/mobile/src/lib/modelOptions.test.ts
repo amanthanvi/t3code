@@ -6,6 +6,7 @@ import {
   buildModelOptions,
   groupByProvider,
   resolveDefaultableModelSelection,
+  resolveDispatchableModelSelection,
   resolveSelectableModelSelection,
 } from "./modelOptions";
 
@@ -136,6 +137,112 @@ describe("mobile model options", () => {
     expect(resolveSelectableModelSelection(config, removed)).toBeNull();
     // No config (environment offline) — nothing to validate against.
     expect(resolveSelectableModelSelection(null, disabled)).toBe(disabled);
+  });
+
+  it("heals stale Kilo selections and does not synthesize a ghost model row", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "kilo",
+          driver: "kilo",
+          displayName: "Kilo Code",
+          enabled: true,
+          installed: true,
+          hasAuthoritativeModelCatalog: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "kilo/live",
+              name: "Kilo Live",
+              isCustom: false,
+              isDefault: true,
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+    const stale = {
+      instanceId: ProviderInstanceId.make("kilo"),
+      model: "kilo/stale",
+      options: [{ id: "reasoning", value: "high" }],
+    };
+
+    expect(resolveSelectableModelSelection(config, stale)).toEqual({
+      instanceId: "kilo",
+      model: "kilo/live",
+    });
+    expect(buildModelOptions(config, stale).map((option) => option.key)).toEqual([
+      "kilo:kilo/live",
+    ]);
+  });
+
+  it("preserves Kilo routing while blocking dispatch until the catalog is authoritative", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "kilo",
+          driver: "kilo",
+          enabled: true,
+          installed: true,
+          status: "warning",
+          hasAuthoritativeModelCatalog: true,
+          auth: { status: "authenticated" },
+          models: [],
+        },
+        {
+          instanceId: "codex",
+          driver: "codex",
+          enabled: true,
+          installed: true,
+          status: "ready",
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "gpt-default",
+              name: "GPT Default",
+              isCustom: false,
+              isDefault: true,
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+    const stored = { instanceId: ProviderInstanceId.make("kilo"), model: "kilo/offline" };
+
+    expect(resolveSelectableModelSelection(config, stored)).toBe(stored);
+    expect(resolveDefaultableModelSelection(config, stored)).toBe(stored);
+    expect(resolveDispatchableModelSelection(config, stored)).toBeNull();
+    expect(buildModelOptions(config, stored).map((option) => option.key)).toEqual([
+      "codex:gpt-default",
+      "kilo:kilo/offline",
+    ]);
+
+    const reconnected = {
+      ...config,
+      providers: config.providers.map((provider) =>
+        provider.driver === "kilo"
+          ? {
+              ...provider,
+              status: "ready",
+              models: [
+                {
+                  slug: "kilo/live",
+                  name: "Kilo Live",
+                  isCustom: false,
+                  isDefault: true,
+                  capabilities: null,
+                },
+              ],
+            }
+          : provider,
+      ),
+    } as unknown as ServerConfig;
+    expect(resolveDispatchableModelSelection(reconnected, stored)).toEqual({
+      instanceId: "kilo",
+      model: "kilo/live",
+    });
   });
 
   it("keeps legacy models out of implicit defaults", () => {

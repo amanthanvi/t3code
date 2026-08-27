@@ -10,7 +10,7 @@
  *
  *  2. **Many drivers, one registry** — the "all drivers slice" describe
  *     block below configures one instance of every shipped driver
- *     (`codex`, `claudeAgent`, `cursor`, `grok`, `opencode`) in a single
+ *     (`codex`, `claudeAgent`, `cursor`, `grok`, `kilo`, `opencode`) in a single
  *     `ProviderInstanceConfigMap` and asserts the registry boots them all
  *     without cross-contamination. This proves the driver SPI is uniform
  *     across every provider — any driver plugs into the registry through
@@ -18,7 +18,7 @@
  *
  * Every instance in these tests is configured with `enabled: false` so the
  * provider-status checks short-circuit to pending/disabled snapshots
- * without trying to spawn real `codex` / `claude` / `agent` / `grok` / `opencode`
+ * without trying to spawn real `codex` / `claude` / `agent` / `grok` / `kilo` / `opencode`
  * binaries. That keeps the assertions focused on registry routing
  * behaviour rather than the runtime details of each provider.
  */
@@ -29,6 +29,7 @@ import {
   type CodexSettings,
   type CursorSettings,
   type GrokSettings,
+  type KiloSettings,
   type OpenCodeSettings,
   ProviderDriverKind,
   type ProviderInstanceConfigMap,
@@ -37,6 +38,9 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as References from "effect/References";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
@@ -48,10 +52,13 @@ import { ClaudeDriver } from "../Drivers/ClaudeDriver.ts";
 import { CodexDriver } from "../Drivers/CodexDriver.ts";
 import { CursorDriver } from "../Drivers/CursorDriver.ts";
 import { GrokDriver } from "../Drivers/GrokDriver.ts";
+import { KiloDriver } from "../Drivers/KiloDriver.ts";
 import { OpenCodeDriver } from "../Drivers/OpenCodeDriver.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
+import { ProviderDriverError } from "../Errors.ts";
+import type { ProviderDriver } from "../ProviderDriver.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
 
 const TestHttpClientLive = Layer.succeed(
@@ -127,6 +134,12 @@ const makeGrokConfig = (overrides: Partial<GrokSettings>): GrokSettings => ({
   ...overrides,
 });
 
+const makeKiloConfig = (overrides: Partial<KiloSettings>): KiloSettings => ({
+  enabled: false,
+  binaryPath: "kilo",
+  ...overrides,
+});
+
 const makeOpenCodeConfig = (overrides: Partial<OpenCodeSettings>): OpenCodeSettings => ({
   enabled: false,
   binaryPath: "opencode",
@@ -134,6 +147,57 @@ const makeOpenCodeConfig = (overrides: Partial<OpenCodeSettings>): OpenCodeSetti
   serverPassword: "",
   customModels: [],
   ...overrides,
+});
+
+it.effect("logs provider creation causes without exposing them in unavailable snapshots", () => {
+  const logs: Array<{
+    readonly message: unknown;
+    readonly annotations: Readonly<Record<string, unknown>>;
+  }> = [];
+  const logger = Logger.make(({ fiber, message }) => {
+    logs.push({
+      message,
+      annotations: fiber.getRef(References.CurrentLogAnnotations),
+    });
+  });
+  const instanceId = ProviderInstanceId.make("kilo_diagnostic_failure");
+  const driverKind = ProviderDriverKind.make("kilo-diagnostic-test");
+  const underlyingCause = new Error("private snapshot diagnostics");
+  const stableDetail = "Failed to build Kilo snapshot.";
+  const failingDriver = {
+    driverKind,
+    metadata: { displayName: "Kilo diagnostic test" },
+    configSchema: Schema.Struct({}),
+    defaultConfig: () => ({}),
+    create: () =>
+      Effect.fail(
+        new ProviderDriverError({
+          driver: driverKind,
+          instanceId,
+          detail: stableDetail,
+          cause: underlyingCause,
+        }),
+      ),
+  } satisfies ProviderDriver<{}>;
+
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const { registry } = yield* makeProviderInstanceRegistry({
+        drivers: [failingDriver],
+        configMap: {
+          [instanceId]: {
+            driver: driverKind,
+            config: {},
+          },
+        },
+      });
+
+      const [unavailable] = yield* registry.listUnavailable;
+      expect(unavailable?.unavailableReason).toContain(stableDetail);
+      expect(unavailable?.unavailableReason).not.toContain(underlyingCause.message);
+      expect(logs.some((log) => log.annotations.cause === underlyingCause)).toBe(true);
+    }),
+  ).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
 });
 
 describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
@@ -325,12 +389,14 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       const claudeId = ProviderInstanceId.make("claude_default");
       const cursorId = ProviderInstanceId.make("cursor_default");
       const grokId = ProviderInstanceId.make("grok_default");
+      const kiloId = ProviderInstanceId.make("kilo_default");
       const openCodeId = ProviderInstanceId.make("opencode_default");
 
       const codexDriverKind = ProviderDriverKind.make("codex");
       const claudeDriverKind = ProviderDriverKind.make("claudeAgent");
       const cursorDriverKind = ProviderDriverKind.make("cursor");
       const grokDriverKind = ProviderDriverKind.make("grok");
+      const kiloDriverKind = ProviderDriverKind.make("kilo");
       const openCodeDriverKind = ProviderDriverKind.make("opencode");
 
       const configMap: ProviderInstanceConfigMap = {
@@ -361,6 +427,12 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
           enabled: false,
           config: makeGrokConfig({}),
         },
+        [kiloId]: {
+          driver: kiloDriverKind,
+          displayName: "Kilo Code",
+          enabled: false,
+          config: makeKiloConfig({}),
+        },
         [openCodeId]: {
           driver: openCodeDriverKind,
           displayName: "OpenCode",
@@ -370,7 +442,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       };
 
       const { registry } = yield* makeProviderInstanceRegistry<BuiltInDriversEnv>({
-        drivers: [CodexDriver, ClaudeDriver, CursorDriver, GrokDriver, OpenCodeDriver],
+        drivers: [CodexDriver, ClaudeDriver, CursorDriver, GrokDriver, KiloDriver, OpenCodeDriver],
         configMap,
       });
 
@@ -380,9 +452,9 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(unavailable).toEqual([]);
 
       const instances = yield* registry.listInstances;
-      expect(instances).toHaveLength(5);
+      expect(instances).toHaveLength(6);
       expect(instances.map((instance) => instance.instanceId).toSorted()).toEqual(
-        [codexId, claudeId, cursorId, grokId, openCodeId].toSorted(),
+        [codexId, claudeId, cursorId, grokId, kiloId, openCodeId].toSorted(),
       );
 
       // Instance lookup by id resolves each instance to its own bundle —
@@ -392,16 +464,19 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       const claude = yield* registry.getInstance(claudeId);
       const cursor = yield* registry.getInstance(cursorId);
       const grok = yield* registry.getInstance(grokId);
+      const kilo = yield* registry.getInstance(kiloId);
       const openCode = yield* registry.getInstance(openCodeId);
       expect(codex?.driverKind).toBe(codexDriverKind);
       expect(claude?.driverKind).toBe(claudeDriverKind);
       expect(cursor?.driverKind).toBe(cursorDriverKind);
       expect(grok?.driverKind).toBe(grokDriverKind);
+      expect(kilo?.driverKind).toBe(kiloDriverKind);
       expect(openCode?.driverKind).toBe(openCodeDriverKind);
       expect(codex?.displayName).toBe("Codex");
       expect(claude?.displayName).toBe("Claude");
       expect(cursor?.displayName).toBe("Cursor");
       expect(grok?.displayName).toBe("Grok");
+      expect(kilo?.displayName).toBe("Kilo Code");
       expect(openCode?.displayName).toBe("OpenCode");
 
       // Every instance owns its own set of closures — no sharing across
@@ -414,6 +489,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         claude!.adapter,
         cursor!.adapter,
         grok!.adapter,
+        kilo!.adapter,
         openCode!.adapter,
       ];
       expect(new Set(adapters).size).toBe(adapters.length);
@@ -425,11 +501,13 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         openCode!.textGeneration,
       ];
       expect(new Set(textGenerations).size).toBe(textGenerations.length);
+      expect(kilo!.textGeneration).toBeNull();
       const snapshots = [
         codex!.snapshot,
         claude!.snapshot,
         cursor!.snapshot,
         grok!.snapshot,
+        kilo!.snapshot,
         openCode!.snapshot,
       ];
       expect(new Set(snapshots).size).toBe(snapshots.length);
@@ -465,6 +543,12 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(grokSnapshot.driver).toBe(grokDriverKind);
       expect(grokSnapshot.enabled).toBe(false);
       expect(grokSnapshot.continuation?.groupKey).toBe(`${grokDriverKind}:instance:${grokId}`);
+
+      const kiloSnapshot = yield* kilo!.snapshot.getSnapshot;
+      expect(kiloSnapshot.instanceId).toBe(kiloId);
+      expect(kiloSnapshot.driver).toBe(kiloDriverKind);
+      expect(kiloSnapshot.enabled).toBe(false);
+      expect(kiloSnapshot.continuation?.groupKey).toBe(`${kiloDriverKind}:instance:${kiloId}`);
 
       const openCodeSnapshot = yield* openCode!.snapshot.getSnapshot;
       expect(openCodeSnapshot.instanceId).toBe(openCodeId);

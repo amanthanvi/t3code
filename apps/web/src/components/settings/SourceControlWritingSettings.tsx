@@ -1,26 +1,31 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useRef } from "react";
+import { useMemo, useRef } from "react";
 import type { SourceControlWritingStyleMode } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
-import { createModelSelection } from "@t3tools/shared/model";
 import { resolveSourceControlWriterModelSelection } from "@t3tools/shared/serverSettings";
 
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import {
-  applyProviderInstanceSettings,
+  applyProviderInstanceSettingsToSnapshots,
   deriveProviderInstanceEntries,
+  hasSelectableTextGenerationProviderSelection,
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
 } from "../../modelSelection";
-import { primaryServerProvidersAtom } from "../../state/server";
+import { primaryServerConfigAtom, primaryServerProvidersAtom } from "../../state/server";
+import { ComposerControl } from "../chat/ComposerControl";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
+import {
+  resolveActiveSourceControlWriterSelection,
+  resolveSourceControlWriterToggleSelection,
+} from "./SourceControlWritingSettings.logic";
 
 const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; description: string }> =
   {
@@ -43,29 +48,47 @@ const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; descr
 export function SourceControlWritingSettingsSection() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
+  const serverConfig = useAtomValue(primaryServerConfigAtom);
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const providerSnapshotsLoaded = serverConfig !== null;
+  const settingsAwareServerProviders = useMemo(
+    () => applyProviderInstanceSettingsToSnapshots(serverProviders, settings),
+    [serverProviders, settings],
+  );
   const customInstructionsRef = useRef<HTMLTextAreaElement>(null);
   const style = settings.sourceControlWritingStyle;
   const defaults = DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle;
   const isSourceControlWritingStyleDirty =
     style.mode !== defaults.mode || style.customInstructions !== defaults.customInstructions;
 
-  const defaultModelSelection = resolveAppModelSelectionState(settings, serverProviders);
+  const defaultModelSelection = resolveAppModelSelectionState(
+    settings,
+    providerSnapshotsLoaded ? settingsAwareServerProviders : undefined,
+  );
   const usesDedicatedModel = settings.sourceControlWriterModelSelection !== null;
   const resolvedSourceControlWriterSelection = resolveSourceControlWriterModelSelection(
     settings,
-    serverProviders,
+    settingsAwareServerProviders,
   );
-  const activeSelection =
-    resolvedSourceControlWriterSelection === settings.textGenerationModelSelection
-      ? defaultModelSelection
-      : resolvedSourceControlWriterSelection;
-  const instanceEntries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings),
+  const activeSelection = resolveActiveSourceControlWriterSelection(
+    resolvedSourceControlWriterSelection,
+    settings.sourceControlWriterModelSelection,
+    defaultModelSelection,
+  );
+  const instanceEntries = useMemo(
+    () =>
+      sortProviderInstanceEntries(
+        deriveProviderInstanceEntries(settingsAwareServerProviders),
+      ).filter((entry) => entry.supportsTextGeneration),
+    [settingsAwareServerProviders],
+  );
+  const hasTextGenerationProvider = hasSelectableTextGenerationProviderSelection(
+    defaultModelSelection,
+    instanceEntries,
   );
   const modelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
-    serverProviders,
+    settingsAwareServerProviders,
     activeSelection.instanceId,
     activeSelection.model,
   );
@@ -173,7 +196,11 @@ export function SourceControlWritingSettingsSection() {
         description="Optional model override for change descriptions, change request titles and descriptions, and branch or bookmark names. Off uses the global text generation model."
         control={
           <div className="flex flex-wrap items-center justify-end gap-2">
-            {usesDedicatedModel ? (
+            {!providerSnapshotsLoaded ? (
+              <ComposerControl variant="outline" disabled>
+                Loading providers…
+              </ComposerControl>
+            ) : usesDedicatedModel && hasTextGenerationProvider ? (
               <ProviderModelPicker
                 activeInstanceId={activeSelection.instanceId}
                 model={activeSelection.model}
@@ -185,24 +212,29 @@ export function SourceControlWritingSettingsSection() {
                 triggerAriaLabel="Source control writer model"
                 onInstanceModelChange={(instanceId, model) => {
                   updateSettings({
-                    sourceControlWriterModelSelection: createModelSelection(instanceId, model),
+                    sourceControlWriterModelSelection: { instanceId, model },
                   });
                 }}
               />
+            ) : !hasTextGenerationProvider ? (
+              <ComposerControl variant="outline" disabled>
+                No provider available
+              </ComposerControl>
             ) : null}
             <Switch
               checked={usesDedicatedModel}
-              onCheckedChange={(checked) =>
-                updateSettings({
-                  sourceControlWriterModelSelection: checked
-                    ? createModelSelection(
-                        defaultModelSelection.instanceId,
-                        defaultModelSelection.model,
-                        defaultModelSelection.options,
-                      )
-                    : null,
-                })
+              disabled={
+                !usesDedicatedModel && (!providerSnapshotsLoaded || !hasTextGenerationProvider)
               }
+              onCheckedChange={(checked) => {
+                const nextSelection = resolveSourceControlWriterToggleSelection(
+                  Boolean(checked),
+                  defaultModelSelection,
+                  hasTextGenerationProvider,
+                );
+                if (nextSelection === undefined) return;
+                updateSettings({ sourceControlWriterModelSelection: nextSelection });
+              }}
               aria-label="Use a separate source control writer model"
             />
           </div>

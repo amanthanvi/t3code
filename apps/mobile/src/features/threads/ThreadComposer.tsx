@@ -55,7 +55,11 @@ import {
 import { ControlPill } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
-import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
+import {
+  buildModelOptions,
+  groupByProvider,
+  resolveDispatchableModelSelection,
+} from "../../lib/modelOptions";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { RemoteClientConnectionState } from "../../lib/connection";
@@ -291,10 +295,14 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
+  const modelReadyForDispatch =
+    props.serverConfig !== null &&
+    resolveDispatchableModelSelection(props.serverConfig, props.selectedThread.modelSelection) !==
+      null;
   // Opening and presentation count as active so the composer stays expanded
   // while focus moves between its native editor and the settings picker.
   const isExpanded = isFocused || settingsSheetPresentation.isActive;
-  const canSend = hasContent;
+  const canSend = hasContent && (props.connectionState !== "connected" || modelReadyForDispatch);
 
   // Notify the parent from the derived value, not focus events: the parent
   // sizes the feed inset from this, and blur-during-sheet would otherwise
@@ -548,6 +556,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;
 
   const handleSend = useCallback(async () => {
+    if (props.connectionState === "connected" && !modelReadyForDispatch) return;
     const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
     if (inFlightThreadIdsRef.current.has(threadKey)) return;
     inFlightThreadIdsRef.current.add(threadKey);
@@ -569,7 +578,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       inFlightThreadIdsRef.current.delete(threadKey);
     }
   }, [
+    modelReadyForDispatch,
     onSendMessage,
+    props.connectionState,
     props.environmentId,
     props.environmentLabel,
     props.selectedThread.id,
@@ -882,7 +893,17 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   iconNode={
                     <ProviderIcon provider={currentModelOption?.providerDriver} size={16} />
                   }
-                  label={currentModelOption?.label ?? currentModelSelection.model}
+                  label={
+                    props.connectionState !== "connected" || modelReadyForDispatch
+                      ? // A stale selection heals to the catalog default at
+                        // dispatch, so show that healed model rather than the
+                        // obsolete stored slug the catalog no longer lists.
+                        (currentModelOption?.label ??
+                        resolveDispatchableModelSelection(props.serverConfig, currentModelSelection)
+                          ?.model ??
+                        currentModelSelection.model)
+                      : "Checking models…"
+                  }
                   maxWidth={152}
                   onPress={openSettings}
                 />

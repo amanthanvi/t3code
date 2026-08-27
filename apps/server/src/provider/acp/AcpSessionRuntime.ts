@@ -62,6 +62,7 @@ export interface AcpSpawnInput {
   readonly args: ReadonlyArray<string>;
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
+  readonly forceKillAfter?: Duration.Input;
 }
 
 export interface AcpSessionRuntimeOptions {
@@ -78,6 +79,22 @@ export interface AcpSessionRuntimeOptions {
   readonly authMethodId: string;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
+  /** Optional prompt-lifecycle instrumentation used by deterministic runtime tests. */
+  readonly beforePromptFiberRegistration?: Effect.Effect<void>;
+  /** Optional prompt-fiber exit instrumentation used by deterministic runtime tests. */
+  readonly onPromptRpcFiberExit?: Effect.Effect<void>;
+  /** Maximum time allowed for the ACP `session/cancel` transport write. */
+  readonly cancelTransportTimeout?: Duration.Input;
+  /** Optional cancellation-transport instrumentation used by deterministic runtime tests. */
+  readonly beforeCancelTransportWrite?: Effect.Effect<void>;
+  /**
+   * When set, cancellation waits for the active prompt RPC to settle after
+   * sending `session/cancel`. Providers that acknowledge cancellation through
+   * the prompt response can use this as a remote settlement barrier.
+   */
+  readonly cancelSettleTimeout?: Duration.Input;
+  /** Optional cancellation-lifecycle instrumentation used by deterministic runtime tests. */
+  readonly beforeCancelSettlementWait?: Effect.Effect<void>;
   readonly protocolLogging?: {
     readonly logIncoming?: boolean;
     readonly logOutgoing?: boolean;
@@ -200,6 +217,10 @@ export class AcpSessionRuntime extends Context.Service<
      */
     readonly prompt: (
       payload: Omit<EffectAcpSchema.PromptRequest, "sessionId">,
+      options?: {
+        /** Revalidated after this prompt acquires the runtime serialization permit. */
+        readonly shouldStart?: Effect.Effect<boolean>;
+      },
     ) => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
     /**
      * Sends a real ACP `session/cancel` notification for the active session.
@@ -300,6 +321,7 @@ export const make = (
     const configOptionsRef = yield* Ref.make(sessionConfigOptionsFromSetup(undefined));
     const startStateRef = yield* Ref.make<AcpStartState>({ _tag: "NotStarted" });
     const promptSerializationSemaphore = yield* Semaphore.make(1);
+    const promptGenerationRef = yield* Ref.make(0);
     const activePromptFiberRef = yield* Ref.make<
       Option.Option<Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>>
     >(Option.none());
@@ -346,6 +368,7 @@ export const make = (
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
           ...(options.spawn.cwd ? { cwd: options.spawn.cwd } : {}),
           ...(options.spawn.env ? { env: options.spawn.env, extendEnv: true } : {}),
+          ...(options.spawn.forceKillAfter ? { forceKillAfter: options.spawn.forceKillAfter } : {}),
           shell: spawnCommand.shell,
         }),
       )
@@ -723,61 +746,162 @@ export const make = (
       }),
       getModeState: Ref.get(modeStateRef),
       getConfigOptions: Ref.get(configOptionsRef),
-      prompt: (payload) =>
-        promptSerializationSemaphore.withPermit(
-          Effect.gen(function* () {
-            const started = yield* getStartedState;
-            yield* closeActiveAssistantSegment({
-              queue: eventQueue,
-              assistantSegmentRef,
-            });
-            const requestPayload = {
-              sessionId: started.sessionId,
-              ...payload,
-            } satisfies EffectAcpSchema.PromptRequest;
-            const cancelledResponse = {
-              stopReason: "cancelled",
-            } satisfies EffectAcpSchema.PromptResponse;
-            const promptRpcFiber = yield* runLoggedRequest(
-              "session/prompt",
-              requestPayload,
-              acp.agent.prompt(requestPayload),
-            ).pipe(Effect.forkIn(runtimeScope));
-            yield* Ref.set(activePromptFiberRef, Option.some(promptRpcFiber));
-            return yield* Fiber.join(promptRpcFiber).pipe(
-              Effect.catchCause((cause) =>
-                Cause.hasInterruptsOnly(cause)
-                  ? Effect.succeed(cancelledResponse)
-                  : Effect.failCause(cause),
-              ),
-              Effect.ensuring(
+      prompt: (payload, promptOptions) =>
+        Effect.gen(function* () {
+          const queuedGeneration = yield* Ref.get(promptGenerationRef);
+          return yield* promptSerializationSemaphore.withPermit(
+            Effect.gen(function* () {
+              const cancelledResponse = {
+                stopReason: "cancelled",
+              } satisfies EffectAcpSchema.PromptResponse;
+              const currentGeneration = yield* Ref.get(promptGenerationRef);
+              if (currentGeneration !== queuedGeneration) {
+                return cancelledResponse;
+              }
+              if (promptOptions?.shouldStart && !(yield* promptOptions.shouldStart)) {
+                return cancelledResponse;
+              }
+              const started = yield* getStartedState;
+              yield* closeActiveAssistantSegment({
+                queue: eventQueue,
+                assistantSegmentRef,
+              });
+              const requestPayload = {
+                sessionId: started.sessionId,
+                ...payload,
+              } satisfies EffectAcpSchema.PromptRequest;
+              return yield* Effect.uninterruptibleMask((restorePromptLifecycle) =>
                 Effect.gen(function* () {
-                  yield* Fiber.interrupt(promptRpcFiber).pipe(Effect.ignore);
-                  yield* Ref.set(activePromptFiberRef, Option.none());
+                  // The forked RPC must not reach the transport until it is
+                  // registered and the generation has been re-verified.
+                  // Otherwise a cancel landing between fork and registration
+                  // sees no active fiber, reports success, and the prompt's
+                  // wire write can still arrive at the agent after
+                  // `session/cancel`, leaving remote work no local turn owns.
+                  const releasePromptRpc = Deferred.makeUnsafe<void>();
+                  const promptRpcFiber = yield* Deferred.await(releasePromptRpc).pipe(
+                    Effect.andThen(
+                      runLoggedRequest(
+                        "session/prompt",
+                        requestPayload,
+                        acp.agent.prompt(requestPayload),
+                      ),
+                    ),
+                    Effect.ensuring(options.onPromptRpcFiberExit ?? Effect.void),
+                    Effect.forkIn(runtimeScope),
+                  );
+                  return yield* Effect.gen(function* () {
+                    // The test-only gate remains interruptible, but its exit is
+                    // already bracketed by the child cleanup below. Production
+                    // registration stays masked between the fork and prompt join.
+                    yield* restorePromptLifecycle(
+                      options.beforePromptFiberRegistration ?? Effect.void,
+                    );
+                    yield* Ref.set(activePromptFiberRef, Option.some(promptRpcFiber));
+                    // Cancellation can land after the generation check above but
+                    // before the active fiber is registered. Rechecking after the
+                    // registration closes that window: cancellation either sees
+                    // this fiber or this prompt observes the newer generation and
+                    // never releases the RPC toward the transport.
+                    const registeredGeneration = yield* Ref.get(promptGenerationRef);
+                    if (registeredGeneration !== queuedGeneration) {
+                      return cancelledResponse;
+                    }
+                    yield* Deferred.succeed(releasePromptRpc, undefined);
+                    return yield* restorePromptLifecycle(Fiber.join(promptRpcFiber)).pipe(
+                      Effect.catchCause((cause) =>
+                        Cause.hasInterruptsOnly(cause)
+                          ? Effect.succeed(cancelledResponse)
+                          : Effect.failCause(cause),
+                      ),
+                    );
+                  }).pipe(
+                    Effect.ensuring(
+                      Effect.gen(function* () {
+                        yield* Fiber.interrupt(promptRpcFiber).pipe(Effect.ignore);
+                        yield* Ref.set(activePromptFiberRef, Option.none());
+                      }),
+                    ),
+                    Effect.tap(() =>
+                      closeActiveAssistantSegment({
+                        queue: eventQueue,
+                        assistantSegmentRef,
+                      }),
+                    ),
+                  );
                 }),
-              ),
-              Effect.tap(() =>
-                closeActiveAssistantSegment({
-                  queue: eventQueue,
-                  assistantSegmentRef,
-                }),
-              ),
-            );
-          }),
-        ),
-      cancel: getStartedState.pipe(
-        Effect.flatMap((started) =>
-          Effect.gen(function* () {
-            const activePromptFiber = yield* Ref.get(activePromptFiberRef);
-            if (Option.isSome(activePromptFiber)) {
-              yield* Fiber.interrupt(activePromptFiber.value).pipe(Effect.ignore);
-            }
-            yield* acp.agent
-              .cancel({ sessionId: started.sessionId })
-              .pipe(Effect.ignore, Effect.forkIn(runtimeScope));
-          }),
-        ),
-      ),
+              );
+            }),
+          );
+        }),
+      cancel: Effect.gen(function* () {
+        const started = yield* getStartedState;
+        const cancelTransport = Effect.gen(function* () {
+          yield* options.beforeCancelTransportWrite ?? Effect.void;
+          yield* acp.agent.cancel({ sessionId: started.sessionId });
+        });
+        const confirmedCancellation =
+          options.cancelTransportTimeout !== undefined || options.cancelSettleTimeout !== undefined;
+        if (!confirmedCancellation) {
+          // Fire-and-forget semantics (providers that configured neither
+          // cancellation bound): cancel the local prompt immediately and send
+          // the notification in the background, so a stuck transport can
+          // never block local cancellation.
+          yield* Ref.update(promptGenerationRef, (generation) => generation + 1);
+          const legacyActivePromptFiber = yield* Ref.get(activePromptFiberRef);
+          if (Option.isSome(legacyActivePromptFiber)) {
+            yield* Fiber.interrupt(legacyActivePromptFiber.value).pipe(Effect.ignore);
+          }
+          yield* cancelTransport.pipe(Effect.ignore, Effect.forkIn(runtimeScope));
+          return;
+        }
+        // Confirm-and-settle semantics: the cancellation notification must be
+        // written before the local prompt is released. If the transport write
+        // fails, callers must keep the session non-ready because the remote
+        // agent may still be working.
+        if (options.cancelTransportTimeout === undefined) {
+          yield* cancelTransport;
+        } else {
+          const transportResult = yield* cancelTransport.pipe(
+            Effect.timeoutOption(options.cancelTransportTimeout),
+          );
+          if (Option.isNone(transportResult)) {
+            return yield* new EffectAcpErrors.AcpTransportError({
+              operation: "call-rpc",
+              method: "session/cancel",
+              detail: `The ACP cancellation transport did not complete within ${Duration.format(
+                Duration.fromInputUnsafe(options.cancelTransportTimeout),
+              )}.`,
+              cause: "ACP cancellation transport timed out",
+            });
+          }
+        }
+        // Invalidate prompts already waiting on the serialization permit before
+        // interrupting the active RPC. Callers may additionally provide a
+        // shouldStart guard for work prepared concurrently with cancellation.
+        yield* Ref.update(promptGenerationRef, (generation) => generation + 1);
+        const activePromptFiber = yield* Ref.get(activePromptFiberRef);
+        if (Option.isSome(activePromptFiber)) {
+          if (options.cancelSettleTimeout === undefined) {
+            yield* Fiber.interrupt(activePromptFiber.value).pipe(Effect.ignore);
+            return;
+          }
+          yield* options.beforeCancelSettlementWait ?? Effect.void;
+          const settled = yield* Fiber.await(activePromptFiber.value).pipe(
+            Effect.timeoutOption(options.cancelSettleTimeout),
+          );
+          if (Option.isSome(settled)) return;
+          yield* Fiber.interrupt(activePromptFiber.value).pipe(Effect.ignore);
+          return yield* new EffectAcpErrors.AcpTransportError({
+            operation: "call-rpc",
+            method: "session/cancel",
+            detail: `The active ACP prompt did not settle within ${Duration.format(
+              Duration.fromInputUnsafe(options.cancelSettleTimeout),
+            )} after cancellation.`,
+            cause: "ACP prompt cancellation settlement timed out",
+          });
+        }
+      }),
       setMode: (modeId) =>
         Ref.get(modeStateRef).pipe(
           Effect.flatMap((modeState) => {

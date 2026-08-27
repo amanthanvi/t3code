@@ -1,7 +1,9 @@
-import type {
-  ModelCapabilities,
-  ModelSelection,
-  ServerConfig as T3ServerConfig,
+import {
+  modelSelectionRequiresCatalogHealing,
+  providerHasAuthoritativeModelCatalog,
+  type ModelCapabilities,
+  type ModelSelection,
+  type ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
 import {
   buildProviderOptionSelectionsFromDescriptors,
@@ -76,12 +78,44 @@ export function resolveSelectableModelSelection(
   const provider = config.providers.find(
     (candidate) => candidate.instanceId === selection.instanceId,
   );
-  return provider &&
-    provider.enabled &&
-    provider.installed &&
-    provider.auth.status !== "unauthenticated"
-    ? selection
-    : null;
+  if (
+    !provider ||
+    !provider.enabled ||
+    !provider.installed ||
+    provider.auth.status === "unauthenticated"
+  ) {
+    return null;
+  }
+  if (modelSelectionRequiresCatalogHealing(provider, selection.model)) {
+    const fallback =
+      provider.models.find((model) => model.isDefault === true) ?? provider.models[0];
+    return fallback ? { instanceId: provider.instanceId, model: fallback.slug } : null;
+  }
+  return selection;
+}
+
+/**
+ * An authoritative model list is trustworthy only after its command-backed
+ * catalog arrives. Keep the stored routing identity while that provider is
+ * checking, but do not let a prompt dispatch without a ready, nonempty
+ * catalog.
+ */
+export function resolveDispatchableModelSelection(
+  config: T3ServerConfig | null | undefined,
+  selection: ModelSelection | null,
+): ModelSelection | null {
+  const selectable = resolveSelectableModelSelection(config, selection);
+  if (!selectable || !config) {
+    return null;
+  }
+  const provider = config.providers.find(
+    (candidate) => candidate.instanceId === selectable.instanceId,
+  );
+  return provider !== undefined &&
+    providerHasAuthoritativeModelCatalog(provider) &&
+    (provider.status !== "ready" || provider.models.length === 0)
+    ? null
+    : selectable;
 }
 
 /**
@@ -148,19 +182,30 @@ export function buildModelOptions(
         selection: normalizeSelectionOptions(fallbackModelSelection, existing.capabilities),
       });
     } else {
-      const providerLabel = fallbackModelSelection.instanceId;
-      options.set(key, {
-        key,
-        label: fallbackModelSelection.model,
-        subtitle: providerLabel,
-        providerKey: fallbackModelSelection.instanceId,
-        providerLabel,
-        providerDriver: fallbackModelSelection.instanceId,
-        isDefault: false,
-        isLegacy: false,
-        capabilities: null,
-        selection: fallbackModelSelection,
-      });
+      const liveProvider = config?.providers.find(
+        (provider) => provider.instanceId === fallbackModelSelection.instanceId,
+      );
+      // Never synthesize a ghost row for a provider whose nonempty catalog is
+      // authoritative; the fallback slug could not be dispatched anyway.
+      if (
+        liveProvider === undefined ||
+        !providerHasAuthoritativeModelCatalog(liveProvider) ||
+        liveProvider.models.length === 0
+      ) {
+        const providerLabel = fallbackModelSelection.instanceId;
+        options.set(key, {
+          key,
+          label: fallbackModelSelection.model,
+          subtitle: providerLabel,
+          providerKey: fallbackModelSelection.instanceId,
+          providerLabel,
+          providerDriver: fallbackModelSelection.instanceId,
+          isDefault: false,
+          isLegacy: false,
+          capabilities: null,
+          selection: fallbackModelSelection,
+        });
+      }
     }
   }
 

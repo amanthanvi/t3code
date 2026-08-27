@@ -6,6 +6,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  type ServerConfig,
 } from "@t3tools/contracts";
 import { AtomRegistry } from "effect/unstable/reactivity";
 
@@ -17,6 +18,7 @@ import {
   modelSelectionsEqual,
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxFailureAction,
+  resolveQueuedThreadDispatchModelSelection,
   resolveQueuedThreadSettings,
   shouldRetryThreadOutboxDelivery,
   threadOutboxRetryDelayMs,
@@ -124,6 +126,64 @@ describe("thread outbox", () => {
         options: [{ id: "reasoningEffort", value: "xhigh" }],
       }),
     ).toBe(false);
+  });
+
+  it("keeps queued Kilo work parked until reconnect publishes its model catalog", () => {
+    const message = {
+      ...queuedMessage({
+        messageId: "message-kilo",
+        createdAt: "2026-06-08T10:00:01.000Z",
+      }),
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("kilo"),
+        model: "kilo/stale",
+      },
+      creation: {
+        projectId: ProjectId.make("project-1"),
+        workspaceMode: "local",
+        branch: null,
+        worktreePath: null,
+      },
+    } satisfies QueuedThreadMessage;
+    const checking = {
+      providers: [
+        {
+          instanceId: "kilo",
+          driver: "kilo",
+          enabled: true,
+          installed: true,
+          status: "warning",
+          hasAuthoritativeModelCatalog: true,
+          auth: { status: "authenticated" },
+          models: [],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    expect(resolveQueuedThreadDispatchModelSelection(checking, message, undefined)).toBeNull();
+
+    const ready = {
+      ...checking,
+      providers: [
+        {
+          ...checking.providers[0],
+          status: "ready",
+          models: [
+            {
+              slug: "kilo/live",
+              name: "Kilo Live",
+              isCustom: false,
+              isDefault: true,
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+    expect(resolveQueuedThreadDispatchModelSelection(ready, message, undefined)).toEqual({
+      instanceId: "kilo",
+      model: "kilo/live",
+    });
   });
 
   it("backs off queued delivery retries and caps them at sixteen seconds", () => {

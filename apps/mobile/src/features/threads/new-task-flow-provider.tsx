@@ -33,6 +33,7 @@ import {
   buildModelOptions,
   groupByProvider,
   resolveDefaultableModelSelection,
+  resolveDispatchableModelSelection,
   resolveSelectableModelSelection,
 } from "../../lib/modelOptions";
 import { scopedProjectKey } from "../../lib/scopedEntities";
@@ -152,6 +153,7 @@ type NewTaskFlowContextValue = {
   readonly selectedProject: EnvironmentProject | null;
   readonly modelOptions: ReadonlyArray<ModelOption>;
   readonly selectedModel: ModelSelection | null;
+  readonly selectedModelReadyForDispatch: boolean;
   readonly selectedModelOption: ModelOption | null;
   readonly selectedProviderSkills: ReadonlyArray<ServerProviderSkill>;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
@@ -436,6 +438,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const selectedModelKey = selectedModel
     ? `${selectedModel.instanceId}:${selectedModel.model}`
     : null;
+  const selectedModelReadyForDispatch =
+    selectedModel !== null &&
+    resolveDispatchableModelSelection(selectedEnvironmentServerConfig, selectedModel) !== null;
 
   const selectedModelOption =
     modelOptions.find(
@@ -1027,6 +1032,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedProject,
       modelOptions,
       selectedModel,
+      selectedModelReadyForDispatch,
       selectedModelOption,
       selectedProviderSkills,
       providerGroups,
@@ -1087,6 +1093,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       hasMoreBranches,
       selectedEnvironmentId,
       selectedModel,
+      selectedModelReadyForDispatch,
       selectedModelKey,
       selectedModelOption,
       selectedProjectDraftKey,
