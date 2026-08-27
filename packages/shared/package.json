@@ -230,6 +230,10 @@
     "./providerCapabilities": {
       "types": "./src/providerCapabilities.ts",
       "import": "./src/providerCapabilities.ts"
+    },
+    "./claudeCompaction": {
+      "types": "./src/claudeCompaction.ts",
+      "import": "./src/claudeCompaction.ts"
     }
   },
   "scripts": {

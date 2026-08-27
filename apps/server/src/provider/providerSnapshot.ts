@@ -290,8 +290,9 @@ export function buildServerProvider(input: {
 
 export const collectStreamAsString = <E>(
   stream: Stream.Stream<Uint8Array, E>,
+  options?: { readonly maxBytes?: number | undefined },
 ): Effect.Effect<string, E> =>
-  collectUint8StreamText({ stream }).pipe(Effect.map((collected) => collected.text));
+  collectUint8StreamText({ stream, ...options }).pipe(Effect.map((collected) => collected.text));
 
 export const VERSION_PROBE_TIMEOUT_MS = 4_000;
 
