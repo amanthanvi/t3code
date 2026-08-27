@@ -9,12 +9,16 @@ import type {
   ServerProviderModel,
   ServerProviderState,
 } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { normalizeCustomModelSlug } from "@t3tools/shared/model";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { isWindowsCommandNotFound } from "../processRunner.ts";
 import { createProviderVersionAdvisory } from "./providerMaintenance.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
@@ -63,6 +67,28 @@ export interface ServerProviderPresentation {
 }
 
 export type ServerProviderDraft = Omit<ServerProvider, "instanceId" | "driver">;
+
+/**
+ * Stamp a driver-agnostic snapshot draft with the identity of the instance
+ * that produced it. Every driver applies this to its probe results before
+ * publishing, so the identity fields live in exactly one place.
+ */
+export const withProviderInstanceIdentity =
+  (input: {
+    readonly driver: ProviderDriverKind;
+    readonly instanceId: ServerProvider["instanceId"];
+    readonly displayName: string | undefined;
+    readonly accentColor: string | undefined;
+    readonly continuationGroupKey: string;
+  }) =>
+  (snapshot: ServerProviderDraft): ServerProvider => ({
+    ...snapshot,
+    instanceId: input.instanceId,
+    driver: input.driver,
+    ...(input.displayName ? { displayName: input.displayName } : {}),
+    ...(input.accentColor ? { accentColor: input.accentColor } : {}),
+    continuation: { groupKey: input.continuationGroupKey },
+  });
 
 export function nonEmptyTrimmed(value: string | undefined): string | undefined {
   if (!value) return undefined;
@@ -266,3 +292,114 @@ export const collectStreamAsString = <E>(
   stream: Stream.Stream<Uint8Array, E>,
 ): Effect.Effect<string, E> =>
   collectUint8StreamText({ stream }).pipe(Effect.map((collected) => collected.text));
+
+export const VERSION_PROBE_TIMEOUT_MS = 4_000;
+
+export const runCliVersionCommand = Effect.fn("runCliVersionCommand")(function* (input: {
+  readonly binaryPath: string;
+  readonly environment: NodeJS.ProcessEnv;
+  readonly forceKillAfter?: Duration.Input | undefined;
+}) {
+  const spawnCommand = yield* resolveSpawnCommand(input.binaryPath, ["--version"], {
+    env: input.environment,
+  });
+  return yield* spawnAndCollect(
+    input.binaryPath,
+    ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+      env: input.environment,
+      ...(input.forceKillAfter !== undefined ? { forceKillAfter: input.forceKillAfter } : {}),
+      shell: spawnCommand.shell,
+    }),
+  );
+});
+
+export type CliVersionProbeOutcome =
+  | { readonly kind: "unavailable"; readonly draft: ServerProviderDraft }
+  | { readonly kind: "ok"; readonly version: string | null };
+
+/**
+ * The health-check stages every CLI provider shares: disabled
+ * short-circuit, version probe with timeout, missing-binary detection, and
+ * non-zero exit handling. Providers run their own model/auth discovery
+ * after an `"ok"` outcome and build the final snapshot themselves.
+ */
+export const probeCliProviderVersion = Effect.fn("probeCliProviderVersion")(function* <
+  E extends { readonly _tag: string },
+  R,
+>(input: {
+  readonly presentation: ServerProviderPresentation;
+  readonly enabled: boolean;
+  readonly checkedAt: string;
+  readonly fallbackModels: ReadonlyArray<ServerProviderModel>;
+  readonly defaultBinary: string;
+  /** Appended to the standard missing-binary message, e.g. an install hint. */
+  readonly notInstalledHint?: string | undefined;
+  readonly runVersionCommand: Effect.Effect<CommandResult, E, R>;
+}) {
+  const { presentation, enabled, checkedAt, fallbackModels } = input;
+  const label = `${presentation.displayName} CLI`;
+  const unavailable = (probe: ProviderProbeResult): CliVersionProbeOutcome => ({
+    kind: "unavailable",
+    draft: buildServerProvider({ presentation, enabled, checkedAt, models: fallbackModels, probe }),
+  });
+
+  if (!enabled) {
+    return unavailable({
+      installed: false,
+      version: null,
+      status: "warning",
+      auth: { status: "unknown" },
+      message: `${presentation.displayName} is disabled in T3 Code settings.`,
+    });
+  }
+
+  const versionResult = yield* input.runVersionCommand.pipe(
+    Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS),
+    Effect.result,
+  );
+
+  if (Result.isFailure(versionResult)) {
+    const error = versionResult.failure;
+    yield* Effect.logWarning(`${label} health check failed.`, { errorTag: error._tag });
+    return unavailable({
+      installed: !isCommandMissingCause(error),
+      version: null,
+      status: "error",
+      auth: { status: "unknown" },
+      message: isCommandMissingCause(error)
+        ? `${label} (\`${input.defaultBinary}\`) is not installed or not on PATH.${
+            input.notInstalledHint ? ` ${input.notInstalledHint}` : ""
+          }`
+        : `Failed to execute ${label} health check.`,
+    });
+  }
+
+  if (Option.isNone(versionResult.success)) {
+    return unavailable({
+      installed: true,
+      version: null,
+      status: "error",
+      auth: { status: "unknown" },
+      message: `${label} is installed but timed out while running \`${input.defaultBinary} --version\`.`,
+    });
+  }
+
+  const versionOutput = versionResult.success.value;
+  const version = parseGenericCliVersion(`${versionOutput.stdout}\n${versionOutput.stderr}`);
+  if (versionOutput.code !== 0) {
+    yield* Effect.logWarning(`${label} version probe exited with a non-zero status.`, {
+      exitCode: versionOutput.code,
+      stdoutLength: versionOutput.stdout.length,
+      stderrLength: versionOutput.stderr.length,
+    });
+    return unavailable({
+      installed: true,
+      version,
+      status: "error",
+      auth: { status: "unknown" },
+      message: `${label} is installed but failed to run.`,
+    });
+  }
+
+  return { kind: "ok", version } satisfies CliVersionProbeOutcome;
+});

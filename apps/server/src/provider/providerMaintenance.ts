@@ -3,6 +3,7 @@ import {
   type ServerProvider,
   type ServerProviderVersionAdvisory,
 } from "@t3tools/contracts";
+import { causeErrorTag } from "@t3tools/shared/observability";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
@@ -516,3 +517,32 @@ export const enrichProviderSnapshotWithVersionAdvisory = Effect.fn(
     }),
   };
 });
+
+/**
+ * Enrich a published snapshot with the version advisory and republish it.
+ * Failures are logged and swallowed: advisory enrichment is cosmetic and
+ * must not tear down the provider's snapshot loop.
+ */
+export const enrichProviderSnapshotAndPublish = (input: {
+  readonly snapshot: ServerProvider;
+  readonly maintenanceCapabilities: ProviderMaintenanceCapabilities;
+  readonly enableProviderUpdateChecks?: boolean | undefined;
+  readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
+  readonly stampIdentity?: ((snapshot: ServerProvider) => ServerProvider) | undefined;
+  readonly httpClient: HttpClient.HttpClient;
+}): Effect.Effect<void> => {
+  const stampIdentity = input.stampIdentity ?? ((value: ServerProvider) => value);
+  return enrichProviderSnapshotWithVersionAdvisory(input.snapshot, input.maintenanceCapabilities, {
+    enableProviderUpdateChecks: input.enableProviderUpdateChecks,
+  }).pipe(
+    Effect.provideService(HttpClient.HttpClient, input.httpClient),
+    Effect.flatMap((enrichedSnapshot) => input.publishSnapshot(stampIdentity(enrichedSnapshot))),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Provider version advisory enrichment failed", {
+        provider: input.snapshot.driver,
+        errorTag: causeErrorTag(cause),
+      }),
+    ),
+    Effect.asVoid,
+  );
+};

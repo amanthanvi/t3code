@@ -1,13 +1,9 @@
 import { type ClineSettings } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import type * as Crypto from "effect/Crypto";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
-import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Scope from "effect/Scope";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import type * as Scope from "effect/Scope";
+import type * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import type * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
@@ -48,57 +44,25 @@ export function buildClineAcpSpawnInput(
   };
 }
 
-export const makeClineAcpRuntime = Effect.fn("makeClineAcpRuntime")(function* (
+export const makeClineAcpRuntime = (
   input: ClineAcpRuntimeInput,
-): Effect.fn.Return<
+): Effect.Effect<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
   Crypto.Crypto | Scope.Scope
-> {
-  const acpContext = yield* Layer.build(
-    AcpSessionRuntime.layer({
-      ...input,
-      // Cline returns its model config only in the authoritative load response;
-      // replay notifications cannot safely populate the synthetic idle fallback.
-      sessionLoadReplayIdleFallback: false,
-      spawn: buildClineAcpSpawnInput(
-        input.clineSettings,
-        input.cwd,
-        input.environment,
-        input.forceKillAfter,
-      ),
-    }).pipe(
-      Layer.provide(
-        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),
-      ),
+> =>
+  AcpSessionRuntime.makeAcpRuntime({
+    ...input,
+    // Cline returns its model config only in the authoritative load response;
+    // replay notifications cannot safely populate the synthetic idle fallback.
+    sessionLoadReplayIdleFallback: false,
+    spawn: buildClineAcpSpawnInput(
+      input.clineSettings,
+      input.cwd,
+      input.environment,
+      input.forceKillAfter,
     ),
-  );
-  return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
-    Effect.provide(acpContext),
-  );
-});
-
-export const startClineAcpRuntimeWithTimeout = Effect.fn("startClineAcpRuntimeWithTimeout")(
-  function* (input: {
-    readonly runtime: AcpSessionRuntime.AcpSessionRuntime["Service"];
-    readonly timeout: Duration.Input;
-    readonly forceKillAfter: Duration.Input;
-  }) {
-    // An unresponsive JSON-RPC request can make interruption wait forever.
-    // Observe detached startup as data so the timeout path can terminate the
-    // exact owned child before the surrounding runtime scope is closed.
-    const startFiber = yield* input.runtime.start().pipe(Effect.forkDetach);
-    const startedExit = yield* Fiber.await(startFiber).pipe(Effect.timeoutOption(input.timeout));
-    if (Option.isNone(startedExit)) {
-      yield* input.runtime.terminate(input.forceKillAfter).pipe(Effect.ignore);
-      return Option.none();
-    }
-    if (Exit.isFailure(startedExit.value)) {
-      return yield* Effect.failCause(startedExit.value.cause);
-    }
-    return Option.some(startedExit.value.value);
-  },
-);
+  });
 
 type ClineModelSelectOption = Extract<EffectAcpSchema.SessionConfigOption, { type: "select" }>;
 
@@ -167,7 +131,7 @@ export const applyClineAcpModelSelection = Effect.fn("applyClineAcpModelSelectio
   >;
   readonly requestedModelId: string | null | undefined;
   readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
-}): Effect.fn.Return<string | void, E> {
+}): Effect.fn.Return<void, E> {
   const requested = input.requestedModelId?.trim();
   if (!requested) {
     return;
@@ -175,14 +139,13 @@ export const applyClineAcpModelSelection = Effect.fn("applyClineAcpModelSelectio
   const configOptions = yield* input.runtime.getConfigOptions;
   const option = findClineModelConfigOptionIn(configOptions);
   if (!option) {
-    return undefined;
+    return;
   }
   if (option.options.every((entry) => !("value" in entry) && entry.options.length === 0)) {
-    return undefined;
+    return;
   }
   if (option.currentValue.trim() === requested) {
-    return requested;
+    return;
   }
   yield* input.runtime.setConfigOption(option.id, requested).pipe(Effect.mapError(input.mapError));
-  return requested;
 });

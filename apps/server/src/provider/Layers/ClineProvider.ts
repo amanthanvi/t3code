@@ -1,7 +1,6 @@
 import {
   type ClineSettings,
   type ModelCapabilities,
-  type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import { causeErrorTag } from "@t3tools/shared/observability";
@@ -11,31 +10,23 @@ import * as DateTime from "effect/DateTime";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import * as EffectAcpErrors from "effect-acp/errors";
 import { createModelCapabilities } from "@t3tools/shared/model";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import {
   buildServerProvider,
-  isCommandMissingCause,
-  parseGenericCliVersion,
-  spawnAndCollect,
+  probeCliProviderVersion,
+  runCliVersionCommand,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
-import {
-  enrichProviderSnapshotWithVersionAdvisory,
-  type ProviderMaintenanceCapabilities,
-} from "../providerMaintenance.ts";
 import {
   CLINE_PROCESS_FORCE_KILL_AFTER,
   clineModelsFromSessionConfigOptions,
   makeClineAcpRuntime,
-  startClineAcpRuntimeWithTimeout,
 } from "../acp/ClineAcpSupport.ts";
+import { startAcpRuntimeWithTimeout as startClineAcpRuntimeWithTimeout } from "../acp/AcpSessionRuntime.ts";
 
 const CLINE_PRESENTATION = {
   displayName: "Cline",
@@ -49,7 +40,6 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
 
-const VERSION_PROBE_TIMEOUT_MS = 4_000;
 const CLINE_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
 
 export const buildInitialClineProviderSnapshot = Effect.fn("buildInitialClineProviderSnapshot")(
@@ -157,24 +147,6 @@ const discoverClineModelsViaAcp = Effect.fn("discoverClineModelsViaAcp")(functio
   );
 });
 
-const runClineVersionCommand = Effect.fn("runClineVersionCommand")(function* (
-  clineSettings: ClineSettings,
-  environment: NodeJS.ProcessEnv = process.env,
-) {
-  const command = clineSettings.binaryPath || "cline";
-  const spawnCommand = yield* resolveSpawnCommand(command, ["--version"], {
-    env: environment,
-  });
-  return yield* spawnAndCollect(
-    command,
-    ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-      env: environment,
-      forceKillAfter: CLINE_PROCESS_FORCE_KILL_AFTER,
-      shell: spawnCommand.shell,
-    }),
-  );
-});
-
 export const checkClineProviderStatus = Effect.fn("checkClineProviderStatus")(function* (
   clineSettings: ClineSettings,
   environment: NodeJS.ProcessEnv = process.env,
@@ -187,87 +159,23 @@ export const checkClineProviderStatus = Effect.fn("checkClineProviderStatus")(fu
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels: ReadonlyArray<ServerProviderModel> = [];
 
-  if (!clineSettings.enabled) {
-    return buildServerProvider({
-      presentation: CLINE_PRESENTATION,
-      enabled: false,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: false,
-        version: null,
-        status: "warning",
-        auth: { status: "unknown" },
-        message: "Cline is disabled in T3 Code settings.",
-      },
-    });
+  const versionProbe = yield* probeCliProviderVersion({
+    presentation: CLINE_PRESENTATION,
+    enabled: clineSettings.enabled,
+    checkedAt,
+    fallbackModels,
+    defaultBinary: "cline",
+    notInstalledHint: "Install it with `npm install -g cline`.",
+    runVersionCommand: runCliVersionCommand({
+      binaryPath: clineSettings.binaryPath || "cline",
+      environment,
+      forceKillAfter: CLINE_PROCESS_FORCE_KILL_AFTER,
+    }),
+  });
+  if (versionProbe.kind === "unavailable") {
+    return versionProbe.draft;
   }
-
-  const versionResult = yield* runClineVersionCommand(clineSettings, environment).pipe(
-    Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS),
-    Effect.result,
-  );
-
-  if (Result.isFailure(versionResult)) {
-    const error = versionResult.failure;
-    yield* Effect.logWarning("Cline CLI health check failed.", {
-      errorTag: error._tag,
-    });
-    return buildServerProvider({
-      presentation: CLINE_PRESENTATION,
-      enabled: clineSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: !isCommandMissingCause(error),
-        version: null,
-        status: "error",
-        auth: { status: "unknown" },
-        message: isCommandMissingCause(error)
-          ? "Cline CLI (`cline`) is not installed or not on PATH. Install it with `npm install -g cline`."
-          : "Failed to execute Cline CLI health check.",
-      },
-    });
-  }
-
-  if (Option.isNone(versionResult.success)) {
-    return buildServerProvider({
-      presentation: CLINE_PRESENTATION,
-      enabled: clineSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version: null,
-        status: "error",
-        auth: { status: "unknown" },
-        message: "Cline CLI is installed but timed out while running `cline --version`.",
-      },
-    });
-  }
-
-  const versionOutput = versionResult.success.value;
-  const version = parseGenericCliVersion(`${versionOutput.stdout}\n${versionOutput.stderr}`);
-  if (versionOutput.code !== 0) {
-    yield* Effect.logWarning("Cline CLI version probe exited with a non-zero status.", {
-      exitCode: versionOutput.code,
-      stdoutLength: versionOutput.stdout.length,
-      stderrLength: versionOutput.stderr.length,
-    });
-    return buildServerProvider({
-      presentation: CLINE_PRESENTATION,
-      enabled: clineSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version,
-        status: "error",
-        auth: { status: "unknown" },
-        message: "Cline CLI is installed but failed to run.",
-      },
-    });
-  }
+  const version = versionProbe.version;
 
   const outcome = yield* discoverClineModelsViaAcp(
     clineSettings,
@@ -341,26 +249,3 @@ export const checkClineProviderStatus = Effect.fn("checkClineProviderStatus")(fu
     },
   });
 });
-
-export const enrichClineSnapshot = (input: {
-  readonly snapshot: ServerProvider;
-  readonly maintenanceCapabilities: ProviderMaintenanceCapabilities;
-  readonly enableProviderUpdateChecks?: boolean;
-  readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
-  readonly httpClient: HttpClient.HttpClient;
-}): Effect.Effect<void> => {
-  const { snapshot, publishSnapshot } = input;
-
-  return enrichProviderSnapshotWithVersionAdvisory(snapshot, input.maintenanceCapabilities, {
-    enableProviderUpdateChecks: input.enableProviderUpdateChecks,
-  }).pipe(
-    Effect.provideService(HttpClient.HttpClient, input.httpClient),
-    Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
-    Effect.catchCause((cause) =>
-      Effect.logWarning("Cline version advisory enrichment failed", {
-        errorTag: causeErrorTag(cause),
-      }),
-    ),
-    Effect.asVoid,
-  );
-};

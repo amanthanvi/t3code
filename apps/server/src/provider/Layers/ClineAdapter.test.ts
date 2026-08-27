@@ -26,11 +26,8 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
-import {
-  type ClineAdapterLiveOptions,
-  makeClineAdapter,
-  makeClineThreadLockPool,
-} from "./ClineAdapter.ts";
+import { makeKeyedLockPool } from "../acp/AcpKeyedLockPool.ts";
+import { type ClineAdapterLiveOptions, makeClineAdapter } from "./ClineAdapter.ts";
 const decodeClineSettings = Schema.decodeSync(ClineSettings);
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -68,18 +65,12 @@ const clineAdapterTestLayer = ServerConfig.layerTest(process.cwd(), {
 
 const makeTestAdapter = (
   binaryPath: string,
-  options?: Pick<
-    ClineAdapterLiveOptions,
-    | "afterPromptSettlementDecision"
-    | "beforePromptSerialization"
-    | "beforeTurnReservation"
-    | "sessionStartTimeout"
-  >,
+  options?: Pick<ClineAdapterLiveOptions, "sessionStartTimeout" | "testHooks">,
 ) => makeClineAdapter(decodeClineSettings({ binaryPath }), options).pipe(Effect.orDie);
 
-it.effect("releases Cline thread locks after serialized work and thread churn", () =>
+it.effect("releases ACP thread locks after serialized work and thread churn", () =>
   Effect.gen(function* () {
-    const locks = yield* makeClineThreadLockPool();
+    const locks = yield* makeKeyedLockPool();
     const active = yield* Ref.make(0);
     const maximumActive = yield* Ref.make(0);
     const criticalSection = Effect.gen(function* () {
@@ -205,15 +196,17 @@ it.layer(clineAdapterTestLayer)("ClineAdapterLive", (it) => {
       const secondAdmissionReached = yield* Deferred.make<void>();
       const admissionCount = yield* Ref.make(0);
       const adapter = yield* makeTestAdapter(wrapperPath, {
-        beforePromptSerialization: Ref.updateAndGet(admissionCount, (count) => count + 1).pipe(
-          Effect.flatMap((count) =>
-            count === 1
-              ? Deferred.succeed(firstAdmissionReached, undefined).pipe(
-                  Effect.andThen(Deferred.await(secondAdmissionReached)),
-                )
-              : Deferred.succeed(secondAdmissionReached, undefined),
+        testHooks: {
+          beforePromptSerialization: Ref.updateAndGet(admissionCount, (count) => count + 1).pipe(
+            Effect.flatMap((count) =>
+              count === 1
+                ? Deferred.succeed(firstAdmissionReached, undefined).pipe(
+                    Effect.andThen(Deferred.await(secondAdmissionReached)),
+                  )
+                : Deferred.succeed(secondAdmissionReached, undefined),
+            ),
           ),
-        ),
+        },
       });
       const runtimeEvents: ProviderRuntimeEvent[] = [];
       const turnCompleted = yield* Deferred.make<void>();
@@ -305,20 +298,25 @@ it.layer(clineAdapterTestLayer)("ClineAdapterLive", (it) => {
       const settlementCount = yield* Ref.make(0);
       const reservationCount = yield* Ref.make(0);
       const adapter = yield* makeTestAdapter(wrapperPath, {
-        beforeTurnReservation: Ref.updateAndGet(reservationCount, (count) => count + 1).pipe(
-          Effect.flatMap((count) =>
-            count === 2 ? Deferred.succeed(secondReservationAttempted, undefined) : Effect.void,
+        testHooks: {
+          beforeTurnReservation: Ref.updateAndGet(reservationCount, (count) => count + 1).pipe(
+            Effect.flatMap((count) =>
+              count === 2 ? Deferred.succeed(secondReservationAttempted, undefined) : Effect.void,
+            ),
           ),
-        ),
-        afterPromptSettlementDecision: Ref.updateAndGet(settlementCount, (count) => count + 1).pipe(
-          Effect.flatMap((count) =>
-            count === 1
-              ? Deferred.succeed(firstSettlementDecided, undefined).pipe(
-                  Effect.andThen(Deferred.await(secondReservationAttempted)),
-                )
-              : Effect.void,
+          afterPromptSettlementDecision: Ref.updateAndGet(
+            settlementCount,
+            (count) => count + 1,
+          ).pipe(
+            Effect.flatMap((count) =>
+              count === 1
+                ? Deferred.succeed(firstSettlementDecided, undefined).pipe(
+                    Effect.andThen(Deferred.await(secondReservationAttempted)),
+                  )
+                : Effect.void,
+            ),
           ),
-        ),
+        },
       });
       const runtimeEvents: ProviderRuntimeEvent[] = [];
       const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
@@ -1018,14 +1016,16 @@ it.layer(clineAdapterTestLayer)("ClineAdapterLive", (it) => {
       const promptAdmissionCount = yield* Ref.make(0);
       const queuedPromptReached = yield* Deferred.make<void>();
       const adapter = yield* makeTestAdapter(wrapperPath, {
-        beforePromptSerialization: Ref.updateAndGet(
-          promptAdmissionCount,
-          (count) => count + 1,
-        ).pipe(
-          Effect.flatMap((count) =>
-            count === 2 ? Deferred.succeed(queuedPromptReached, undefined) : Effect.void,
+        testHooks: {
+          beforePromptSerialization: Ref.updateAndGet(
+            promptAdmissionCount,
+            (count) => count + 1,
+          ).pipe(
+            Effect.flatMap((count) =>
+              count === 2 ? Deferred.succeed(queuedPromptReached, undefined) : Effect.void,
+            ),
           ),
-        ),
+        },
       });
       const runtimeEvents: ProviderRuntimeEvent[] = [];
       const firstPromptStarted = yield* Deferred.make<void>();

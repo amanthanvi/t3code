@@ -1,4 +1,4 @@
-import { ClineSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import { ClineSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -15,7 +15,6 @@ import { makeClineAdapter } from "../Layers/ClineAdapter.ts";
 import {
   buildInitialClineProviderSnapshot,
   checkClineProviderStatus,
-  enrichClineSnapshot,
 } from "../Layers/ClineProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -24,9 +23,10 @@ import {
   type ProviderDriver,
   type ProviderInstance,
 } from "../ProviderDriver.ts";
-import type { ServerProviderDraft } from "../providerSnapshot.ts";
+import { withProviderInstanceIdentity } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
+  enrichProviderSnapshotAndPublish,
   makePackageManagedProviderMaintenanceResolver,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "../providerMaintenance.ts";
@@ -57,22 +57,6 @@ export type ClineDriverEnv =
   | ServerConfig
   | ServerSettingsService;
 
-const withInstanceIdentity =
-  (input: {
-    readonly instanceId: ProviderInstance["instanceId"];
-    readonly displayName: string | undefined;
-    readonly accentColor: string | undefined;
-    readonly continuationGroupKey: string;
-  }) =>
-  (snapshot: ServerProviderDraft): ServerProvider => ({
-    ...snapshot,
-    instanceId: input.instanceId,
-    driver: DRIVER_KIND,
-    ...(input.displayName ? { displayName: input.displayName } : {}),
-    ...(input.accentColor ? { accentColor: input.accentColor } : {}),
-    continuation: { groupKey: input.continuationGroupKey },
-  });
-
 export const ClineDriver: ProviderDriver<ClineSettings, ClineDriverEnv> = {
   driverKind: DRIVER_KIND,
   metadata: {
@@ -99,7 +83,8 @@ export const ClineDriver: ProviderDriver<ClineSettings, ClineDriverEnv> = {
       driverKind: DRIVER_KIND,
       instanceId,
     });
-    const stampIdentity = withInstanceIdentity({
+    const stampIdentity = withProviderInstanceIdentity({
+      driver: DRIVER_KIND,
       instanceId,
       displayName,
       accentColor,
@@ -133,7 +118,7 @@ export const ClineDriver: ProviderDriver<ClineSettings, ClineDriverEnv> = {
         buildInitialClineProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
       checkProvider,
       enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
-        enrichClineSnapshot({
+        enrichProviderSnapshotAndPublish({
           snapshot: currentSnapshot,
           maintenanceCapabilities,
           enableProviderUpdateChecks: settings.enableProviderUpdateChecks,

@@ -320,9 +320,11 @@ describe("AcpSessionRuntime", () => {
           Effect.sync(() => {
             requestEvents.push(event);
           }),
-        beforePromptRegistration: Deferred.succeed(registrationReached, undefined).pipe(
-          Effect.andThen(Deferred.await(releaseRegistration)),
-        ),
+        testHooks: {
+          beforePromptRegistration: Deferred.succeed(registrationReached, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseRegistration)),
+          ),
+        },
       });
       yield* runtime.start();
 
@@ -354,10 +356,14 @@ describe("AcpSessionRuntime", () => {
         cwd: process.cwd(),
         clientInfo: { name: "t3-test", version: "0.0.0" },
         authMethodId: "test",
-        beforePromptRegistration: Deferred.succeed(registrationReached, undefined).pipe(
-          Effect.andThen(Effect.never),
-        ),
-        onPromptRpcFiberExit: Deferred.succeed(promptRpcFiberExited, undefined).pipe(Effect.asVoid),
+        testHooks: {
+          beforePromptRegistration: Deferred.succeed(registrationReached, undefined).pipe(
+            Effect.andThen(Effect.never),
+          ),
+          onPromptRpcFiberExit: Deferred.succeed(promptRpcFiberExited, undefined).pipe(
+            Effect.asVoid,
+          ),
+        },
       });
       yield* runtime.start();
 

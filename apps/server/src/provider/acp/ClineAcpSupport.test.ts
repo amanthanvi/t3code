@@ -266,7 +266,7 @@ describe("cline ACP support", () => {
   itx.it.effect("skips selection when the requested model is already current", () =>
     Effect.gen(function* () {
       const setCalls: Array<{ configId: string; value: string | boolean }> = [];
-      const result = yield* applyClineAcpModelSelection({
+      yield* applyClineAcpModelSelection({
         runtime: fakeRuntime({
           configOptions: providerFirstConfigOptions(),
           setCalls,
@@ -274,7 +274,6 @@ describe("cline ACP support", () => {
         requestedModelId: "cline/anthropic/claude-opus-4.7",
         mapError: (cause): EffectAcpErrors.AcpError => cause,
       });
-      expect(result).toBe("cline/anthropic/claude-opus-4.7");
       expect(setCalls).toEqual([]);
     }),
   );
@@ -282,7 +281,7 @@ describe("cline ACP support", () => {
   itx.it.effect("sets the model config option when the request differs", () =>
     Effect.gen(function* () {
       const setCalls: Array<{ configId: string; value: string | boolean }> = [];
-      const result = yield* applyClineAcpModelSelection({
+      yield* applyClineAcpModelSelection({
         runtime: fakeRuntime({
           configOptions: providerFirstConfigOptions(),
           setCalls,
@@ -290,7 +289,6 @@ describe("cline ACP support", () => {
         requestedModelId: " cline/google/gemini-3-pro ",
         mapError: (cause): EffectAcpErrors.AcpError => cause,
       });
-      expect(result).toBe("cline/google/gemini-3-pro");
       expect(setCalls).toEqual([{ configId: "model", value: "cline/google/gemini-3-pro" }]);
     }),
   );
@@ -298,12 +296,11 @@ describe("cline ACP support", () => {
   itx.it.effect("does not write the provider option when no model option exists", () =>
     Effect.gen(function* () {
       const setCalls: Array<{ configId: string; value: string | boolean }> = [];
-      const result = yield* applyClineAcpModelSelection({
+      yield* applyClineAcpModelSelection({
         runtime: fakeRuntime({ configOptions: [providerSelectOption()], setCalls }),
         requestedModelId: "cline/google/gemini-3-pro",
         mapError: (cause): EffectAcpErrors.AcpError => cause,
       });
-      expect(result).toBeUndefined();
       expect(setCalls).toEqual([]);
     }),
   );
@@ -311,7 +308,7 @@ describe("cline ACP support", () => {
   itx.it.effect("does not write a requested model when Cline advertises an empty catalog", () =>
     Effect.gen(function* () {
       const setCalls: Array<{ configId: string; value: string | boolean }> = [];
-      const result = yield* applyClineAcpModelSelection({
+      yield* applyClineAcpModelSelection({
         runtime: fakeRuntime({
           configOptions: [modelSelectOption({ currentValue: "", options: [] })],
           setCalls,
@@ -319,42 +316,42 @@ describe("cline ACP support", () => {
         requestedModelId: "gpt-5.6-sol",
         mapError: (cause): EffectAcpErrors.AcpError => cause,
       });
-      expect(result).toBeUndefined();
       expect(setCalls).toEqual([]);
     }),
   );
 
   itx.it.effect("does nothing when the agent exposes no model config option", () =>
     Effect.gen(function* () {
-      const result = yield* applyClineAcpModelSelection({
-        runtime: fakeRuntime({ configOptions: [] }),
+      const setCalls: Array<{ configId: string; value: string | boolean }> = [];
+      yield* applyClineAcpModelSelection({
+        runtime: fakeRuntime({ configOptions: [], setCalls }),
         requestedModelId: "cline/google/gemini-3-pro",
         mapError: (cause): EffectAcpErrors.AcpError => cause,
       });
-      expect(result).toBeUndefined();
+      expect(setCalls).toEqual([]);
     }),
   );
 
   itx.it.effect("ignores empty model requests", () =>
     Effect.gen(function* () {
-      const result = yield* applyClineAcpModelSelection({
-        runtime: fakeRuntime({ configOptions: [modelSelectOption()] }),
+      const setCalls: Array<{ configId: string; value: string | boolean }> = [];
+      yield* applyClineAcpModelSelection({
+        runtime: fakeRuntime({ configOptions: [modelSelectOption()], setCalls }),
         requestedModelId: "   ",
         mapError: (cause): EffectAcpErrors.AcpError => cause,
       });
-      expect(result).toBeUndefined();
+      expect(setCalls).toEqual([]);
     }),
   );
 
   itx.it.effect("delegates explicit model selection to the runtime validation boundary", () =>
     Effect.gen(function* () {
       const setCalls: Array<{ configId: string; value: string | boolean }> = [];
-      const result = yield* applyClineAcpModelSelection({
+      yield* applyClineAcpModelSelection({
         runtime: fakeRuntime({ configOptions: providerFirstConfigOptions(), setCalls }),
         requestedModelId: "cline/retired-model",
         mapError: (cause): EffectAcpErrors.AcpError => cause,
       });
-      expect(result).toBe("cline/retired-model");
       expect(setCalls).toEqual([{ configId: "model", value: "cline/retired-model" }]);
     }),
   );

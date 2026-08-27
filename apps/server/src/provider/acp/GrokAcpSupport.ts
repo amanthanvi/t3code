@@ -1,10 +1,9 @@
 import { type GrokSettings, ProviderDriverKind } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Scope from "effect/Scope";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
-import * as EffectAcpErrors from "effect-acp/errors";
+import type * as Scope from "effect/Scope";
+import type * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import type * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 
@@ -58,23 +57,11 @@ export const makeGrokAcpRuntime = (
   EffectAcpErrors.AcpError,
   Crypto.Crypto | Scope.Scope
 > =>
-  Effect.gen(function* () {
-    const acpContext = yield* Layer.build(
-      AcpSessionRuntime.layer({
-        ...input,
-        spawn: buildGrokAcpSpawnInput(input.grokSettings, input.cwd, input.environment),
-        authMethodId: resolveGrokAuthMethodId(input.environment),
-      }).pipe(
-        Layer.provide(
-          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),
-        ),
-      ),
-    );
-    const runtime = yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
-      Effect.provide(acpContext),
-    );
-    return yield* makeXAiPromptCompletionRuntime(runtime);
-  });
+  AcpSessionRuntime.makeAcpRuntime({
+    ...input,
+    spawn: buildGrokAcpSpawnInput(input.grokSettings, input.cwd, input.environment),
+    authMethodId: resolveGrokAuthMethodId(input.environment),
+  }).pipe(Effect.flatMap(makeXAiPromptCompletionRuntime));
 
 export function resolveGrokAcpBaseModelId(model: string | null | undefined): string {
   const trimmed = model?.trim();

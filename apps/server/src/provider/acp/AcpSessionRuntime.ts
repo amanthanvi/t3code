@@ -5,6 +5,7 @@ import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -79,12 +80,15 @@ export interface AcpSessionRuntimeOptions {
   readonly authMethodId?: string;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
-  /** Test-only scheduling hook for the prompt registration boundary. */
-  readonly beforePromptRegistration?: Effect.Effect<void>;
-  /** Test-only scheduling hook after cancellation capture and before prompt serialization. */
-  readonly beforePromptSerialization?: Effect.Effect<void>;
-  /** Test-only observation hook for prompt RPC fiber cleanup. */
-  readonly onPromptRpcFiberExit?: Effect.Effect<void>;
+  /** Test-only scheduling and observation hooks; production callers leave this unset. */
+  readonly testHooks?: {
+    /** Scheduling hook for the prompt registration boundary. */
+    readonly beforePromptRegistration?: Effect.Effect<void>;
+    /** Scheduling hook after cancellation capture and before prompt serialization. */
+    readonly beforePromptSerialization?: Effect.Effect<void>;
+    /** Observation hook for prompt RPC fiber cleanup. */
+    readonly onPromptRpcFiberExit?: Effect.Effect<void>;
+  };
   readonly protocolLogging?: {
     readonly logIncoming?: boolean;
     readonly logOutgoing?: boolean;
@@ -213,11 +217,18 @@ export class AcpSessionRuntime extends Context.Service<
     readonly getConfigOptions: Effect.Effect<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
     /**
      * Sends a prompt turn to the active session.
+     *
+     * `configureBeforePrompt` runs inside the prompt serialization critical
+     * section, after cancellation capture and before the RPC is issued. Use it
+     * for per-turn session configuration (model/mode writes) that must not
+     * interleave with a concurrently serialized prompt.
      * @see https://agentclientprotocol.com/protocol/schema#session/prompt
      */
     readonly prompt: <E = never>(
       payload: Omit<EffectAcpSchema.PromptRequest, "sessionId">,
-      beforePrompt?: Effect.Effect<void, E>,
+      options?: {
+        readonly configureBeforePrompt?: Effect.Effect<void, E>;
+      },
     ) => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError | E>;
     /**
      * Sends a real ACP `session/cancel` notification for the active session.
@@ -765,11 +776,13 @@ export const make = (
       getConfigOptions: Ref.get(configOptionsRef),
       prompt: <E = never>(
         payload: Omit<EffectAcpSchema.PromptRequest, "sessionId">,
-        beforePrompt?: Effect.Effect<void, E>,
+        promptOptions?: {
+          readonly configureBeforePrompt?: Effect.Effect<void, E>;
+        },
       ) =>
         Effect.gen(function* () {
           const cancellationGeneration = yield* Ref.get(promptCancellationGenerationRef);
-          yield* options.beforePromptSerialization ?? Effect.void;
+          yield* options.testHooks?.beforePromptSerialization ?? Effect.void;
           return yield* promptSerializationSemaphore.withPermit(
             Effect.gen(function* () {
               const cancelledResponse = {
@@ -778,7 +791,7 @@ export const make = (
               if ((yield* Ref.get(promptCancellationGenerationRef)) !== cancellationGeneration) {
                 return cancelledResponse;
               }
-              yield* beforePrompt ?? Effect.void;
+              yield* promptOptions?.configureBeforePrompt ?? Effect.void;
               const started = yield* getStartedState;
               yield* closeActiveAssistantSegment({
                 queue: eventQueue,
@@ -797,11 +810,11 @@ export const make = (
                     acp.agent.prompt(requestPayload),
                   ),
                 ),
-                Effect.ensuring(options.onPromptRpcFiberExit ?? Effect.void),
+                Effect.ensuring(options.testHooks?.onPromptRpcFiberExit ?? Effect.void),
                 Effect.forkIn(runtimeScope, { startImmediately: true }),
               );
               return yield* Effect.gen(function* () {
-                yield* options.beforePromptRegistration ?? Effect.void;
+                yield* options.testHooks?.beforePromptRegistration ?? Effect.void;
                 const cancelledBeforeRegistration = yield* promptCancellationSemaphore.withPermit(
                   Effect.gen(function* () {
                     if (
@@ -904,6 +917,51 @@ export const layer = (
   EffectAcpErrors.AcpError,
   ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
 > => Layer.effect(AcpSessionRuntime, make(options));
+
+/**
+ * Builds a scoped ACP session runtime from fully resolved options and an
+ * explicit spawner. Provider support modules layer their spawn command,
+ * auth method, and capabilities on top of this single bootstrap.
+ */
+export const makeAcpRuntime = Effect.fn("makeAcpRuntime")(function* (
+  input: AcpSessionRuntimeOptions & {
+    readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+  },
+): Effect.fn.Return<
+  AcpSessionRuntime["Service"],
+  EffectAcpErrors.AcpError,
+  Crypto.Crypto | Scope.Scope
+> {
+  const { childProcessSpawner, ...options } = input;
+  const acpContext = yield* Layer.build(
+    layer(options).pipe(
+      Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner)),
+    ),
+  );
+  return yield* Effect.service(AcpSessionRuntime).pipe(Effect.provide(acpContext));
+});
+
+export const startAcpRuntimeWithTimeout = Effect.fn("startAcpRuntimeWithTimeout")(
+  function* (input: {
+    readonly runtime: AcpSessionRuntime["Service"];
+    readonly timeout: Duration.Input;
+    readonly forceKillAfter: Duration.Input;
+  }) {
+    // An unresponsive JSON-RPC request can make interruption wait forever.
+    // Observe detached startup as data so the timeout path can terminate the
+    // exact owned child before the surrounding runtime scope is closed.
+    const startFiber = yield* input.runtime.start().pipe(Effect.forkDetach);
+    const startedExit = yield* Fiber.await(startFiber).pipe(Effect.timeoutOption(input.timeout));
+    if (Option.isNone(startedExit)) {
+      yield* input.runtime.terminate(input.forceKillAfter).pipe(Effect.ignore);
+      return Option.none();
+    }
+    if (Exit.isFailure(startedExit.value)) {
+      return yield* Effect.failCause(startedExit.value.cause);
+    }
+    return Option.some(startedExit.value.value);
+  },
+);
 
 function sessionConfigOptionsFromSetup(
   response:

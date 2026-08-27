@@ -743,6 +743,9 @@ const program = Effect.gen(function* () {
             title: `${permissionToolName}: cat server/package.json`,
             kind: permissionKind,
             status: "pending",
+            rawInput: {
+              command: ["cat", "server/package.json"],
+            },
             content: [
               {
                 type: "content",

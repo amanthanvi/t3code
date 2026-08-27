@@ -1,7 +1,6 @@
 import {
   type GrokSettings,
   type ModelCapabilities,
-  type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
@@ -11,24 +10,16 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
-import * as Result from "effect/Result";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import {
   buildServerProvider,
-  isCommandMissingCause,
-  parseGenericCliVersion,
+  probeCliProviderVersion,
   providerModelsFromSettings,
-  spawnAndCollect,
+  runCliVersionCommand,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
-import {
-  enrichProviderSnapshotWithVersionAdvisory,
-  type ProviderMaintenanceCapabilities,
-} from "../providerMaintenance.ts";
 import { makeGrokAcpRuntime, resolveGrokAcpBaseModelId } from "../acp/GrokAcpSupport.ts";
 
 const GROK_PRESENTATION = {
@@ -41,7 +32,6 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
 
-const VERSION_PROBE_TIMEOUT_MS = 4_000;
 const GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
 
 const GROK_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
@@ -140,24 +130,6 @@ const discoverGrokModelsViaAcp = (
     return buildGrokDiscoveredModelsFromSessionModelState(started.sessionSetupResult.models);
   }).pipe(Effect.scoped);
 
-const runGrokVersionCommand = (
-  grokSettings: GrokSettings,
-  environment: NodeJS.ProcessEnv = process.env,
-) =>
-  Effect.gen(function* () {
-    const command = grokSettings.binaryPath || "grok";
-    const spawnCommand = yield* resolveSpawnCommand(command, ["--version"], {
-      env: environment,
-    });
-    return yield* spawnAndCollect(
-      command,
-      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-        env: environment,
-        shell: spawnCommand.shell,
-      }),
-    );
-  });
-
 export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(function* (
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
@@ -169,87 +141,21 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = grokModelsFromSettings(grokSettings.customModels);
 
-  if (!grokSettings.enabled) {
-    return buildServerProvider({
-      presentation: GROK_PRESENTATION,
-      enabled: false,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: false,
-        version: null,
-        status: "warning",
-        auth: { status: "unknown" },
-        message: "Grok is disabled in T3 Code settings.",
-      },
-    });
+  const versionProbe = yield* probeCliProviderVersion({
+    presentation: GROK_PRESENTATION,
+    enabled: grokSettings.enabled,
+    checkedAt,
+    fallbackModels,
+    defaultBinary: "grok",
+    runVersionCommand: runCliVersionCommand({
+      binaryPath: grokSettings.binaryPath || "grok",
+      environment,
+    }),
+  });
+  if (versionProbe.kind === "unavailable") {
+    return versionProbe.draft;
   }
-
-  const versionResult = yield* runGrokVersionCommand(grokSettings, environment).pipe(
-    Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS),
-    Effect.result,
-  );
-
-  if (Result.isFailure(versionResult)) {
-    const error = versionResult.failure;
-    yield* Effect.logWarning("Grok CLI health check failed.", {
-      errorTag: error._tag,
-    });
-    return buildServerProvider({
-      presentation: GROK_PRESENTATION,
-      enabled: grokSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: !isCommandMissingCause(error),
-        version: null,
-        status: "error",
-        auth: { status: "unknown" },
-        message: isCommandMissingCause(error)
-          ? "Grok CLI (`grok`) is not installed or not on PATH."
-          : "Failed to execute Grok CLI health check.",
-      },
-    });
-  }
-
-  if (Option.isNone(versionResult.success)) {
-    return buildServerProvider({
-      presentation: GROK_PRESENTATION,
-      enabled: grokSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version: null,
-        status: "error",
-        auth: { status: "unknown" },
-        message: "Grok CLI is installed but timed out while running `grok --version`.",
-      },
-    });
-  }
-
-  const versionOutput = versionResult.success.value;
-  const version = parseGenericCliVersion(`${versionOutput.stdout}\n${versionOutput.stderr}`);
-  if (versionOutput.code !== 0) {
-    yield* Effect.logWarning("Grok CLI version probe exited with a non-zero status.", {
-      exitCode: versionOutput.code,
-      stdoutLength: versionOutput.stdout.length,
-      stderrLength: versionOutput.stderr.length,
-    });
-    return buildServerProvider({
-      presentation: GROK_PRESENTATION,
-      enabled: grokSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version,
-        status: "error",
-        auth: { status: "unknown" },
-        message: "Grok CLI is installed but failed to run.",
-      },
-    });
-  }
+  const version = versionProbe.version;
 
   const discoveryExit = yield* discoverGrokModelsViaAcp(grokSettings, environment).pipe(
     Effect.timeoutOption(GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS),
@@ -310,26 +216,3 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     },
   });
 });
-
-export const enrichGrokSnapshot = (input: {
-  readonly snapshot: ServerProvider;
-  readonly maintenanceCapabilities: ProviderMaintenanceCapabilities;
-  readonly enableProviderUpdateChecks?: boolean;
-  readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
-  readonly httpClient: HttpClient.HttpClient;
-}): Effect.Effect<void> => {
-  const { snapshot, publishSnapshot } = input;
-
-  return enrichProviderSnapshotWithVersionAdvisory(snapshot, input.maintenanceCapabilities, {
-    enableProviderUpdateChecks: input.enableProviderUpdateChecks,
-  }).pipe(
-    Effect.provideService(HttpClient.HttpClient, input.httpClient),
-    Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
-    Effect.catchCause((cause) =>
-      Effect.logWarning("Grok version advisory enrichment failed", {
-        errorTag: causeErrorTag(cause),
-      }),
-    ),
-    Effect.asVoid,
-  );
-};
