@@ -125,6 +125,11 @@ export const RuntimeMode = Schema.Literals([
 ]);
 export type RuntimeMode = typeof RuntimeMode.Type;
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
+/**
+ * Every runtime mode, derived from the schema so a new mode cannot silently
+ * miss the "provider supports everything" fallbacks in the clients.
+ */
+export const ALL_RUNTIME_MODES: ReadonlyArray<RuntimeMode> = RuntimeMode.literals;
 export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
 export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";

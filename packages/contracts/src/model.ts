@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { ProviderDriverKind } from "./providerInstance.ts";
+import { isProviderDriverKind, ProviderDriverKind } from "./providerInstance.ts";
 
 export const ProviderOptionDescriptorType = Schema.Literals(["select", "boolean"]);
 export type ProviderOptionDescriptorType = typeof ProviderOptionDescriptorType.Type;
@@ -224,3 +224,64 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [OPENCODE_DRIVER_KIND]: "OpenCode",
   [CLINE_DRIVER_KIND]: "Cline",
 };
+
+// ── Provider driver capabilities ──────────────────────────────────────
+
+/**
+ * What a driver's integration can uphold, independent of per-instance
+ * health. Session-scoped capabilities (access modes, image attachments)
+ * ride on the `ServerProvider` snapshot instead; this table covers the
+ * decisions that must be answerable without a live snapshot — settings
+ * normalization on the server, instance filtering in the clients.
+ */
+export interface ProviderDriverCapabilities {
+  /** Background text generation: titles, branch names, commit messages. */
+  readonly supportsTextGeneration: boolean;
+  /** Whether sessions consume `mcpServers` (T3 MCP/browser credentials). */
+  readonly consumesMcpServers: boolean;
+  /** User-authored custom model slugs alongside the advertised catalog. */
+  readonly supportsCustomModels: boolean;
+  /**
+   * The advertised catalog is the only source of truth for selectable
+   * models: selections outside it must be blocked rather than backfilled
+   * with synthesized defaults (e.g. account-scoped catalogs).
+   */
+  readonly modelCatalogIsAuthoritative: boolean;
+}
+
+/**
+ * Unknown (fork) drivers get every capability, matching how the runtime
+ * treats drivers this build does not recognize.
+ */
+export const DEFAULT_PROVIDER_DRIVER_CAPABILITIES: ProviderDriverCapabilities = {
+  supportsTextGeneration: true,
+  consumesMcpServers: true,
+  supportsCustomModels: true,
+  modelCatalogIsAuthoritative: false,
+};
+
+const PROVIDER_DRIVER_CAPABILITIES: Partial<
+  Record<ProviderDriverKind, ProviderDriverCapabilities>
+> = {
+  // Current Cline ACP: background generation is withheld because every
+  // session is interactive and account-visible; `mcpServers` is stored
+  // but never consumed; the model catalog is account-scoped, so custom
+  // slugs and synthesized defaults cannot be dispatched.
+  [CLINE_DRIVER_KIND]: {
+    supportsTextGeneration: false,
+    consumesMcpServers: false,
+    supportsCustomModels: false,
+    modelCatalogIsAuthoritative: true,
+  },
+};
+
+/**
+ * Accepts any slug-shaped string because callers hold a mix of
+ * `ProviderDriverKind` and legacy instance ids that equal their driver
+ * kind (see `defaultInstanceIdForDriver`).
+ */
+export const getProviderDriverCapabilities = (
+  driver: string | null | undefined,
+): ProviderDriverCapabilities =>
+  (isProviderDriverKind(driver) ? PROVIDER_DRIVER_CAPABILITIES[driver] : undefined) ??
+  DEFAULT_PROVIDER_DRIVER_CAPABILITIES;

@@ -1,4 +1,5 @@
 import {
+  getProviderDriverCapabilities,
   isProviderDriverKind,
   isProviderAvailable,
   resolveProviderInstanceEnabled,
@@ -46,12 +47,12 @@ export function isModelSelectionProviderEnabled(
   );
 }
 
-function isTextGenerationModelSelectionSupported(
+export function isTextGenerationModelSelectionSupported(
   settings: ServerSettings,
   selection: ModelSelection,
 ): boolean {
   const driver = settings.providerInstances[selection.instanceId]?.driver ?? selection.instanceId;
-  return driver !== "cline";
+  return getProviderDriverCapabilities(driver).supportsTextGeneration;
 }
 
 export function resolveSourceControlWriterModelSelection(

@@ -10,6 +10,7 @@
  * @module ProviderServiceLive
  */
 import {
+  getProviderDriverCapabilities,
   ModelSelection,
   NonNegativeInt,
   ThreadId,
@@ -255,8 +256,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
    * Attach the `t3-code` MCP server to the session that is about to start.
    *
    * This is the only place a credential is minted, so withholding one here
-   * disables agent browser access everywhere. Cline is withheld even when
-   * the setting is on because its ACP stores but never consumes `mcpServers`.
+   * disables agent browser access everywhere. Drivers whose sessions never
+   * consume `mcpServers` (see `getProviderDriverCapabilities`) are withheld
+   * even when the setting is on.
    */
   const prepareMcpSession = (
     threadId: ThreadId,
@@ -264,7 +266,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     provider: ProviderDriverKind,
   ) =>
     Effect.gen(function* () {
-      if (provider === "cline" || !(yield* agentBrowserAccessEnabled)) {
+      if (
+        !getProviderDriverCapabilities(provider).consumesMcpServers ||
+        !(yield* agentBrowserAccessEnabled)
+      ) {
         // Revoke as well as clear. Every other prepare path reaches
         // `issueActiveMcpCredential`, which revokes the thread first, so
         // skipping it here would leave a previously issued bearer token valid

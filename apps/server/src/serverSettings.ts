@@ -15,6 +15,7 @@ import {
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
+  getProviderDriverCapabilities,
   type ModelSelection,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
@@ -50,6 +51,7 @@ import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJso
 import {
   applyServerSettingsPatch,
   isModelSelectionProviderEnabled,
+  isTextGenerationModelSelectionSupported,
 } from "@t3tools/shared/serverSettings";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 
@@ -234,18 +236,9 @@ const decodeServerSettingsJsonExit = Schema.decodeUnknownExit(ServerSettingsJson
 
 function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings {
   return isModelSelectionProviderEnabled(settings, settings.textGenerationModelSelection) &&
-    textGenerationSelectionIsSupported(settings, settings.textGenerationModelSelection)
+    isTextGenerationModelSelectionSupported(settings, settings.textGenerationModelSelection)
     ? settings
     : fallbackTextGenerationProvider(settings);
-}
-
-function textGenerationSelectionIsSupported(
-  settings: ServerSettings,
-  selection: ModelSelection,
-): boolean {
-  const configuredDriver = settings.providerInstances[selection.instanceId]?.driver;
-  const driver = configuredDriver ?? selection.instanceId;
-  return driver !== "cline";
 }
 
 function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
@@ -255,16 +248,17 @@ function fallbackTextGenerationProvider(settings: ServerSettings): ServerSetting
       model: DEFAULT_TEXT_GENERATION_MODEL,
     } satisfies ModelSelection;
     return (
-      driver !== "cline" &&
       isModelSelectionProviderEnabled(settings, candidate) &&
-      textGenerationSelectionIsSupported(settings, candidate)
+      isTextGenerationModelSelectionSupported(settings, candidate)
     );
   });
   const legacyDriver = fallbackEntry ? ProviderDriverKind.make(fallbackEntry[0]) : undefined;
   const instanceFallback = legacyDriver
     ? undefined
     : Object.entries(settings.providerInstances).find(
-        ([, instance]) => instance.driver !== "cline" && resolveProviderInstanceEnabled(instance),
+        ([, instance]) =>
+          getProviderDriverCapabilities(instance.driver).supportsTextGeneration &&
+          resolveProviderInstanceEnabled(instance),
       );
   const instanceId = instanceFallback
     ? ProviderInstanceId.make(instanceFallback[0])
