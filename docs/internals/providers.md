@@ -53,10 +53,10 @@ hooks before any ACP tool-permission request. Until ACP exposes a verified exten
 boundary, server settings must never select Cline for background title, branch, commit, or pull
 request text generation.
 
-The same extension boundary means only `full-access` interactive sessions are currently truthful.
-`ClineAdapter` rejects every narrower runtime mode before spawning the CLI, and the provider
-snapshot does not advertise the plan/build interaction toggle. Do not describe ACP permission
-responses as supervising workspace/account hooks; they are separate execution paths.
+The same extension boundary means only `full-access` interactive sessions match what Cline
+actually enforces. `ClineAdapter` rejects every narrower runtime mode before spawning the CLI, and
+the provider snapshot does not advertise the plan/build interaction toggle. ACP permission
+responses do not gate workspace/account hooks; those run on a separate path.
 
 ## How provider work is requested
 

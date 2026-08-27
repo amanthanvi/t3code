@@ -72,19 +72,18 @@ T3 Code looks for, but authenticate with `agent login`, not `cursor-agent login`
 Cline reuses credentials saved by `cline auth`. T3 Code does not launch Cline's interactive ACP
 sign-in flow, so authenticate it on the server machine before enabling it.
 
-Image attachments are currently unavailable with Cline. T3 Code rejects Cline turns that contain
-images because the current Cline CLI drops image input over ACP instead of sending it to the model.
+The current Cline CLI leaves a few T3 Code features unavailable:
 
-T3 Code's agent browser and preview tools are also unavailable in Cline sessions. Current Cline ACP
-does not consume per-session MCP servers, so T3 Code withholds the otherwise unused MCP credential.
-
-Cline is not used for T3 Code's background title, branch, commit, or pull-request text generation.
-Current Cline ACP loads workspace and account extensions, including executable lifecycle hooks, and
-does not expose a way for T3 Code to disable them for non-interactive metadata generation.
-
-Cline sessions currently require **Full access**. Supervised and auto-accept modes cannot cover
-extensions that run outside ACP tool-permission requests, so T3 Code rejects those modes before it
-starts Cline. Plan mode is not advertised for the same reason.
+- **Image attachments.** Cline's ACP drops image input instead of sending it to the model, so
+  T3 Code rejects Cline turns that contain images.
+- **Agent browser and preview tools.** Cline's ACP stores but never consumes per-session MCP
+  servers, so T3 Code withholds the unused MCP credential.
+- **Background text generation.** Titles, branches, commits, and pull-request text come from
+  another provider, because Cline loads workspace and account extensions (including executable
+  lifecycle hooks) that T3 Code cannot disable for non-interactive runs.
+- **Modes other than Full access.** Supervised, auto-accept, and Plan modes cannot cover
+  extensions that run outside ACP tool-permission requests, so T3 Code rejects them before
+  starting Cline.
 
 Run the login command on the machine running the T3 Code server, not on the device you browse
 from.
