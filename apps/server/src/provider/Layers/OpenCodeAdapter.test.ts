@@ -500,6 +500,32 @@ const questionRequest = (id: string, sessionID: string): QuestionRequest => ({
 });
 
 it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
+  it.effect("forks an OpenCode source session before applying child permissions", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+
+      const session = yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId: asThreadId("thread-opencode-fork"),
+        forkFrom: {
+          resumeCursor: { schemaVersion: 1, sessionId: "ses_source" },
+        },
+        cwd: "/tmp/opencode-project",
+        runtimeMode: "full-access",
+      });
+
+      NodeAssert.deepEqual(runtimeMock.state.forkCalls, [
+        { sessionID: "ses_source", directory: "/tmp/opencode-project" },
+      ]);
+      NodeAssert.deepEqual(runtimeMock.state.sessionCreateInputs, []);
+      NodeAssert.equal(runtimeMock.state.sessionUpdateCalls[0]?.sessionID, "ses_source_fork");
+      NodeAssert.deepEqual(session.resumeCursor, {
+        schemaVersion: 1,
+        sessionId: "ses_source_fork",
+      });
+    }),
+  );
+
   it.effect("reuses a configured OpenCode server URL instead of spawning a local server", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;

@@ -536,6 +536,9 @@ const make = Effect.gen(function* () {
 
     const desiredRuntimeMode = thread.runtimeMode;
     const requestedModelSelection = options?.modelSelection;
+    const forkBinding =
+      thread.fork == null ? null : yield* providerService.getSessionBinding(threadId);
+    const forkHasOwnResumeCursor = forkBinding?.resumeCursor != null;
     const resolveActiveSession = (threadId: ThreadId) =>
       providerService
         .listSessions()
@@ -563,9 +566,29 @@ const make = Effect.gen(function* () {
       activeSession !== undefined &&
       activeSession.providerInstanceId !== undefined
         ? activeSession.providerInstanceId
-        : thread.modelSelection.instanceId;
+        : (forkBinding?.providerInstanceId ?? thread.modelSelection.instanceId);
     const desiredModelSelection = requestedModelSelection ?? thread.modelSelection;
     const desiredInstanceId = desiredModelSelection.instanceId;
+    const inheritedForkInstanceId =
+      forkBinding?.providerInstanceId ??
+      thread.session?.providerInstanceId ??
+      thread.modelSelection.instanceId;
+    if (
+      thread.fork != null &&
+      !forkHasOwnResumeCursor &&
+      (desiredInstanceId !== inheritedForkInstanceId ||
+        (requestedModelSelection !== undefined &&
+          !Equal.equals(requestedModelSelection, thread.modelSelection)))
+    ) {
+      return yield* new ProviderAdapterRequestError({
+        provider: providerErrorLabelFromInstanceHint({
+          instanceId: String(desiredInstanceId),
+          modelSelectionInstanceId: String(inheritedForkInstanceId),
+        }),
+        method: "thread.turn.start",
+        detail: `Fork '${threadId}' cannot switch provider instance or model before its inherited provider session has started.`,
+      });
+    }
     const currentInfo = yield* providerService.getInstanceInfo(currentInstanceId).pipe(
       Effect.mapError(
         () =>
@@ -668,6 +691,10 @@ const make = Effect.gen(function* () {
     const startProviderSession = (input?: {
       readonly resumeCursor?: unknown;
       readonly provider?: ProviderDriverKind;
+      readonly forkFrom?: {
+        readonly threadId: ThreadId;
+        readonly turnId?: TurnId;
+      };
     }) =>
       providerService
         .startSession(threadId, {
@@ -678,6 +705,7 @@ const make = Effect.gen(function* () {
           ...(thread.title ? { title: thread.title } : {}),
           modelSelection: desiredModelSelection,
           ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
+          ...(input?.forkFrom !== undefined ? { forkFrom: input.forkFrom } : {}),
           runtimeMode: desiredRuntimeMode,
         })
         .pipe(Effect.tap(() => refreshWorkspaceSnapshot));
@@ -779,7 +807,63 @@ const make = Effect.gen(function* () {
       return restartedSession.threadId;
     }
 
-    const startedSession = yield* startProviderSession(undefined);
+    let latestTurnFork: typeof thread.fork = null;
+    if (thread.fork != null && !forkHasOwnResumeCursor) {
+      const sessionFork = (yield* providerService.getCapabilities(desiredInstanceId)).sessionFork;
+      if (sessionFork === "latest-turn") {
+        latestTurnFork = thread.fork;
+      }
+    }
+
+    const sourceStillAtRecordedForkBoundary = Effect.fnUntraced(function* () {
+      if (latestTurnFork === null) return true;
+      const source = yield* resolveThread(latestTurnFork.sourceThreadId);
+      const sourceLatestTurn = source?.latestTurn ?? null;
+      return latestTurnFork.sourceTurnId === null
+        ? sourceLatestTurn === null
+        : sourceLatestTurn?.turnId === latestTurnFork.sourceTurnId &&
+            sourceLatestTurn.state === "completed";
+    });
+    const latestTurnForkBoundaryError = () =>
+      new ProviderAdapterRequestError({
+        provider: preferredProvider,
+        method: "thread.turn.start",
+        detail: `Source thread '${latestTurnFork?.sourceThreadId}' advanced after fork '${threadId}' was created. Latest-turn providers can only fork from the source's current completed head.`,
+      });
+
+    if (!(yield* sourceStillAtRecordedForkBoundary())) {
+      return yield* latestTurnForkBoundaryError();
+    }
+
+    const startedSession = yield* startProviderSession(
+      thread.fork == null
+        ? undefined
+        : {
+            forkFrom: {
+              threadId: thread.fork.sourceThreadId,
+              ...(thread.fork.sourceTurnId !== null ? { turnId: thread.fork.sourceTurnId } : {}),
+            },
+          },
+    );
+    if (!(yield* sourceStillAtRecordedForkBoundary())) {
+      const boundaryError = latestTurnForkBoundaryError();
+      yield* providerService.stopSession({ threadId: startedSession.threadId }).pipe(
+        Effect.catchCause((cause) => {
+          if (Cause.hasInterruptsOnly(cause)) {
+            return Effect.failCause(cause);
+          }
+          return Effect.logWarning(
+            "provider command reactor failed to stop stale latest-turn fork session",
+            {
+              threadId,
+              sourceThreadId: latestTurnFork?.sourceThreadId,
+              cause: Cause.pretty(cause),
+            },
+          );
+        }),
+      );
+      return yield* boundaryError;
+    }
     yield* bindSessionToThread(startedSession);
     return startedSession.threadId;
   });

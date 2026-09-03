@@ -169,6 +169,7 @@ describe("ProviderSessionReaper", () => {
       respondToUserInput: () => unsupported(),
       stopSession,
       listSessions: () => Effect.succeed([]),
+      getSessionBinding: () => Effect.succeed(null),
       getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
       assertConversationRollbackSupported: () => unsupported(),
       getInstanceInfo: (instanceId) => {
