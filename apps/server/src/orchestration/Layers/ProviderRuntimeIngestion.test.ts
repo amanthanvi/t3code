@@ -3785,8 +3785,10 @@ describe("selectLiveAgentTasks", () => {
     ]);
 
     expect(live.map((task) => task.taskId).toSorted()).toEqual(["live-explicit", "live-implicit"]);
+    // The status row carried no title; the start row's survives the merge.
     expect(live.find((task) => task.taskId === "live-explicit")?.linkage).toEqual({
       agentKind: "agent",
+      title: "one",
     });
   });
 
@@ -3821,6 +3823,58 @@ describe("selectLiveAgentTasks", () => {
     ]);
 
     expect(live.map((task) => task.taskId).toSorted()).toEqual(["other-1", "other-member-1"]);
+  });
+
+  it("keeps linkage from earlier rows when a later row carries only a status", () => {
+    // Terminal and status-patch rows commonly carry nothing but taskId and
+    // status. If the settled row copied only that newest payload it would
+    // land with no agentKind — and once the start row falls out of the
+    // client's activity window, the client would read the settled row as
+    // background work and drop the agent from the panel entirely.
+    const live = selectLiveAgentTasks([
+      row("a1", "task.started", {
+        taskId: "wf-member-1",
+        ...agent,
+        taskType: "local_agent",
+        title: "math_one",
+        role: "general-purpose",
+        agentPath: "agents/math_one",
+        timelineBypass: true,
+        model: "gpt-5-codex",
+        effort: "high",
+        parentAgentId: "wf-1",
+        workflowName: "release",
+        agentIndex: 2,
+        phaseIndex: 1,
+        phaseTitle: "Implement",
+        attempt: 1,
+        outputFile: "/tmp/out.md",
+      }),
+      row("a2", "task.updated", { taskId: "wf-member-1", status: "running" }),
+    ]);
+
+    expect(live).toEqual([
+      {
+        taskId: "wf-member-1",
+        linkage: {
+          agentKind: "agent",
+          taskType: "local_agent",
+          title: "math_one",
+          role: "general-purpose",
+          agentPath: "agents/math_one",
+          timelineBypass: true,
+          model: "gpt-5-codex",
+          effort: "high",
+          parentAgentId: "wf-1",
+          workflowName: "release",
+          agentIndex: 2,
+          phaseIndex: 1,
+          phaseTitle: "Implement",
+          attempt: 1,
+          outputFile: "/tmp/out.md",
+        },
+      },
+    ]);
   });
 
   it("carries the newest linkage onto the live task", () => {

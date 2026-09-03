@@ -46,17 +46,32 @@ export interface TaskActivityRow {
 
 /**
  * Linkage the synthesized terminal row carries forward so it stays a
- * self-describing agent row: `agentKind` keeps it on the Agents surface and
- * the rest keep the card's identity when the start row ages out.
+ * self-describing agent row. This is ingestion's `taskLinkageActivityFields`
+ * minus the per-row state (`status`, `error`, `typedUsage`, `toolUseId`):
+ * `agentKind` keeps the row on the Agents surface, the workflow fields keep it
+ * grouped under its coordinator, and the rest keep the card's identity. The
+ * settled row is often the ONLY row left inside the client's activity window,
+ * so anything missing here is lost from the panel.
  */
 const LINKAGE_FIELDS = [
   "agentKind",
+  "taskType",
+  "agentId",
   "title",
   "role",
-  "agentPath",
-  "timelineBypass",
   "model",
   "effort",
+  "agentPath",
+  "timelineBypass",
+  "parentAgentId",
+  "workflowName",
+  "agentIndex",
+  "phaseIndex",
+  "phaseTitle",
+  "phases",
+  "attempt",
+  "runHandles",
+  "outputFile",
 ] as const;
 
 // Collapsed mirror of the client fold (subagentRuntime.foldSubagentActivities):
@@ -86,8 +101,13 @@ const KNOWN_STATUSES: ReadonlyMap<string, FoldStatus> = new Map<string, FoldStat
 interface FoldEntry {
   readonly taskId: string;
   status: FoldStatus;
-  /** Latest row's payload, used to copy linkage onto the synthesized row. */
-  payload: Record<string, unknown>;
+  /**
+   * Linkage accumulated across every row for the task, newest value winning.
+   * Merged rather than replaced: lifecycle rows commonly carry only a task id
+   * and a status, and copying just the newest payload would strip the identity
+   * the start row established.
+   */
+  readonly linkage: Record<string, unknown>;
   /** A workflow coordinator, whose settling ends its members' run. */
   isWorkflow: boolean;
   /** The coordinator this task belongs to, if any. */
@@ -111,22 +131,29 @@ function asTrimmed(value: unknown): string | undefined {
 }
 
 /**
- * Identity the workflow cascade needs, filled from every row and never
- * downgraded — the client fold's getOrCreate/fillMetadata rules, narrowed to
- * the two fields that decide whether a coordinator owns a task.
+ * Accumulates a row's linkage and the identity the workflow cascade needs.
+ * Never downgrades: an absent or blank value leaves the known one alone, the
+ * same rule the client fold's fillMetadata applies.
  */
-function fillIdentity(entry: FoldEntry, payload: Record<string, unknown>): void {
-  if (asTrimmed(payload.taskType) === "local_workflow") {
+function mergeLinkage(entry: FoldEntry, payload: Record<string, unknown>): void {
+  for (const field of LINKAGE_FIELDS) {
+    const value = payload[field];
+    if (value === undefined || (typeof value === "string" && value.trim().length === 0)) {
+      continue;
+    }
+    entry.linkage[field] = value;
+  }
+  if (asTrimmed(entry.linkage.taskType) === "local_workflow") {
     entry.isWorkflow = true;
   }
-  const parentAgentId = asTrimmed(payload.parentAgentId);
+  const parentAgentId = asTrimmed(entry.linkage.parentAgentId);
   if (parentAgentId !== undefined) {
     entry.parentAgentId = parentAgentId;
   }
 }
 
-function newEntry(taskId: string, payload: Record<string, unknown>, status: FoldStatus): FoldEntry {
-  return { taskId, status, payload, isWorkflow: false, parentAgentId: undefined };
+function newEntry(taskId: string, status: FoldStatus): FoldEntry {
+  return { taskId, status, linkage: {}, isWorkflow: false, parentAgentId: undefined };
 }
 
 /** Rows without the server-stamped agent classification are background work. */
@@ -183,17 +210,16 @@ export function selectLiveAgentTasks(
         if (!isAgentRow(payload)) {
           break;
         }
-        const entry = existing ?? newEntry(taskId, payload, "running");
+        const entry = existing ?? newEntry(taskId, "running");
         if (existing !== undefined && existing.status === "idle") {
           entry.status = "running";
         }
-        entry.payload = payload;
-        fillIdentity(entry, payload);
+        mergeLinkage(entry, payload);
         entries.set(taskId, entry);
         break;
       }
       case "task.progress": {
-        const entry = existing ?? newEntry(taskId, payload, "running");
+        const entry = existing ?? newEntry(taskId, "running");
         const status = asFoldStatus(payload.status);
         if (status !== undefined) {
           applyStatus(entry, status);
@@ -208,27 +234,24 @@ export function selectLiveAgentTasks(
         ) {
           entry.status = "running";
         }
-        entry.payload = payload;
-        fillIdentity(entry, payload);
+        mergeLinkage(entry, payload);
         entries.set(taskId, entry);
         break;
       }
       case "task.updated": {
-        const entry = existing ?? newEntry(taskId, payload, "running");
+        const entry = existing ?? newEntry(taskId, "running");
         const status = asFoldStatus(payload.status);
         if (status !== undefined) {
           applyStatus(entry, status);
         }
-        entry.payload = payload;
-        fillIdentity(entry, payload);
+        mergeLinkage(entry, payload);
         entries.set(taskId, entry);
         break;
       }
       case "task.completed": {
-        const entry = existing ?? newEntry(taskId, payload, "terminal");
+        const entry = existing ?? newEntry(taskId, "terminal");
         applyStatus(entry, "terminal");
-        entry.payload = payload;
-        fillIdentity(entry, payload);
+        mergeLinkage(entry, payload);
         entries.set(taskId, entry);
         break;
       }
@@ -259,16 +282,9 @@ export function selectLiveAgentTasks(
 
   const live: LiveAgentTask[] = [];
   for (const [taskId, entry] of entries) {
-    if (!LIVE_STATUSES.has(entry.status)) {
-      continue;
+    if (LIVE_STATUSES.has(entry.status)) {
+      live.push({ taskId, linkage: entry.linkage });
     }
-    const linkage: Record<string, unknown> = {};
-    for (const field of LINKAGE_FIELDS) {
-      if (entry.payload[field] !== undefined) {
-        linkage[field] = entry.payload[field];
-      }
-    }
-    live.push({ taskId, linkage });
   }
   return live;
 }
@@ -280,6 +296,77 @@ export function selectLiveAgentTasks(
 export function settledTaskActivityId(threadId: ThreadId, taskId: string): EventId {
   return EventId.make(`task-settled:${threadId}:${taskId}`);
 }
+
+/**
+ * Writes the terminal rows for one thread's live tasks and mirrors each into
+ * the liveness registry. Shared by the per-thread and batched entry points so
+ * the row shape can never diverge between them.
+ */
+const writeSettledTasks = Effect.fn("writeSettledTasks")(function* (input: {
+  readonly threadId: ThreadId;
+  readonly liveTasks: ReadonlyArray<LiveAgentTask>;
+  readonly status: "interrupted";
+  readonly createdAt: string;
+}) {
+  const orchestrationEngine = yield* OrchestrationEngineService;
+  const threadBackgroundLiveness = yield* ThreadBackgroundLivenessService;
+  const crypto = yield* Crypto.Crypto;
+
+  if (input.liveTasks.length > LARGE_SETTLEMENT_LOG_THRESHOLD) {
+    yield* Effect.logInfo("settling a large background task fleet", {
+      threadId: input.threadId,
+      liveTaskCount: input.liveTasks.length,
+    });
+  }
+  for (const task of input.liveTasks) {
+    const activity: OrchestrationThreadActivity = {
+      id: settledTaskActivityId(input.threadId, task.taskId),
+      createdAt: input.createdAt,
+      tone: "info",
+      kind: "task.updated",
+      summary: "Task interrupted",
+      payload: {
+        taskId: task.taskId,
+        status: input.status,
+        endedAt: input.createdAt,
+        ...task.linkage,
+      },
+      turnId: null,
+    };
+    yield* orchestrationEngine.dispatch({
+      type: "thread.activity.append",
+      commandId: CommandId.make(`task-settle:${yield* crypto.randomUUIDv4}`),
+      threadId: input.threadId,
+      activity,
+      createdAt: input.createdAt,
+    });
+    // Rows and registry settle together, so the sidebar pill and the composer
+    // banner can never disagree about the same task.
+    threadBackgroundLiveness.recordTaskLiveness({
+      threadId: input.threadId,
+      taskId: task.taskId,
+      taskType: undefined,
+      status: input.status,
+      kind: "updated",
+      settledByHost: true,
+    });
+  }
+});
+
+/** Settlement never fails its caller: Stop and startup continue regardless. */
+const withSettlementRecovery =
+  (threadIds: ReadonlyArray<ThreadId>) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.catchCause((cause: Cause.Cause<E>) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.failCause(cause)
+          : Effect.logWarning("failed to settle thread background tasks", {
+              threadIds,
+              cause: Cause.pretty(cause),
+            }),
+      ),
+    );
 
 /**
  * Marks every still-live agent task on the thread as settled: one persisted
@@ -294,9 +381,6 @@ export const settleThreadTasks = Effect.fn("settleThreadTasks")(function* (input
   readonly createdAt: string;
 }) {
   const activityRepository = yield* ProjectionThreadActivityRepository;
-  const orchestrationEngine = yield* OrchestrationEngineService;
-  const threadBackgroundLiveness = yield* ThreadBackgroundLivenessService;
-  const crypto = yield* Crypto.Crypto;
 
   const settle = Effect.gen(function* () {
     // Complete task history, not the thread detail read's newest-N window:
@@ -305,56 +389,59 @@ export const settleThreadTasks = Effect.fn("settleThreadTasks")(function* (input
     const rows = yield* activityRepository.listTaskLifecycleByThreadId({
       threadId: input.threadId,
     });
-    const liveTasks = selectLiveAgentTasks(rows);
-    if (liveTasks.length > LARGE_SETTLEMENT_LOG_THRESHOLD) {
-      yield* Effect.logInfo("settling a large background task fleet", {
-        threadId: input.threadId,
-        liveTaskCount: liveTasks.length,
-      });
+    yield* writeSettledTasks({
+      threadId: input.threadId,
+      liveTasks: selectLiveAgentTasks(rows),
+      status: input.status,
+      createdAt: input.createdAt,
+    });
+  });
+
+  yield* settle.pipe(withSettlementRecovery([input.threadId]));
+});
+
+/**
+ * Batched settlement for startup reconciliation: one activity read for every
+ * thread this process does not own, then rows only for the threads that
+ * actually have live background work. Startup runs across the whole thread
+ * list, so a query per thread would be the wrong shape.
+ */
+export const settleThreadsTasks = Effect.fn("settleThreadsTasks")(function* (input: {
+  readonly threadIds: ReadonlyArray<ThreadId>;
+  readonly status: "interrupted";
+  readonly createdAt: string;
+}) {
+  const activityRepository = yield* ProjectionThreadActivityRepository;
+
+  const settle = Effect.gen(function* () {
+    if (input.threadIds.length === 0) {
+      return;
     }
-    for (const task of liveTasks) {
-      const activity: OrchestrationThreadActivity = {
-        id: settledTaskActivityId(input.threadId, task.taskId),
-        createdAt: input.createdAt,
-        tone: "info",
-        kind: "task.updated",
-        summary: "Task interrupted",
-        payload: {
-          taskId: task.taskId,
-          status: input.status,
-          endedAt: input.createdAt,
-          ...task.linkage,
-        },
-        turnId: null,
-      };
-      yield* orchestrationEngine.dispatch({
-        type: "thread.activity.append",
-        commandId: CommandId.make(`task-settle:${yield* crypto.randomUUIDv4}`),
-        threadId: input.threadId,
-        activity,
-        createdAt: input.createdAt,
-      });
-      // Rows and registry settle together, so the sidebar pill and the
-      // composer banner can never disagree about the same task.
-      threadBackgroundLiveness.recordTaskLiveness({
-        threadId: input.threadId,
-        taskId: task.taskId,
-        taskType: undefined,
+    const rows = yield* activityRepository.listTaskLifecycleByThreadIds({
+      threadIds: input.threadIds,
+    });
+    const rowsByThreadId = new Map<ThreadId, Array<TaskActivityRow>>();
+    for (const row of rows) {
+      const existing = rowsByThreadId.get(row.threadId);
+      if (existing) {
+        existing.push(row);
+      } else {
+        rowsByThreadId.set(row.threadId, [row]);
+      }
+    }
+    for (const [threadId, threadRows] of rowsByThreadId) {
+      const liveTasks = selectLiveAgentTasks(threadRows);
+      if (liveTasks.length === 0) {
+        continue;
+      }
+      yield* writeSettledTasks({
+        threadId,
+        liveTasks,
         status: input.status,
-        kind: "updated",
-        settledByHost: true,
+        createdAt: input.createdAt,
       });
     }
   });
 
-  yield* settle.pipe(
-    Effect.catchCause((cause) =>
-      Cause.hasInterruptsOnly(cause)
-        ? Effect.failCause(cause)
-        : Effect.logWarning("failed to settle thread background tasks", {
-            threadId: input.threadId,
-            cause: Cause.pretty(cause),
-          }),
-    ),
-  );
+  yield* settle.pipe(withSettlementRecovery(input.threadIds));
 });

@@ -31,7 +31,7 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as OrchestrationReactor from "./orchestration/Services/OrchestrationReactor.ts";
-import { settleThreadTasks } from "./orchestration/ThreadTaskSettlement.ts";
+import { settleThreadsTasks } from "./orchestration/ThreadTaskSettlement.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
@@ -460,26 +460,27 @@ export const reconcileProviderSessions = Effect.gen(function* () {
 
   // Background work outlives the turn, so the headline case is wider than an
   // orphaned turn: a thread whose turn ended is `ready` with no active turn
-  // while its children keep running. Any thread with a session this process
-  // does not own has lost that work, and a restart leaves the in-memory
-  // liveness registry empty while the persisted rows still read "running".
-  // Archived and deleted threads are skipped — settling writes rows.
-  for (const thread of threads) {
-    if (
-      thread.session === null ||
-      thread.session.status === "stopped" ||
-      thread.archivedAt !== null ||
-      thread.deletedAt !== null ||
-      liveThreadIds.has(thread.id)
-    ) {
-      continue;
-    }
-    yield* settleThreadTasks({
-      threadId: thread.id,
-      status: "interrupted",
-      createdAt: DateTime.formatIso(yield* DateTime.now),
-    });
-  }
+  // while its children keep running. A stopped session qualifies too — the
+  // process can die between marking the session stopped and settling, and
+  // that thread would otherwise never be settled on any later boot. Any
+  // thread this process does not own has lost its background work, and a
+  // restart leaves the in-memory liveness registry empty while the persisted
+  // rows still read "running". Archived and deleted threads are skipped —
+  // settling writes rows. One batched read, not a query per thread.
+  const settleableThreadIds = threads
+    .filter(
+      (thread) =>
+        thread.session !== null &&
+        thread.archivedAt === null &&
+        thread.deletedAt === null &&
+        !liveThreadIds.has(thread.id),
+    )
+    .map((thread) => thread.id);
+  yield* settleThreadsTasks({
+    threadIds: settleableThreadIds,
+    status: "interrupted",
+    createdAt: DateTime.formatIso(yield* DateTime.now),
+  });
 
   for (const thread of orphanedThreads) {
     const session = thread.session;

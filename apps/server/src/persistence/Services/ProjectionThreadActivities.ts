@@ -38,6 +38,12 @@ export const ListProjectionThreadActivitiesInput = Schema.Struct({
 });
 export type ListProjectionThreadActivitiesInput = typeof ListProjectionThreadActivitiesInput.Type;
 
+export const ListProjectionThreadActivitiesByThreadIdsInput = Schema.Struct({
+  threadIds: Schema.Array(ThreadId),
+});
+export type ListProjectionThreadActivitiesByThreadIdsInput =
+  typeof ListProjectionThreadActivitiesByThreadIdsInput.Type;
+
 export const DeleteProjectionThreadActivitiesInput = Schema.Struct({
   threadId: ThreadId,
 });
@@ -76,6 +82,18 @@ export interface ProjectionThreadActivityRepositoryShape {
    */
   readonly listTaskLifecycleByThreadId: (
     input: ListProjectionThreadActivitiesInput,
+  ) => Effect.Effect<ReadonlyArray<ProjectionThreadActivity>, ProjectionRepositoryError>;
+
+  /**
+   * List task lifecycle history for many threads in one pass.
+   *
+   * Startup reconciliation settles background work across every thread this
+   * process does not own, so it reads them together instead of issuing one
+   * query per thread. Rows come back grouped-ready: ordered within each
+   * thread, threads interleaved.
+   */
+  readonly listTaskLifecycleByThreadIds: (
+    input: ListProjectionThreadActivitiesByThreadIdsInput,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadActivity>, ProjectionRepositoryError>;
 
   /**

@@ -73,10 +73,22 @@ const queryWithThreads = (threads: ReadonlyArray<ReturnType<typeof makeThread>>)
 
 const activityRepositoryWith = (
   activitiesByThreadId: Readonly<Record<string, ReadonlyArray<TaskActivityRow>>>,
+  batchReads: Array<ReadonlyArray<ThreadId>> = [],
 ) =>
   ({
     listTaskLifecycleByThreadId: ({ threadId }: { readonly threadId: ThreadId }) =>
       Effect.succeed(activitiesByThreadId[threadId] ?? []),
+    listTaskLifecycleByThreadIds: ({
+      threadIds,
+    }: {
+      readonly threadIds: ReadonlyArray<ThreadId>;
+    }) =>
+      Effect.sync(() => {
+        batchReads.push(threadIds);
+        return threadIds.flatMap((threadId) =>
+          (activitiesByThreadId[threadId] ?? []).map((row) => ({ ...row, threadId })),
+        );
+      }),
   }) as unknown as ProjectionThreadActivities.ProjectionThreadActivityRepository["Service"];
 
 const runReconciliation = (input: {
@@ -87,6 +99,8 @@ const runReconciliation = (input: {
   readonly dispatch: OrchestrationEngine.OrchestrationEngineService["Service"]["dispatch"];
   readonly activitiesByThreadId?: Readonly<Record<string, ReadonlyArray<TaskActivityRow>>>;
   readonly backgroundLiveness?: ThreadBackgroundLiveness.ThreadBackgroundLivenessService["Service"];
+  /** Collects the thread-id lists the batched activity read was called with. */
+  readonly batchReads?: Array<ReadonlyArray<ThreadId>>;
 }) =>
   ServerRuntimeStartup.reconcileProviderSessions.pipe(
     Effect.provideService(
@@ -95,7 +109,7 @@ const runReconciliation = (input: {
     ),
     Effect.provideService(
       ProjectionThreadActivities.ProjectionThreadActivityRepository,
-      activityRepositoryWith(input.activitiesByThreadId ?? {}),
+      activityRepositoryWith(input.activitiesByThreadId ?? {}, input.batchReads),
     ),
     Effect.provideService(
       ThreadBackgroundLiveness.ThreadBackgroundLivenessService,
@@ -745,7 +759,7 @@ it.effect("settles background agent tasks left running by an orphaned session", 
   );
 });
 
-it("settles background agents on a ready thread whose turn already ended", () => {
+it("settles background agents on ready and stopped threads, and writes nothing when idle", () => {
   // The headline case: the turn finished, so the session is `ready` with no
   // active turn, but its children kept working and did not survive the
   // restart. Archived and deleted threads must not be written to.
@@ -758,11 +772,18 @@ it("settles background agents on a ready thread whose turn already ended", () =>
   const ready = makeThread("thread-settle-ready", "ready");
   const archived = makeThread("thread-settle-archived", "ready", null, updatedAt);
   const deleted = makeThread("thread-settle-deleted", "ready", null, null, updatedAt);
+  // A stopped session still counts: the process can die between marking the
+  // session stopped and settling its children, and no later boot would ever
+  // pick them up if stopped threads were skipped.
   const stopped = makeThread("thread-settle-stopped", "stopped");
+  // Nothing to settle here, so it must produce no writes at all.
+  const quiet = makeThread("thread-settle-quiet", "ready");
   const dispatched: OrchestrationCommand[] = [];
+  const batchReads: Array<ReadonlyArray<ThreadId>> = [];
 
   return runReconciliation({
-    threads: [ready, archived, deleted, stopped],
+    threads: [ready, archived, deleted, stopped, quiet],
+    batchReads,
     activitiesByThreadId: {
       [ready.id]: rows,
       [archived.id]: rows,
@@ -787,8 +808,11 @@ it("settles background agents on a ready thread whose turn already ended", () =>
           dispatched
             .filter((command) => command.type === "thread.activity.append")
             .map((command) => command.threadId),
-          [ready.id],
+          [ready.id, stopped.id],
         );
+        // One batched read for every candidate thread, not a query per thread,
+        // and archived/deleted threads are never even read.
+        assert.deepStrictEqual(batchReads, [[ready.id, stopped.id, quiet.id]]);
         // A ready session is not an orphaned turn, so nothing else changes.
         assert.deepStrictEqual(
           dispatched.filter((command) => command.type === "thread.session.set"),
