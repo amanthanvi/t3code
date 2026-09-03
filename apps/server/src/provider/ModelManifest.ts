@@ -215,9 +215,10 @@ export function isLegacyModel(
     (model) => model.slug === slug,
   );
   if (catalogModel) return catalogModel.status === "legacy";
+  const currentModels = manifest.currentModels[driverKind];
+  if (currentModels?.includes(slug)) return false;
   const base = gatewayModelBaseSlug(slug);
   if (base) return isLegacyModel(manifest, driverKind, base);
-  const currentModels = manifest.currentModels[driverKind];
   if (!currentModels) return false;
   return !currentModels.includes(slug);
 }
