@@ -57,6 +57,45 @@ describe("classifyModels", () => {
       ],
     );
   });
+
+  it("classifies a gateway-prefixed slug by its base slug", () => {
+    const manifest: ModelManifestData = {
+      version: 1,
+      currentModels: { codex: ["current-a"] },
+      providers: {
+        codex: {
+          profiles: {},
+          models: [
+            { slug: "gateway/pinned", name: "Prefixed Pinned", status: "legacy" },
+            { slug: "pinned", name: "Pinned", status: "current" },
+          ],
+        },
+      },
+    };
+    const models = [
+      model({ slug: "gateway/current-a" }),
+      model({ slug: "gateway/old-model" }),
+      // Only a single leading segment is a gateway prefix; the rest is a plain slug.
+      model({ slug: "gateway/team/current-a" }),
+      // A catalog entry naming the prefixed slug outranks its base.
+      model({ slug: "gateway/pinned" }),
+    ];
+    assert.deepStrictEqual(
+      classifyModels(models, manifest, CODEX).map((entry) => [entry.slug, entry.isLegacy ?? false]),
+      [
+        ["gateway/current-a", false],
+        ["gateway/old-model", true],
+        ["gateway/team/current-a", true],
+        ["gateway/pinned", true],
+      ],
+    );
+    assert.deepStrictEqual(
+      classifyModels([model({ slug: "gateway/old-model", isCustom: true })], manifest, CODEX).map(
+        (entry) => entry.isLegacy ?? false,
+      ),
+      [false],
+    );
+  });
 });
 
 describe("resolveProviderCatalog", () => {
