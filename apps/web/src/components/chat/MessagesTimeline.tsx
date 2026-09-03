@@ -4,6 +4,7 @@ import {
   type EnvironmentId,
   type MessageId,
   type ScopedThreadRef,
+  type ServerProviderSessionFork,
   type ServerProviderSkill,
   type TurnId,
 } from "@t3tools/contracts";
@@ -75,6 +76,7 @@ import {
   DownloadIcon,
   EyeIcon,
   GlobeIcon,
+  GitForkIcon,
   HammerIcon,
   MessageCircleIcon,
   MousePointerClickIcon,
@@ -89,6 +91,7 @@ import {
   ZapIcon,
 } from "lucide-react";
 import { Button } from "../ui/button";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
@@ -164,6 +167,7 @@ import {
   parseReviewCommentMessageSegments,
   type ReviewCommentContext,
 } from "../../reviewCommentContext";
+import { canForkCompletedAssistantMessage } from "../../threadForking.logic";
 
 // ---------------------------------------------------------------------------
 // Context — shared state consumed by every row component via Context.
@@ -196,6 +200,12 @@ interface TimelineRowSharedState {
   workGroupViewState: WorkGroupViewState;
   agentPanelModel: AgentPanelModel;
   onOpenAgents: () => void;
+  forkCapability: ServerProviderSessionFork | undefined;
+  latestCompletedTurnId: TurnId | null;
+  incompleteLatestTurnId: TurnId | null;
+  onForkAssistantMessage:
+    | ((input: { messageId: MessageId; turnId: TurnId; sideChat: boolean }) => void)
+    | undefined;
 }
 
 interface TimelineRowActivityState {
@@ -312,6 +322,12 @@ interface MessagesTimelineProps {
   topFadeEnabled?: boolean;
   /** Non-null when older turns exist beyond the loaded window. */
   loadEarlier?: CitationHistoryPage | null;
+  forkCapability?: ServerProviderSessionFork | undefined;
+  latestCompletedTurnId?: TurnId | null;
+  onForkAssistantMessage?:
+    | ((input: { messageId: MessageId; turnId: TurnId; sideChat: boolean }) => void)
+    | undefined;
+  transcriptHeader?: ReactNode;
 }
 
 // ---------------------------------------------------------------------------
@@ -357,6 +373,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
   loadEarlier = null,
+  forkCapability,
+  latestCompletedTurnId = null,
+  onForkAssistantMessage,
+  transcriptHeader,
 }: MessagesTimelineProps) {
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const citationThreadRef = useMemo(() => parseScopedThreadKey(routeThreadKey), [routeThreadKey]);
@@ -642,6 +662,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workGroupViewState,
       agentPanelModel,
       onOpenAgents,
+      forkCapability,
+      latestCompletedTurnId,
+      incompleteLatestTurnId:
+        latestTurn && (latestTurn.state !== "completed" || latestTurn.completedAt === null)
+          ? latestTurn.turnId
+          : null,
+      onForkAssistantMessage,
     }),
     [
       readyCitationRequest,
@@ -666,6 +693,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workGroupViewState,
       agentPanelModel,
       onOpenAgents,
+      forkCapability,
+      latestCompletedTurnId,
+      latestTurn?.completedAt,
+      latestTurn?.state,
+      latestTurn?.turnId,
+      onForkAssistantMessage,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -746,17 +779,20 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               topFadeEnabled && "topbar-scroll-fade",
             )}
             ListHeaderComponent={
-              loadEarlier !== null ? (
-                <TimelineLoadEarlierHeader
-                  loading={loadEarlier.loading}
-                  onLoadEarlier={loadEarlier.onLoadEarlier}
-                  fade={topFadeEnabled}
-                />
-              ) : topFadeEnabled ? (
-                TIMELINE_LIST_FADE_HEADER
-              ) : (
-                TIMELINE_LIST_HEADER
-              )
+              <>
+                {loadEarlier !== null ? (
+                  <TimelineLoadEarlierHeader
+                    loading={loadEarlier.loading}
+                    onLoadEarlier={loadEarlier.onLoadEarlier}
+                    fade={topFadeEnabled}
+                  />
+                ) : topFadeEnabled ? (
+                  TIMELINE_LIST_FADE_HEADER
+                ) : (
+                  TIMELINE_LIST_HEADER
+                )}
+                {transcriptHeader}
+              </>
             }
             ListFooterComponent={TIMELINE_LIST_FOOTER}
           />
@@ -1428,6 +1464,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         {row.showAssistantMeta ? (
           <div className="mt-1.5 flex items-center gap-2 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100">
             <AssistantCopyButton row={row} />
+            <AssistantForkMenu row={row} />
             {!row.message.streaming && (
               <Tooltip>
                 <TooltipTrigger
@@ -1444,6 +1481,38 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         ) : null}
       </div>
     </>
+  );
+}
+
+function AssistantForkMenu({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+  const ctx = use(TimelineRowCtx);
+  const turnId = row.message.turnId;
+  const visible = canForkCompletedAssistantMessage({
+    capability: ctx.forkCapability,
+    completed: row.showAssistantMeta && turnId !== ctx.incompleteLatestTurnId,
+    messageTurnId: turnId,
+    latestCompletedTurnId: ctx.latestCompletedTurnId,
+  });
+  if (!visible || turnId === null || !ctx.onForkAssistantMessage) return null;
+
+  const fork = (sideChat: boolean) => {
+    ctx.onForkAssistantMessage?.({ messageId: row.message.id, turnId, sideChat });
+  };
+
+  return (
+    <Menu>
+      <MenuTrigger
+        render={
+          <Button type="button" size="xs" variant="ghost" aria-label="Fork from this response" />
+        }
+      >
+        <GitForkIcon className="size-3" />
+      </MenuTrigger>
+      <MenuPopup align="start" side="top" sideOffset={6} className="min-w-40">
+        <MenuItem onClick={() => fork(true)}>Open side chat</MenuItem>
+        <MenuItem onClick={() => fork(false)}>Fork to new thread</MenuItem>
+      </MenuPopup>
+    </Menu>
   );
 }
 

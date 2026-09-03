@@ -17,6 +17,7 @@ import {
 } from "./Errors.ts";
 import {
   listThreadsByProjectId,
+  findThreadById,
   requireActiveProjectWorkspaceRootAbsent,
   requireProject,
   requireProjectAbsent,
@@ -27,6 +28,7 @@ import {
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
 import { threadHasQueuedTurnStart } from "./ThreadSettlementPolicy.ts";
+import { DEFAULT_THREAD_TITLE } from "./threadTitles.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -351,6 +353,85 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.fork": {
+      const source = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.sourceThreadId,
+      });
+      if (source.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Source thread '${command.sourceThreadId}' is deleted and cannot be forked.`,
+        });
+      }
+      if (findThreadById(readModel, command.threadId) !== undefined) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' already exists and cannot be created twice.`,
+        });
+      }
+
+      const latestTurn = source.latestTurn;
+      const sourceTurnIsLatest =
+        command.sourceTurnId !== undefined && latestTurn?.turnId === command.sourceTurnId;
+      if (
+        command.sourceTurnId === undefined &&
+        latestTurn !== null &&
+        latestTurn.state !== "completed"
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Source thread '${command.sourceThreadId}' is mid-turn and cannot be forked at its latest boundary.`,
+        });
+      }
+
+      if (command.sourceTurnId !== undefined) {
+        if (sourceTurnIsLatest && latestTurn?.state === "running") {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Source thread '${command.sourceThreadId}' is mid-turn and cannot be forked at its latest boundary.`,
+          });
+        }
+        if (sourceTurnIsLatest && latestTurn?.state !== "completed") {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Turn '${command.sourceTurnId}' is not a completed turn of source thread '${command.sourceThreadId}'.`,
+          });
+        }
+      }
+
+      const title = command.title ?? DEFAULT_THREAD_TITLE;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.created",
+        payload: {
+          threadId: command.threadId,
+          projectId: source.projectId,
+          title,
+          modelSelection: source.modelSelection,
+          runtimeMode: source.runtimeMode,
+          interactionMode: source.interactionMode,
+          branch: source.branch,
+          worktreePath: source.worktreePath,
+          fork: {
+            sourceThreadId: source.id,
+            sourceTurnId: command.sourceTurnId ?? latestTurn?.turnId ?? null,
+            sourceMessageId: command.sourceMessageId ?? null,
+            forkedAt: command.createdAt,
+          },
+          sideChat: command.sideChat,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -821,6 +902,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.linkedPullRequest !== undefined
             ? { linkedPullRequest: command.linkedPullRequest }
             : {}),
+          ...(command.sideChat !== undefined ? { sideChat: command.sideChat } : {}),
           updatedAt: occurredAt,
         },
       };

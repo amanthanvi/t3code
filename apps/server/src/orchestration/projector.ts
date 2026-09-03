@@ -299,6 +299,8 @@ export function projectEvent(
             interactionMode: payload.interactionMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
+            ...(payload.fork !== undefined ? { fork: payload.fork } : {}),
+            ...(payload.sideChat !== undefined ? { sideChat: payload.sideChat } : {}),
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -473,6 +475,7 @@ export function projectEvent(
             ...(payload.linkedPullRequest !== undefined
               ? { linkedPullRequest: payload.linkedPullRequest }
               : {}),
+            ...(payload.sideChat !== undefined ? { sideChat: payload.sideChat } : {}),
             updatedAt: payload.updatedAt,
           }),
         })),
