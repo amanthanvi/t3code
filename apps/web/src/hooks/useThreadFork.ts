@@ -94,6 +94,12 @@ export function useThreadForkActions(
       const currentSourceThread = sourceOverride ?? sourceThreadRef.current;
       if (!currentSourceThread) return false;
       if (forkInFlightRef.current) return false;
+      // Resolve the panel host before awaiting: the user can navigate while
+      // the fork syncs, and the side chat must open beside the thread it was
+      // started from, not wherever the route ended up.
+      const hostThreadId =
+        sourceOverride?.id ?? panelHostThreadIdRef.current ?? currentSourceThread.id;
+      const hostIsActiveRoute = sourceOverride === undefined;
       forkInFlightRef.current = true;
       try {
         const threadId = newThreadId();
@@ -137,10 +143,15 @@ export function useThreadForkActions(
         }
 
         if (sideChat) {
-          const hostRef = scopeThreadRef(
-            currentSourceThread.environmentId,
-            sourceOverride?.id ?? panelHostThreadIdRef.current ?? currentSourceThread.id,
-          );
+          const hostRef = scopeThreadRef(currentSourceThread.environmentId, hostThreadId);
+          // A side chat started from another thread's row (sidebar menu) is
+          // only visible in that thread's panel, so go there first.
+          if (!hostIsActiveRoute) {
+            await navigateRef.current({
+              to: "/$environmentId/$threadId",
+              params: { environmentId: hostRef.environmentId, threadId: hostRef.threadId },
+            });
+          }
           useRightPanelStore.getState().openSideChat(hostRef, threadId);
           return true;
         }
