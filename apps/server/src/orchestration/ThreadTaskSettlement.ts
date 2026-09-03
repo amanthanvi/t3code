@@ -333,13 +333,34 @@ const writeSettledTasks = Effect.fn("writeSettledTasks")(function* (input: {
       },
       turnId: null,
     };
-    yield* orchestrationEngine.dispatch({
-      type: "thread.activity.append",
-      commandId: CommandId.make(`task-settle:${yield* crypto.randomUUIDv4}`),
-      threadId: input.threadId,
-      activity,
-      createdAt: input.createdAt,
-    });
+    const commandId = CommandId.make(`task-settle:${yield* crypto.randomUUIDv4}`);
+    // One task's append must not abandon the rest of the fleet: a partially
+    // settled thread is exactly the state this whole module exists to avoid.
+    const appended = yield* orchestrationEngine
+      .dispatch({
+        type: "thread.activity.append",
+        commandId,
+        threadId: input.threadId,
+        activity,
+        createdAt: input.createdAt,
+      })
+      .pipe(
+        Effect.as(true),
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.failCause(cause)
+            : Effect.logWarning("failed to settle background task", {
+                threadId: input.threadId,
+                taskId: task.taskId,
+                cause: Cause.pretty(cause),
+              }).pipe(Effect.as(false)),
+        ),
+      );
+    if (!appended) {
+      // No row, no tombstone: the registry must not claim a task is settled
+      // when nothing was persisted to prove it.
+      continue;
+    }
     // Rows and registry settle together, so the sidebar pill and the composer
     // banner can never disagree about the same task.
     threadBackgroundLiveness.recordTaskLiveness({
@@ -434,12 +455,14 @@ export const settleThreadsTasks = Effect.fn("settleThreadsTasks")(function* (inp
       if (liveTasks.length === 0) {
         continue;
       }
+      // Per thread, so one bad thread cannot cost every thread after it its
+      // settlement for the rest of this process's life.
       yield* writeSettledTasks({
         threadId,
         liveTasks,
         status: input.status,
         createdAt: input.createdAt,
-      });
+      }).pipe(withSettlementRecovery([threadId]));
     }
   });
 
