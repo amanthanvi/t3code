@@ -723,12 +723,17 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   );
 
   if (rows.length === 0 && !isWorking) {
-    if (hideEmptyPlaceholder) {
+    if (hideEmptyPlaceholder && !transcriptHeader) {
       return null;
     }
     return (
-      <div className="flex h-full items-center justify-center">
-        <p className="text-placeholder text-sm">Send a message to start the conversation.</p>
+      <div className="flex h-full min-h-0 flex-col overflow-y-auto px-3 sm:px-5">
+        {transcriptHeader}
+        <div className="flex min-h-0 flex-1 items-center justify-center">
+          {hideEmptyPlaceholder ? null : (
+            <p className="text-placeholder text-sm">Send a message to start the conversation.</p>
+          )}
+        </div>
       </div>
     );
   }

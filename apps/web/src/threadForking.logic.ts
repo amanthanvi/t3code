@@ -64,7 +64,9 @@ export function resolveForkEntryAvailability(input: {
   }
   const target =
     latestTarget ??
-    (input.capability === "any-turn" && input.latestTurn?.state === "running"
+    (input.capability === "any-turn" &&
+    input.latestTurn != null &&
+    input.latestTurn.state !== "completed"
       ? resolveLatestCompletedMessageTarget(input.messages ?? [], input.latestTurn.turnId)
       : null);
   if (target === null) {

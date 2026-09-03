@@ -44,35 +44,38 @@ describe("thread fork entry availability", () => {
     });
   });
 
-  it("uses the latest completed assistant response while an any-turn provider is running", () => {
-    const previousTurnId = TurnId.make("turn-1");
-    const previousMessageId = MessageId.make("message-1");
+  it.each(["running", "interrupted", "error"] as const)(
+    "uses the latest completed assistant response when an any-turn provider's latest turn is %s",
+    (state) => {
+      const previousTurnId = TurnId.make("turn-1");
+      const previousMessageId = MessageId.make("message-1");
 
-    expect(
-      resolveForkEntryAvailability({
-        capability: "any-turn",
-        latestTurn: { ...completedTurn, state: "running", completedAt: null },
-        messages: [
-          {
-            id: previousMessageId,
-            role: "assistant",
-            streaming: false,
-            turnId: previousTurnId,
-          },
-          {
-            id: completedTurn.assistantMessageId,
-            role: "assistant",
-            streaming: true,
-            turnId: completedTurn.turnId,
-          },
-        ],
-      }),
-    ).toEqual({
-      enabled: true,
-      target: { turnId: previousTurnId, messageId: previousMessageId },
-      disabledReason: null,
-    });
-  });
+      expect(
+        resolveForkEntryAvailability({
+          capability: "any-turn",
+          latestTurn: { ...completedTurn, state, completedAt: null },
+          messages: [
+            {
+              id: previousMessageId,
+              role: "assistant",
+              streaming: false,
+              turnId: previousTurnId,
+            },
+            {
+              id: completedTurn.assistantMessageId,
+              role: "assistant",
+              streaming: true,
+              turnId: completedTurn.turnId,
+            },
+          ],
+        }),
+      ).toEqual({
+        enabled: true,
+        target: { turnId: previousTurnId, messageId: previousMessageId },
+        disabledReason: null,
+      });
+    },
+  );
 
   it("allows every completed response for any-turn providers and only the latest for latest-turn providers", () => {
     expect(

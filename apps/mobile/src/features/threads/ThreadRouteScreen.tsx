@@ -343,6 +343,7 @@ function ThreadRouteContent(
   latestForkTurnRef.current = selectedThread?.latestTurn ?? null;
   const forkThreadRef = useRef(forkThread);
   forkThreadRef.current = forkThread;
+  const forkInFlightRef = useRef(false);
   const navigationRef = useRef(navigation);
   navigationRef.current = navigation;
 
@@ -565,32 +566,38 @@ function ThreadRouteContent(
       ) {
         return;
       }
-      const nextThreadId = ThreadId.make(uuidv4());
-      const result = await forkThreadRef.current({
-        environmentId: sourceThread.environmentId,
-        input: {
-          threadId: nextThreadId,
-          sourceThreadId: sourceThread.id,
-          sourceTurnId: input.turnId,
-          sourceMessageId: input.messageId,
-          sideChat: input.sideChat,
-          createdAt: new Date().toISOString(),
-        },
-      });
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          Alert.alert(
-            input.sideChat ? "Could not open side chat" : "Could not fork thread",
-            error instanceof Error ? error.message : "An error occurred.",
-          );
+      if (forkInFlightRef.current) return;
+      forkInFlightRef.current = true;
+      try {
+        const nextThreadId = ThreadId.make(uuidv4());
+        const result = await forkThreadRef.current({
+          environmentId: sourceThread.environmentId,
+          input: {
+            threadId: nextThreadId,
+            sourceThreadId: sourceThread.id,
+            sourceTurnId: input.turnId,
+            sourceMessageId: input.messageId,
+            sideChat: input.sideChat,
+            createdAt: new Date().toISOString(),
+          },
+        });
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            Alert.alert(
+              input.sideChat ? "Could not open side chat" : "Could not fork thread",
+              error instanceof Error ? error.message : "An error occurred.",
+            );
+          }
+          return;
         }
-        return;
+        navigationRef.current.navigate("Thread", {
+          environmentId: String(sourceThread.environmentId),
+          threadId: String(nextThreadId),
+        });
+      } finally {
+        forkInFlightRef.current = false;
       }
-      navigationRef.current.navigate("Thread", {
-        environmentId: String(sourceThread.environmentId),
-        threadId: String(nextThreadId),
-      });
     },
     [],
   );

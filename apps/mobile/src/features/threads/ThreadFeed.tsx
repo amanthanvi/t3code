@@ -2353,6 +2353,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       reviewCommentColors,
       userBubbleColor,
       viewportWidth,
+      forkCapability: props.forkCapability,
+      latestTurnIdentity: props.latestTurn
+        ? `${props.latestTurn.turnId}:${props.latestTurn.state}:${props.latestTurn.completedAt ?? ""}`
+        : null,
     }),
     [
       copiedRowId,
@@ -2363,6 +2367,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       reviewCommentColors,
       userBubbleColor,
       viewportWidth,
+      props.forkCapability,
+      props.latestTurn?.completedAt,
+      props.latestTurn?.state,
+      props.latestTurn?.turnId,
     ],
   );
   const reportHeaderMaterialVisibility = useCallback(

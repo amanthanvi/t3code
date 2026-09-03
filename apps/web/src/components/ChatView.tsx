@@ -4041,7 +4041,15 @@ function ChatViewContent(props: ChatViewProps) {
     }
   }, [activeThreadRef]);
   const addTerminalSurface = useCallback(() => {
-    if (!panelActionThreadRef || !activeThreadRef || !activeThreadId || !activeProject) return;
+    if (
+      embeddedSideChat ||
+      !panelActionThreadRef ||
+      !activeThreadRef ||
+      !activeThreadId ||
+      !activeProject
+    ) {
+      return;
+    }
     const cwd = gitCwd ?? activeProject.workspaceRoot;
     const terminalId = nextTerminalId(allocatableActiveTerminalIds);
     useRightPanelStore.getState().openTerminal(panelActionThreadRef, terminalId);
@@ -4065,6 +4073,7 @@ function ChatViewContent(props: ChatViewProps) {
     activeThreadRef,
     activeThreadWorktreePath,
     allocatableActiveTerminalIds,
+    embeddedSideChat,
     gitCwd,
     openTerminal,
     panelActionThreadRef,

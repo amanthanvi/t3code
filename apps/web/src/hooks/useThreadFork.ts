@@ -37,6 +37,8 @@ interface ForkableThread {
   readonly session: { readonly providerInstanceId?: ProviderInstanceId | undefined } | null;
 }
 
+type ForkSourceThread = Pick<ForkableThread, "environmentId" | "id">;
+
 function providerConfigForThread(
   thread: ForkableThread,
   serverConfigs: ReadonlyMap<EnvironmentId, ServerConfig>,
@@ -81,65 +83,76 @@ export function useThreadForkActions(
   forkCommandRef.current = forkCommand;
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
+  const forkInFlightRef = useRef(false);
 
   const dispatchFork = useCallback(
-    async (target: ThreadForkTarget, sideChat: boolean): Promise<boolean> => {
-      const currentSourceThread = sourceThreadRef.current;
+    async (
+      target: ThreadForkTarget,
+      sideChat: boolean,
+      sourceOverride?: ForkSourceThread,
+    ): Promise<boolean> => {
+      const currentSourceThread = sourceOverride ?? sourceThreadRef.current;
       if (!currentSourceThread) return false;
-      const threadId = newThreadId();
-      const result = await forkCommandRef.current({
-        environmentId: currentSourceThread.environmentId,
-        input: {
-          threadId,
-          sourceThreadId: currentSourceThread.id,
-          sourceTurnId: target.turnId,
-          sourceMessageId: target.messageId,
-          sideChat,
-          createdAt: new Date().toISOString(),
-        },
-      });
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
+      if (forkInFlightRef.current) return false;
+      forkInFlightRef.current = true;
+      try {
+        const threadId = newThreadId();
+        const result = await forkCommandRef.current({
+          environmentId: currentSourceThread.environmentId,
+          input: {
+            threadId,
+            sourceThreadId: currentSourceThread.id,
+            sourceTurnId: target.turnId,
+            sourceMessageId: target.messageId,
+            sideChat,
+            createdAt: new Date().toISOString(),
+          },
+        });
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: sideChat ? "Could not open side chat" : "Could not fork thread",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
+          return false;
+        }
+
+        const forkedThreadRef = scopeThreadRef(currentSourceThread.environmentId, threadId);
+        try {
+          await waitForThreadShell(forkedThreadRef);
+        } catch (error) {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: sideChat ? "Could not open side chat" : "Could not fork thread",
-              description: error instanceof Error ? error.message : "An error occurred.",
+              title: sideChat ? "Side chat created but not opened" : "Fork created but not opened",
+              description: error instanceof Error ? error.message : "The thread is still syncing.",
             }),
           );
+          return false;
         }
-        return false;
-      }
 
-      const forkedThreadRef = scopeThreadRef(currentSourceThread.environmentId, threadId);
-      try {
-        await waitForThreadShell(forkedThreadRef);
-      } catch (error) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: sideChat ? "Side chat created but not opened" : "Fork created but not opened",
-            description: error instanceof Error ? error.message : "The thread is still syncing.",
-          }),
-        );
-        return false;
-      }
+        if (sideChat) {
+          const hostRef = scopeThreadRef(
+            currentSourceThread.environmentId,
+            sourceOverride?.id ?? panelHostThreadIdRef.current ?? currentSourceThread.id,
+          );
+          useRightPanelStore.getState().openSideChat(hostRef, threadId);
+          return true;
+        }
 
-      if (sideChat) {
-        const hostRef = scopeThreadRef(
-          currentSourceThread.environmentId,
-          panelHostThreadIdRef.current ?? currentSourceThread.id,
-        );
-        useRightPanelStore.getState().openSideChat(hostRef, threadId);
+        await navigateRef.current({
+          to: "/$environmentId/$threadId",
+          params: { environmentId: currentSourceThread.environmentId, threadId },
+        });
         return true;
+      } finally {
+        forkInFlightRef.current = false;
       }
-
-      await navigateRef.current({
-        to: "/$environmentId/$threadId",
-        params: { environmentId: currentSourceThread.environmentId, threadId },
-      });
-      return true;
     },
     [],
   );
@@ -152,6 +165,12 @@ export function useThreadForkActions(
       ? dispatchForkRef.current(target, sideChat)
       : Promise.resolve(false);
   }, []);
+
+  const forkTarget = useCallback(
+    (source: ForkSourceThread, target: ThreadForkTarget, sideChat: boolean) =>
+      dispatchForkRef.current(target, sideChat, source),
+    [],
+  );
 
   const onForkAssistantMessage = useCallback(
     (input: {
@@ -178,7 +197,7 @@ export function useThreadForkActions(
   );
 
   return useMemo(
-    () => ({ capability, latest, forkLatest, onForkAssistantMessage }),
-    [capability, forkLatest, latest, onForkAssistantMessage],
+    () => ({ capability, latest, forkLatest, forkTarget, onForkAssistantMessage }),
+    [capability, forkLatest, forkTarget, latest, onForkAssistantMessage],
   );
 }

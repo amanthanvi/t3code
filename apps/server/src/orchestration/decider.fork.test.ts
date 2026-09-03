@@ -172,7 +172,7 @@ it.layer(NodeServices.layer)("thread fork decider", (it) => {
     }),
   );
 
-  it.effect("promotes a side chat through thread.meta.update", () =>
+  it.effect("allows clearing side chat metadata on any thread", () =>
     Effect.gen(function* () {
       const event = yield* decideOrchestrationCommand({
         command: {
@@ -187,6 +187,22 @@ it.layer(NodeServices.layer)("thread fork decider", (it) => {
       expect(updated?.type).toBe("thread.meta-updated");
       if (updated?.type !== "thread.meta-updated") return;
       expect(updated.payload.sideChat).toBe(false);
+    }),
+  );
+
+  it.effect("rejects turning an ordinary thread into a side chat", () =>
+    Effect.gen(function* () {
+      const error = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.meta.update",
+          commandId: CommandId.make("cmd-hide-ordinary-thread"),
+          threadId: SOURCE_THREAD_ID,
+          sideChat: true,
+        },
+        readModel: makeReadModel(),
+      }).pipe(Effect.flip);
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+      expect(error.message).toContain("is not a fork");
     }),
   );
 });
