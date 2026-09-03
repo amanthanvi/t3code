@@ -7,6 +7,7 @@ import {
   type ProviderSession,
   RuntimeItemId,
   RuntimeRequestId,
+  type RuntimeMode,
   ThreadId,
   type ToolLifecycleItemType,
   TurnId,
@@ -786,6 +787,27 @@ const abortOpenCodeSessionForTeardown = Effect.fn("abortOpenCodeSessionForTeardo
     Effect.ignore({ log: true }),
   );
 });
+
+const applyForkedOpenCodeSessionPermissions = Effect.fn("applyForkedOpenCodeSessionPermissions")(
+  function* (client: OpencodeClient, sessionId: string, runtimeMode: RuntimeMode) {
+    yield* runOpenCodeSdk("session.update", () =>
+      client.session.update({
+        sessionID: sessionId,
+        permission: buildOpenCodePermissionRules(runtimeMode),
+      }),
+    ).pipe(
+      Effect.catch((updateError) =>
+        runOpenCodeSdk("session.abort", (signal) =>
+          client.session.abort({ sessionID: sessionId }, { signal }),
+        ).pipe(
+          Effect.timeout("1 second"),
+          Effect.ignore({ log: true }),
+          Effect.andThen(Effect.fail(updateError)),
+        ),
+      ),
+    );
+  },
+);
 
 const cancelPendingOpenCodePrompt = Effect.fn("cancelPendingOpenCodePrompt")(function* (
   context: OpenCodeSessionContext,
@@ -2449,11 +2471,10 @@ export function makeOpenCodeAdapter(
                       detail: "OpenCode session.fork returned no session payload.",
                     });
                   }
-                  yield* runOpenCodeSdk("session.update", () =>
-                    client.session.update({
-                      sessionID: forked.id,
-                      permission: buildOpenCodePermissionRules(input.runtimeMode),
-                    }),
+                  yield* applyForkedOpenCodeSessionPermissions(
+                    client,
+                    forked.id,
+                    input.runtimeMode,
                   );
                   return { openCodeSession: forked, created: true };
                 }
@@ -2509,11 +2530,10 @@ export function makeOpenCodeAdapter(
                       detail: "OpenCode session.fork returned no session payload.",
                     });
                   }
-                  yield* runOpenCodeSdk("session.update", () =>
-                    client.session.update({
-                      sessionID: forked.id,
-                      permission: buildOpenCodePermissionRules(input.runtimeMode),
-                    }),
+                  yield* applyForkedOpenCodeSessionPermissions(
+                    client,
+                    forked.id,
+                    input.runtimeMode,
                   );
                   return { openCodeSession: forked, created: true };
                 }
