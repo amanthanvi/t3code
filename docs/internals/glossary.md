@@ -41,7 +41,7 @@ A durable thread whose provider context branches from another thread at a comple
 
 #### Side chat
 
-A presentation of a normal durable fork with `sideChat: true`. Side chats are omitted from navigation lists and grouped beside their parent thread. Promoting one clears the flag through `thread.meta.update`; closing is client-local, while deletion uses the normal `thread.delete` command.
+A presentation of a normal durable fork with `sideChat: true`. Side chats are omitted from navigation lists while their parent exists and grouped beside that parent; once the parent is removed, they reappear in lists as ordinary threads. Promoting one clears the flag through `thread.meta.update`; closing is client-local, while deletion uses the normal `thread.delete` command.
 
 #### Turn
 

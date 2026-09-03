@@ -34,6 +34,7 @@ import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
+import type { ProviderAdapterCapabilities } from "../../provider/Services/ProviderAdapter.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -739,13 +740,42 @@ const make = Effect.gen(function* () {
         });
       });
 
+    let providerCapabilities: ProviderAdapterCapabilities | undefined;
+    let latestTurnFork: typeof thread.fork = null;
+    if (thread.fork != null && !forkHasOwnResumeCursor) {
+      providerCapabilities = yield* providerService.getCapabilities(desiredInstanceId);
+      if (providerCapabilities.sessionFork === "latest-turn") {
+        latestTurnFork = thread.fork;
+      }
+    }
+
+    const sourceStillAtRecordedForkBoundary = Effect.fnUntraced(function* () {
+      if (latestTurnFork === null) return true;
+      const source = yield* resolveThread(latestTurnFork.sourceThreadId);
+      const sourceLatestTurn = source?.latestTurn ?? null;
+      return latestTurnFork.sourceTurnId === null
+        ? sourceLatestTurn === null
+        : sourceLatestTurn?.turnId === latestTurnFork.sourceTurnId &&
+            sourceLatestTurn.state === "completed";
+    });
+    const latestTurnForkBoundaryError = () =>
+      new ProviderAdapterRequestError({
+        provider: preferredProvider,
+        method: "thread.turn.start",
+        detail: `Source thread '${latestTurnFork?.sourceThreadId}' advanced after fork '${threadId}' was created. Latest-turn providers can only fork from the source's current completed head.`,
+      });
+
     const existingSessionThreadId =
       thread.session && thread.session.status !== "stopped" && activeSession ? thread.id : null;
     if (existingSessionThreadId) {
+      if (!(yield* sourceStillAtRecordedForkBoundary())) {
+        return yield* latestTurnForkBoundaryError();
+      }
       const runtimeModeChanged = thread.runtimeMode !== thread.session?.runtimeMode;
       const cwdChanged = effectiveCwd !== activeSession?.cwd;
-      const sessionModelSwitch = (yield* providerService.getCapabilities(desiredInstanceId))
-        .sessionModelSwitch;
+      const sessionModelSwitch = (
+        providerCapabilities ?? (yield* providerService.getCapabilities(desiredInstanceId))
+      ).sessionModelSwitch;
       const modelChanged =
         requestedModelSelection !== undefined &&
         requestedModelSelection.model !== activeSession?.model;
@@ -806,30 +836,6 @@ const make = Effect.gen(function* () {
       yield* bindSessionToThread(restartedSession);
       return restartedSession.threadId;
     }
-
-    let latestTurnFork: typeof thread.fork = null;
-    if (thread.fork != null && !forkHasOwnResumeCursor) {
-      const sessionFork = (yield* providerService.getCapabilities(desiredInstanceId)).sessionFork;
-      if (sessionFork === "latest-turn") {
-        latestTurnFork = thread.fork;
-      }
-    }
-
-    const sourceStillAtRecordedForkBoundary = Effect.fnUntraced(function* () {
-      if (latestTurnFork === null) return true;
-      const source = yield* resolveThread(latestTurnFork.sourceThreadId);
-      const sourceLatestTurn = source?.latestTurn ?? null;
-      return latestTurnFork.sourceTurnId === null
-        ? sourceLatestTurn === null
-        : sourceLatestTurn?.turnId === latestTurnFork.sourceTurnId &&
-            sourceLatestTurn.state === "completed";
-    });
-    const latestTurnForkBoundaryError = () =>
-      new ProviderAdapterRequestError({
-        provider: preferredProvider,
-        method: "thread.turn.start",
-        detail: `Source thread '${latestTurnFork?.sourceThreadId}' advanced after fork '${threadId}' was created. Latest-turn providers can only fork from the source's current completed head.`,
-      });
 
     if (!(yield* sourceStillAtRecordedForkBoundary())) {
       return yield* latestTurnForkBoundaryError();

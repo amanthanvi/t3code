@@ -55,6 +55,7 @@ import { ProjectionThreadMessage } from "../../persistence/Services/ProjectionTh
 import { ProjectionThreadProposedPlan } from "../../persistence/Services/ProjectionThreadProposedPlans.ts";
 import { ProjectionThreadSession } from "../../persistence/Services/ProjectionThreadSessions.ts";
 import { ProjectionThread } from "../../persistence/Services/ProjectionThreads.ts";
+import { ProjectionTurnState } from "../../persistence/Services/ProjectionTurns.ts";
 import {
   decodeThreadDetailPageCursor,
   encodeThreadDetailPageCursor,
@@ -162,6 +163,14 @@ const ProjectIdLookupInput = Schema.Struct({
 });
 const ThreadIdLookupInput = Schema.Struct({
   threadId: ThreadId,
+});
+const ThreadTurnStateLookupInput = Schema.Struct({
+  threadId: ThreadId,
+  turnId: TurnId,
+});
+const ProjectionThreadTurnStateRowSchema = Schema.Struct({
+  state: ProjectionTurnState,
+  assistantMessageId: Schema.NullOr(MessageId),
 });
 const ThreadActivityKindsLookupInput = Schema.Struct({
   threadId: ThreadId,
@@ -1253,6 +1262,21 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         WHERE threads.thread_id = ${threadId}
           AND threads.deleted_at IS NULL
           AND threads.archived_at IS NULL
+        LIMIT 1
+      `,
+  });
+
+  const getThreadTurnStateRow = SqlSchema.findOneOption({
+    Request: ThreadTurnStateLookupInput,
+    Result: ProjectionThreadTurnStateRowSchema,
+    execute: ({ threadId, turnId }) =>
+      sql`
+        SELECT
+          state,
+          assistant_message_id AS "assistantMessageId"
+        FROM projection_turns
+        WHERE thread_id = ${threadId}
+          AND turn_id = ${turnId}
         LIMIT 1
       `,
   });
@@ -2751,6 +2775,19 @@ pending_approval_requests AS (
       } satisfies OrchestrationThreadShell);
     });
 
+  const getThreadTurnState: ProjectionSnapshotQueryShape["getThreadTurnState"] = (
+    threadId,
+    turnId,
+  ) =>
+    getThreadTurnStateRow({ threadId, turnId }).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.getThreadTurnState:query",
+          "ProjectionSnapshotQuery.getThreadTurnState:decodeRow",
+        ),
+      ),
+    );
+
   // Contiguous turn range bounding a windowed detail read; undefined loads the
   // full thread. Resolved from a window request inside the snapshot
   // transaction (see getThreadDetailSnapshot).
@@ -3188,6 +3225,7 @@ pending_approval_requests AS (
     getThreadCheckpointContext,
     getFullThreadDiffContext,
     getThreadShellById,
+    getThreadTurnState,
     getThreadDetailById,
     getThreadDetailSnapshot,
   } satisfies ProjectionSnapshotQueryShape;

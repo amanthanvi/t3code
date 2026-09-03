@@ -16,10 +16,14 @@ import * as Layer from "effect/Layer";
 import * as ServerConfig from "../config.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { cleanupFailedUploadedAttachments, normalizeDispatchCommand } from "./Normalizer.ts";
+import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
 
 const testLayer = Layer.mergeAll(
   WorkspacePaths.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "t3-normalizer-attachments-" }),
+  Layer.mock(ProjectionSnapshotQuery, {
+    getThreadTurnState: () => Effect.die("unused"),
+  }),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 const attachmentUuid = "00000000-0000-4000-8000-0000000000aa";

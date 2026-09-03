@@ -135,10 +135,26 @@ it.layer(NodeServices.layer)("thread fork decider", (it) => {
     }),
   );
 
+  it.effect("rejects a source message that does not match the resolved latest turn", () =>
+    Effect.gen(function* () {
+      const error = yield* decideOrchestrationCommand({
+        command: {
+          ...forkCommand,
+          sourceMessageId: MessageId.make("message-other"),
+        },
+        readModel: makeReadModel(),
+      }).pipe(Effect.flip);
+
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+      expect(error.message).toContain("is not the assistant message");
+    }),
+  );
+
   it.effect("allows sources with no turns and explicit older boundaries after restart", () =>
     Effect.gen(function* () {
+      const { sourceMessageId: _sourceMessageId, ...forkWithoutMessage } = forkCommand;
       const noTurns = yield* decideOrchestrationCommand({
-        command: forkCommand,
+        command: forkWithoutMessage,
         readModel: makeReadModel({ hasLatestTurn: false }),
       });
       const noTurnsCreated = Array.isArray(noTurns) ? noTurns[0] : noTurns;

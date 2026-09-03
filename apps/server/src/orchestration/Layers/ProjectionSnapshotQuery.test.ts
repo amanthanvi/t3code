@@ -11,6 +11,7 @@ import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -40,6 +41,64 @@ const projectionSnapshotLayer = it.layer(
 );
 
 projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
+  it.effect("reads one concrete thread turn state without hydrating thread detail", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_turns`;
+      yield* sql`
+        INSERT INTO projection_turns (
+          thread_id,
+          turn_id,
+          pending_message_id,
+          source_proposed_plan_thread_id,
+          source_proposed_plan_id,
+          assistant_message_id,
+          state,
+          requested_at,
+          started_at,
+          completed_at,
+          checkpoint_turn_count,
+          checkpoint_ref,
+          checkpoint_status,
+          checkpoint_files_json
+        )
+        VALUES (
+          'thread-source',
+          'turn-source',
+          NULL,
+          NULL,
+          NULL,
+          'message-source',
+          'completed',
+          '2026-09-03T12:00:00.000Z',
+          '2026-09-03T12:00:00.000Z',
+          '2026-09-03T12:00:01.000Z',
+          NULL,
+          NULL,
+          NULL,
+          '[]'
+        )
+      `;
+
+      const found = yield* snapshotQuery.getThreadTurnState(
+        ThreadId.make("thread-source"),
+        TurnId.make("turn-source"),
+      );
+      const missing = yield* snapshotQuery.getThreadTurnState(
+        ThreadId.make("thread-source"),
+        TurnId.make("turn-missing"),
+      );
+
+      assert.deepEqual(Option.getOrThrow(found), {
+        state: "completed",
+        assistantMessageId: MessageId.make("message-source"),
+      });
+      assert.isTrue(Option.isNone(missing));
+    }),
+  );
+
   it.effect("hydrates read model from projection tables and computes snapshot sequence", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;

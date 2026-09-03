@@ -383,6 +383,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       const latestTurn = source.latestTurn;
       const sourceTurnIsLatest =
         command.sourceTurnId !== undefined && latestTurn?.turnId === command.sourceTurnId;
+      const sourceMessageTargetsLatest =
+        command.sourceMessageId !== undefined &&
+        (command.sourceTurnId === undefined || sourceTurnIsLatest);
       if (
         command.sourceTurnId === undefined &&
         latestTurn !== null &&
@@ -407,6 +410,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             detail: `Turn '${command.sourceTurnId}' is not a completed turn of source thread '${command.sourceThreadId}'.`,
           });
         }
+      }
+      if (
+        sourceMessageTargetsLatest &&
+        latestTurn?.assistantMessageId !== command.sourceMessageId
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Message '${command.sourceMessageId}' is not the assistant message for turn '${latestTurn?.turnId ?? "none"}' on source thread '${command.sourceThreadId}'.`,
+        });
       }
 
       const title = command.title ?? DEFAULT_THREAD_TITLE;

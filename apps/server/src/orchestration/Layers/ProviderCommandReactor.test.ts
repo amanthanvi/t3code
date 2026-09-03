@@ -259,13 +259,17 @@ describe("ProviderCommandReactor", () => {
         ),
       );
     });
-    const sendTurn = vi.fn((_: unknown) =>
-      Effect.succeed({
+    const sendTurn = vi.fn((sendInput: unknown) => {
+      void sendInput;
+      return Effect.succeed({
         threadId: ThreadId.make("thread-1"),
         turnId: asTurnId("turn-1"),
-      }),
-    );
-    const interruptTurn = vi.fn((_: unknown) => input?.interruptTurnEffect?.() ?? Effect.void);
+      });
+    });
+    const interruptTurn = vi.fn((interruptInput: unknown) => {
+      void interruptInput;
+      return input?.interruptTurnEffect?.() ?? Effect.void;
+    });
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
     const respondToUserInput = vi.fn<ProviderServiceShape["respondToUserInput"]>(() => Effect.void);
     const stopSession = vi.fn((stopInput: unknown) =>
@@ -298,13 +302,17 @@ describe("ProviderCommandReactor", () => {
             : "renamed-branch",
       }),
     );
-    const pruneWorktrees = vi.fn((_: { readonly cwd: string }) => Effect.void);
+    const pruneWorktrees = vi.fn((pruneInput: { readonly cwd: string }) => {
+      void pruneInput;
+      return Effect.void;
+    });
     const createWorktree = vi.fn(
       (input: { readonly refName: string; readonly path: string | null }) =>
         Effect.succeed({ worktree: { path: input.path ?? "", refName: input.refName } }),
     );
-    const refreshStatus = vi.fn((_: string) =>
-      Effect.succeed({
+    const refreshStatus = vi.fn((cwd: string) => {
+      void cwd;
+      return Effect.succeed({
         isRepo: true,
         hasPrimaryRemote: true,
         isDefaultRef: false,
@@ -319,24 +327,26 @@ describe("ProviderCommandReactor", () => {
         aheadCount: 0,
         behindCount: 0,
         pr: null,
-      }),
-    );
-    const generateBranchName = vi.fn<TextGeneration["Service"]["generateBranchName"]>((_) =>
-      Effect.fail(
+      });
+    });
+    const generateBranchName = vi.fn<TextGeneration["Service"]["generateBranchName"]>((input) => {
+      void input;
+      return Effect.fail(
         new TextGenerationError({
           operation: "generateBranchName",
           detail: "disabled in test harness",
         }),
-      ),
-    );
-    const generateThreadTitle = vi.fn<TextGeneration["Service"]["generateThreadTitle"]>((_) =>
-      Effect.fail(
+      );
+    });
+    const generateThreadTitle = vi.fn<TextGeneration["Service"]["generateThreadTitle"]>((input) => {
+      void input;
+      return Effect.fail(
         new TextGenerationError({
           operation: "generateThreadTitle",
           detail: "disabled in test harness",
         }),
-      ),
-    );
+      );
+    });
     const providerSnapshots = [
       {
         instanceId: modelSelection.instanceId,
@@ -1244,6 +1254,151 @@ describe("ProviderCommandReactor", () => {
     expect(
       fork?.activities.find((activity) => activity.kind === "provider.turn.start.failed")?.payload,
     ).toMatchObject({ detail: expect.stringContaining("advanced") });
+  });
+
+  it("rejects retrying an unbound latest-turn fork when stopping its stale session failed", async () => {
+    const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+    const claudeDriver = ProviderDriverKind.make("claudeAgent");
+    const sourceThreadId = ThreadId.make("thread-1");
+    const recordedTurnId = asTurnId("turn-recorded-before-failed-stop");
+    const advancedTurnId = asTurnId("turn-advanced-before-failed-stop");
+    const forkThreadId = ThreadId.make("thread-latest-turn-failed-stop");
+    let harness!: Awaited<ReturnType<typeof createHarness>>;
+    const setSourceSession = (input: {
+      readonly commandId: string;
+      readonly status: "running" | "ready";
+      readonly activeTurnId: TurnId | null;
+      readonly createdAt: string;
+    }) =>
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make(input.commandId),
+        threadId: sourceThreadId,
+        session: {
+          threadId: sourceThreadId,
+          status: input.status,
+          providerName: claudeDriver,
+          providerInstanceId: claudeInstanceId,
+          runtimeMode: "approval-required",
+          activeTurnId: input.activeTurnId,
+          lastError: null,
+          updatedAt: input.createdAt,
+        },
+        createdAt: input.createdAt,
+      });
+
+    harness = await createHarness({
+      threadModelSelection: {
+        instanceId: claudeInstanceId,
+        model: "claude-opus-4-6",
+      },
+      sessionFork: "latest-turn",
+      startSessionEffect: (session) =>
+        Effect.gen(function* () {
+          yield* setSourceSession({
+            commandId: "cmd-source-advanced-before-failed-stop-running",
+            status: "running",
+            activeTurnId: advancedTurnId,
+            createdAt: "2026-09-03T12:05:03.000Z",
+          });
+          yield* setSourceSession({
+            commandId: "cmd-source-advanced-before-failed-stop-ready",
+            status: "ready",
+            activeTurnId: null,
+            createdAt: "2026-09-03T12:05:04.000Z",
+          });
+          const { resumeCursor: _resumeCursor, ...unboundSession } = session;
+          return unboundSession;
+        }).pipe(Effect.orDie),
+      stopSessionEffect: () =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: "claudeAgent",
+            method: "session.stop",
+            detail: "stale native fork session could not be stopped",
+          }),
+        ),
+    });
+
+    await harness.runEffect(
+      setSourceSession({
+        commandId: "cmd-source-recorded-before-failed-stop-running",
+        status: "running",
+        activeTurnId: recordedTurnId,
+        createdAt: "2026-09-03T12:05:00.000Z",
+      }),
+    );
+    await harness.runEffect(
+      setSourceSession({
+        commandId: "cmd-source-recorded-before-failed-stop-ready",
+        status: "ready",
+        activeTurnId: null,
+        createdAt: "2026-09-03T12:05:01.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("cmd-latest-turn-failed-stop-fork"),
+        threadId: forkThreadId,
+        sourceThreadId,
+        sideChat: true,
+        createdAt: "2026-09-03T12:05:02.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-latest-turn-failed-stop-first-turn"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("message-latest-turn-failed-stop-first"),
+          role: "user",
+          text: "Start while the source advances.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-09-03T12:05:05.000Z",
+      }),
+    );
+    await harness.drain();
+
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+    expect(harness.stopSession).toHaveBeenCalledTimes(1);
+    expect(harness.runtimeSessions).toHaveLength(1);
+    expect(await harness.runEffect(harness.getSessionBinding(forkThreadId))).toMatchObject({
+      threadId: forkThreadId,
+    });
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-latest-turn-failed-stop-retry-turn"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("message-latest-turn-failed-stop-retry"),
+          role: "user",
+          text: "Retry the forked turn.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-09-03T12:05:06.000Z",
+      }),
+    );
+    await harness.drain();
+
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+    expect(harness.stopSession).toHaveBeenCalledTimes(1);
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+    const failures = (await harness.readModel()).threads
+      .find((thread) => thread.id === forkThreadId)
+      ?.activities.filter((activity) => activity.kind === "provider.turn.start.failed");
+    expect(failures).toHaveLength(2);
+    expect(failures?.[1]?.payload).toMatchObject({
+      detail: expect.stringContaining("advanced"),
+    });
   });
 
   effectIt.effect("retains a turn dispatched immediately after start until activation", () =>
@@ -3114,9 +3269,11 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.startSession.mock.calls.length === 1);
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
 
-    harness.startSession.mockImplementationOnce(
-      (_: unknown, __: unknown) => Effect.fail("simulated restart failure") as never,
-    );
+    harness.startSession.mockImplementationOnce((threadId: unknown, startInput: unknown) => {
+      void threadId;
+      void startInput;
+      return Effect.fail("simulated restart failure") as never;
+    });
 
     await Effect.runPromise(
       harness.engine.dispatch({
