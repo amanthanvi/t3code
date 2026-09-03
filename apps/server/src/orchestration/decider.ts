@@ -28,7 +28,7 @@ import {
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
 import { threadHasQueuedTurnStart } from "./ThreadSettlementPolicy.ts";
-import { DEFAULT_THREAD_TITLE } from "./threadTitles.ts";
+import { DEFAULT_THREAD_TITLE, forkThreadTitle } from "./threadTitles.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -421,7 +421,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         });
       }
 
-      const title = command.title ?? DEFAULT_THREAD_TITLE;
+      const title =
+        command.title ??
+        forkThreadTitle(
+          source.title,
+          listThreadsByProjectId(readModel, source.projectId).map((thread) => thread.title),
+        );
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",

@@ -92,7 +92,7 @@ it.layer(NodeServices.layer)("thread fork decider", (it) => {
       expect(created.payload).toMatchObject({
         threadId: FORK_THREAD_ID,
         projectId: ProjectId.make("project-1"),
-        title: "New thread",
+        title: "Source thread (1)",
         modelSelection: {
           instanceId: ProviderInstanceId.make("codex-personal"),
           model: "gpt-5.6-sol",
