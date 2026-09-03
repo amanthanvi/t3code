@@ -112,6 +112,32 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
       `,
   });
 
+  const listTaskLifecycleActivityRows = SqlSchema.findAll({
+    Request: ListProjectionThreadActivitiesInput,
+    Result: ProjectionThreadActivityDbRowSchema,
+    execute: ({ threadId }) =>
+      sql`
+        SELECT
+          activity_id AS "activityId",
+          thread_id AS "threadId",
+          turn_id AS "turnId",
+          tone,
+          kind,
+          summary,
+          payload_json AS "payload",
+          sequence,
+          created_at AS "createdAt"
+        FROM projection_thread_activities
+        WHERE thread_id = ${threadId}
+          AND kind IN ('task.started', 'task.progress', 'task.updated', 'task.completed')
+        ORDER BY
+          CASE WHEN sequence IS NULL THEN 0 ELSE 1 END ASC,
+          sequence ASC,
+          created_at ASC,
+          activity_id ASC
+      `,
+  });
+
   const listUserInputLifecycleActivityRows = SqlSchema.findAll({
     Request: ListProjectionThreadActivitiesInput,
     Result: ProjectionThreadActivityDbRowSchema,
@@ -172,6 +198,18 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
       Effect.map(mapActivityRows),
     );
 
+  const listTaskLifecycleByThreadId: ProjectionThreadActivityRepositoryShape["listTaskLifecycleByThreadId"] =
+    (input) =>
+      listTaskLifecycleActivityRows(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionThreadActivityRepository.listTaskLifecycleByThreadId:query",
+            "ProjectionThreadActivityRepository.listTaskLifecycleByThreadId:decodeRows",
+          ),
+        ),
+        Effect.map(mapActivityRows),
+      );
+
   const listUserInputLifecycleByThreadId: ProjectionThreadActivityRepositoryShape["listUserInputLifecycleByThreadId"] =
     (input) =>
       listUserInputLifecycleActivityRows(input).pipe(
@@ -194,6 +232,7 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
   return {
     upsert,
     listByThreadId,
+    listTaskLifecycleByThreadId,
     listUserInputLifecycleByThreadId,
     deleteByThreadId,
   } satisfies ProjectionThreadActivityRepositoryShape;

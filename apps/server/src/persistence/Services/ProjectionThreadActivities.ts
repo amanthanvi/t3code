@@ -68,6 +68,17 @@ export interface ProjectionThreadActivityRepositoryShape {
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadActivity>, ProjectionRepositoryError>;
 
   /**
+   * List a thread's complete task lifecycle history.
+   *
+   * Unwindowed on purpose: background-task settlement must see every task
+   * row, not the newest slice the thread detail read returns. Filters in
+   * SQLite so unrelated payloads do not enter server memory.
+   */
+  readonly listTaskLifecycleByThreadId: (
+    input: ListProjectionThreadActivitiesInput,
+  ) => Effect.Effect<ReadonlyArray<ProjectionThreadActivity>, ProjectionRepositoryError>;
+
+  /**
    * List activity rows used to derive pending user-input state.
    *
    * Filters in SQLite so unrelated payloads do not enter server memory.
