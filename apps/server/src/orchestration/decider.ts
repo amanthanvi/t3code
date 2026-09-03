@@ -373,12 +373,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: `Source thread '${command.sourceThreadId}' is deleted and cannot be forked.`,
         });
       }
-      if (findThreadById(readModel, command.threadId) !== undefined) {
-        return yield* new OrchestrationCommandInvariantError({
-          commandType: command.type,
-          detail: `Thread '${command.threadId}' already exists and cannot be created twice.`,
-        });
-      }
+      yield* requireThreadAbsent({ readModel, command, threadId: command.threadId });
 
       const latestTurn = source.latestTurn;
       const sourceTurnIsLatest =
@@ -426,6 +421,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         forkThreadTitle(
           source.title,
           listThreadsByProjectId(readModel, source.projectId).map((thread) => thread.title),
+          { sourceIsFork: source.fork != null },
         );
       return {
         ...(yield* withEventBase({
