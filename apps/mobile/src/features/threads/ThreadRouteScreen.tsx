@@ -853,6 +853,10 @@ function ThreadRouteContent(
       threadHeaderMenuItem ? [threadHeaderMenuItem, ...gitRightHeaderItems] : gitRightHeaderItems,
     [gitRightHeaderItems, threadHeaderMenuItem],
   );
+  const threadHeaderOptionsVersion = JSON.stringify([
+    selectedThread?.sideChat === true,
+    sideChatMenuItems.map((item) => [item.id, item.title]),
+  ]);
   const androidThreadMenuActions = useMemo<MenuAction[]>(() => {
     const actions: MenuAction[] = [];
     if (selectedThread?.sideChat === true) {
@@ -1064,6 +1068,7 @@ function ThreadRouteContent(
     <>
       {activeInspectorRenderer ? <InspectorPaneRoleActivation /> : null}
       <NativeStackScreenOptions
+        optionsVersion={threadHeaderOptionsVersion}
         options={{
           // Android draws its own in-flow header (AndroidScreenHeader below);
           // the native stack header stays iOS-only.

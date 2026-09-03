@@ -446,6 +446,7 @@ const ATTACHMENT_ONLY_BOOTSTRAP_PROMPT =
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
+const EMPTY_TURN_DIFF_SUMMARIES = new Map<MessageId, TurnDiffSummary>();
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
   const transitionGroupRef = useRef<HTMLDivElement | null>(null);
@@ -3833,9 +3834,9 @@ function ChatViewContent(props: ChatViewProps) {
     useRightPanelStore.getState().open(panelActionThreadRef, "files");
   }, [activeProject, panelActionThreadRef]);
   const addAgentsSurface = useCallback(() => {
-    if (!panelActionThreadRef) return;
+    if (embeddedSideChat || !panelActionThreadRef) return;
     useRightPanelStore.getState().open(panelActionThreadRef, "agents");
-  }, [panelActionThreadRef]);
+  }, [embeddedSideChat, panelActionThreadRef]);
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!panelActionThreadRef || !activeProject) return;
@@ -7728,7 +7729,9 @@ function ChatViewContent(props: ChatViewProps) {
                 timelineEntries={timelineEntries}
                 latestTurn={activeLatestTurn}
                 runningTurnId={activeRunningTurnId}
-                turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
+                turnDiffSummaryByAssistantMessageId={
+                  embeddedSideChat ? EMPTY_TURN_DIFF_SUMMARIES : turnDiffSummaryByAssistantMessageId
+                }
                 activeThreadEnvironmentId={activeThread.environmentId}
                 routeThreadKey={routeThreadKey}
                 onOpenTurnDiff={onOpenTurnDiff}

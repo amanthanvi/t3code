@@ -43,6 +43,14 @@ export function forkOrigin(shell: OrchestrationThreadShell): ThreadForkOrigin | 
   return shell.fork ?? null;
 }
 
+function isHiddenSideChat(
+  shell: OrchestrationThreadShell,
+  threadIds: Pick<ReadonlyMap<ThreadId, unknown>, "has">,
+): boolean {
+  const origin = forkOrigin(shell);
+  return isSideChat(shell) && origin !== null && threadIds.has(origin.sourceThreadId);
+}
+
 export function createEnvironmentThreadShellAtoms(input: {
   readonly catalogValueAtom: Atom.Atom<EnvironmentCatalogState>;
   readonly snapshotAtom: (
@@ -69,8 +77,9 @@ export function createEnvironmentThreadShellAtoms(input: {
   const environmentThreadRefsAtom = Atom.family((environmentId: EnvironmentId) => {
     let previous: ReadonlyArray<ScopedThreadRef> = [];
     return Atom.make((get) => {
+      const threadIds = get(environmentThreadIndexAtom(environmentId));
       const next = get(environmentThreadsAtom(environmentId))
-        .filter((thread) => !isSideChat(thread))
+        .filter((thread) => !isHiddenSideChat(thread, threadIds))
         .map((thread) => ({
           environmentId,
           threadId: thread.id,
@@ -105,8 +114,9 @@ export function createEnvironmentThreadShellAtoms(input: {
     > = EMPTY_THREAD_REFS_BY_PROJECT;
     return Atom.make((get) => {
       const grouped = new Map<ProjectId, ScopedThreadRef[]>();
+      const threadIds = get(environmentThreadIndexAtom(environmentId));
       for (const thread of get(environmentThreadsAtom(environmentId))) {
-        if (isSideChat(thread)) continue;
+        if (isHiddenSideChat(thread, threadIds)) continue;
         const refs = grouped.get(thread.projectId);
         const ref = { environmentId, threadId: thread.id };
         if (refs === undefined) {
@@ -140,9 +150,11 @@ export function createEnvironmentThreadShellAtoms(input: {
     let previousSources: ReadonlyMap<ThreadId, ReadonlyArray<OrchestrationThreadShell>> = new Map();
     return Atom.make((get): ReadonlyMap<ThreadId, ReadonlyArray<EnvironmentThreadShell>> => {
       const grouped = new Map<ThreadId, OrchestrationThreadShell[]>();
+      const threadIds = get(environmentThreadIndexAtom(environmentId));
       for (const thread of get(environmentThreadsAtom(environmentId))) {
+        if (!isHiddenSideChat(thread, threadIds)) continue;
         const origin = forkOrigin(thread);
-        if (!isSideChat(thread) || origin === null) continue;
+        if (origin === null) continue;
         const siblings = grouped.get(origin.sourceThreadId);
         if (siblings === undefined) {
           grouped.set(origin.sourceThreadId, [thread]);

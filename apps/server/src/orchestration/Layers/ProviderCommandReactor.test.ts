@@ -337,6 +337,23 @@ describe("ProviderCommandReactor", () => {
     ];
 
     const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
+    const getSessionBinding = (threadId: ThreadId) => {
+      const session = runtimeSessions.find((candidate) => candidate.threadId === threadId);
+      return Effect.succeed(
+        session === undefined
+          ? null
+          : {
+              threadId,
+              provider: session.provider,
+              ...(session.providerInstanceId !== undefined
+                ? { providerInstanceId: session.providerInstanceId }
+                : {}),
+              runtimeMode: session.runtimeMode,
+              status: "running" as const,
+              ...(session.resumeCursor !== undefined ? { resumeCursor: session.resumeCursor } : {}),
+            },
+      );
+    };
     const service: ProviderServiceShape = {
       startSession: startSession as ProviderServiceShape["startSession"],
       sendTurn: sendTurn as ProviderServiceShape["sendTurn"],
@@ -345,25 +362,7 @@ describe("ProviderCommandReactor", () => {
       respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
       stopSession: stopSession as ProviderServiceShape["stopSession"],
       listSessions: () => Effect.succeed(runtimeSessions),
-      getSessionBinding: (threadId) => {
-        const session = runtimeSessions.find((candidate) => candidate.threadId === threadId);
-        return Effect.succeed(
-          session === undefined
-            ? null
-            : {
-                threadId,
-                provider: session.provider,
-                ...(session.providerInstanceId !== undefined
-                  ? { providerInstanceId: session.providerInstanceId }
-                  : {}),
-                runtimeMode: session.runtimeMode,
-                status: "running" as const,
-                ...(session.resumeCursor !== undefined
-                  ? { resumeCursor: session.resumeCursor }
-                  : {}),
-              },
-        );
-      },
+      getSessionBinding,
       getCapabilities: (_provider) =>
         Effect.succeed({
           sessionModelSwitch: input?.sessionModelSwitch ?? "in-session",
@@ -564,6 +563,7 @@ describe("ProviderCommandReactor", () => {
       refreshStatus,
       generateBranchName,
       generateThreadTitle,
+      getSessionBinding,
       runtimeSessions,
       stateDir,
       drain,
@@ -888,6 +888,117 @@ describe("ProviderCommandReactor", () => {
       .find((thread) => thread.id === forkThreadId)
       ?.activities.find((activity) => activity.kind === "provider.turn.start.failed");
     expect(failure?.payload).toMatchObject({ detail: expect.stringContaining("advanced") });
+  });
+
+  it("stops a latest-turn native fork when the source advances during session startup", async () => {
+    const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+    const claudeDriver = ProviderDriverKind.make("claudeAgent");
+    const sourceThreadId = ThreadId.make("thread-1");
+    const recordedTurnId = asTurnId("turn-recorded-before-start");
+    const advancedTurnId = asTurnId("turn-advanced-during-start");
+    const forkThreadId = ThreadId.make("thread-latest-turn-start-race");
+    let harness!: Awaited<ReturnType<typeof createHarness>>;
+    const setSourceSession = (input: {
+      readonly commandId: string;
+      readonly status: "running" | "ready";
+      readonly activeTurnId: TurnId | null;
+      readonly createdAt: string;
+    }) =>
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make(input.commandId),
+        threadId: sourceThreadId,
+        session: {
+          threadId: sourceThreadId,
+          status: input.status,
+          providerName: claudeDriver,
+          providerInstanceId: claudeInstanceId,
+          runtimeMode: "approval-required",
+          activeTurnId: input.activeTurnId,
+          lastError: null,
+          updatedAt: input.createdAt,
+        },
+        createdAt: input.createdAt,
+      });
+
+    harness = await createHarness({
+      threadModelSelection: {
+        instanceId: claudeInstanceId,
+        model: "claude-opus-4-6",
+      },
+      sessionFork: "latest-turn",
+      startSessionEffect: (session) =>
+        Effect.gen(function* () {
+          yield* setSourceSession({
+            commandId: "cmd-source-advanced-during-start-running",
+            status: "running",
+            activeTurnId: advancedTurnId,
+            createdAt: "2026-09-03T12:04:03.000Z",
+          });
+          yield* setSourceSession({
+            commandId: "cmd-source-advanced-during-start-ready",
+            status: "ready",
+            activeTurnId: null,
+            createdAt: "2026-09-03T12:04:04.000Z",
+          });
+          return session;
+        }).pipe(Effect.orDie),
+    });
+
+    await harness.runEffect(
+      setSourceSession({
+        commandId: "cmd-source-recorded-before-start-running",
+        status: "running",
+        activeTurnId: recordedTurnId,
+        createdAt: "2026-09-03T12:04:00.000Z",
+      }),
+    );
+    await harness.runEffect(
+      setSourceSession({
+        commandId: "cmd-source-recorded-before-start-ready",
+        status: "ready",
+        activeTurnId: null,
+        createdAt: "2026-09-03T12:04:01.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("cmd-latest-turn-start-race-fork"),
+        threadId: forkThreadId,
+        sourceThreadId,
+        sideChat: true,
+        createdAt: "2026-09-03T12:04:02.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-latest-turn-start-race-turn"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("message-latest-turn-start-race"),
+          role: "user",
+          text: "Start while the source advances.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-09-03T12:04:05.000Z",
+      }),
+    );
+    await harness.drain();
+
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+    expect(harness.stopSession).toHaveBeenCalledWith({ threadId: forkThreadId });
+    expect(harness.runtimeSessions).toEqual([]);
+    expect(await harness.runEffect(harness.getSessionBinding(forkThreadId))).toBeNull();
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+    const fork = (await harness.readModel()).threads.find((thread) => thread.id === forkThreadId);
+    expect(fork?.session?.status).toBe("error");
+    expect(
+      fork?.activities.find((activity) => activity.kind === "provider.turn.start.failed")?.payload,
+    ).toMatchObject({ detail: expect.stringContaining("advanced") });
   });
 
   effectIt.effect("retains a turn dispatched immediately after start until activation", () =>
