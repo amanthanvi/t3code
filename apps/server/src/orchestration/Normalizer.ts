@@ -20,6 +20,7 @@ import {
 } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
 import { parseBase64DataUrl } from "../imageMime.ts";
+import { ProviderService } from "../provider/Services/ProviderService.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
@@ -158,6 +159,34 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
           commandType: canonicalCommand.type,
           detail: `Message '${canonicalCommand.sourceMessageId}' is not the assistant message for turn '${canonicalCommand.sourceTurnId}' on source thread '${canonicalCommand.sourceThreadId}'.`,
         });
+      }
+
+      const activeSourceThread = yield* projectionSnapshotQuery.getThreadShellById(
+        canonicalCommand.sourceThreadId,
+      );
+      const sourceThread = Option.isSome(activeSourceThread)
+        ? activeSourceThread
+        : Option.fromNullishOr(
+            (yield* projectionSnapshotQuery.getArchivedShellSnapshot()).threads.find(
+              (thread) => thread.id === canonicalCommand.sourceThreadId,
+            ),
+          );
+      if (Option.isSome(sourceThread)) {
+        const providerService = yield* ProviderService;
+        const capabilities = yield* providerService.getCapabilities(
+          sourceThread.value.modelSelection.instanceId,
+        );
+        const latestTurn = sourceThread.value.latestTurn;
+        if (
+          capabilities.sessionFork === "latest-turn" &&
+          (latestTurn?.turnId !== canonicalCommand.sourceTurnId ||
+            latestTurn?.state !== "completed")
+        ) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: canonicalCommand.type,
+            detail: `Turn '${canonicalCommand.sourceTurnId}' is not the latest completed turn of source thread '${canonicalCommand.sourceThreadId}'. Provider instance '${sourceThread.value.modelSelection.instanceId}' can only fork from the source's current completed head.`,
+          });
+        }
       }
     }
 

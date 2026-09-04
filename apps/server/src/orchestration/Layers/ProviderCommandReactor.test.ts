@@ -46,6 +46,7 @@ import {
   ProviderService,
   type ProviderServiceShape,
 } from "../../provider/Services/ProviderService.ts";
+import type { ProviderRuntimeBinding } from "../../provider/Services/ProviderSessionDirectory.ts";
 import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
 import { makeProviderRegistryLayer } from "../../provider/testUtils/providerRegistryMock.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
@@ -193,6 +194,7 @@ describe("ProviderCommandReactor", () => {
     );
     let nextSessionIndex = 1;
     const runtimeSessions: Array<ProviderSession> = [];
+    const persistedBindings = new Map<ThreadId, ProviderRuntimeBinding>();
     const modelSelection = input?.threadModelSelection ?? {
       instanceId: ProviderInstanceId.make("codex"),
       model: "gpt-5-codex",
@@ -255,6 +257,18 @@ describe("ProviderCommandReactor", () => {
         Effect.tap((startedSession) =>
           Effect.sync(() => {
             runtimeSessions.push(startedSession);
+            persistedBindings.set(startedSession.threadId, {
+              threadId: startedSession.threadId,
+              provider: startedSession.provider,
+              ...(startedSession.providerInstanceId !== undefined
+                ? { providerInstanceId: startedSession.providerInstanceId }
+                : {}),
+              runtimeMode: startedSession.runtimeMode,
+              status: "running",
+              ...(startedSession.resumeCursor !== undefined
+                ? { resumeCursor: startedSession.resumeCursor }
+                : {}),
+            });
           }),
         ),
       );
@@ -287,9 +301,28 @@ describe("ProviderCommandReactor", () => {
             if (index >= 0) {
               runtimeSessions.splice(index, 1);
             }
+            const binding = persistedBindings.get(threadId);
+            if (binding !== undefined) {
+              persistedBindings.set(threadId, {
+                ...binding,
+                status: "stopped",
+              });
+            }
           }),
         ),
       ),
+    );
+    const clearSessionResumeCursor = vi.fn<ProviderServiceShape["clearSessionResumeCursor"]>(
+      (threadId) =>
+        Effect.sync(() => {
+          const binding = persistedBindings.get(threadId);
+          if (binding !== undefined) {
+            persistedBindings.set(threadId, {
+              ...binding,
+              resumeCursor: null,
+            });
+          }
+        }),
     );
     const renameBranch = vi.fn((input: unknown) =>
       Effect.succeed({
@@ -357,23 +390,8 @@ describe("ProviderCommandReactor", () => {
     ];
 
     const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
-    const getSessionBinding = (threadId: ThreadId) => {
-      const session = runtimeSessions.find((candidate) => candidate.threadId === threadId);
-      return Effect.succeed(
-        session === undefined
-          ? null
-          : {
-              threadId,
-              provider: session.provider,
-              ...(session.providerInstanceId !== undefined
-                ? { providerInstanceId: session.providerInstanceId }
-                : {}),
-              runtimeMode: session.runtimeMode,
-              status: "running" as const,
-              ...(session.resumeCursor !== undefined ? { resumeCursor: session.resumeCursor } : {}),
-            },
-      );
-    };
+    const getSessionBinding = (threadId: ThreadId) =>
+      Effect.succeed(persistedBindings.get(threadId) ?? null);
     const service: ProviderServiceShape = {
       startSession: startSession as ProviderServiceShape["startSession"],
       sendTurn: sendTurn as ProviderServiceShape["sendTurn"],
@@ -383,6 +401,7 @@ describe("ProviderCommandReactor", () => {
       stopSession: stopSession as ProviderServiceShape["stopSession"],
       listSessions: () => Effect.succeed(runtimeSessions),
       getSessionBinding,
+      clearSessionResumeCursor,
       getCapabilities: (_provider) =>
         Effect.succeed({
           sessionModelSwitch: input?.sessionModelSwitch ?? "in-session",
@@ -598,6 +617,7 @@ describe("ProviderCommandReactor", () => {
       respondToRequest,
       respondToUserInput,
       stopSession,
+      clearSessionResumeCursor,
       renameBranch,
       pruneWorktrees,
       createWorktree,
@@ -1145,7 +1165,7 @@ describe("ProviderCommandReactor", () => {
     expect(failure?.payload).toMatchObject({ detail: expect.stringContaining("advanced") });
   });
 
-  it("stops a latest-turn native fork when the source advances during session startup", async () => {
+  it("clears a stale latest-turn fork cursor and rejects the next turn while the source is advanced", async () => {
     const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
     const claudeDriver = ProviderDriverKind.make("claudeAgent");
     const sourceThreadId = ThreadId.make("thread-1");
@@ -1246,14 +1266,47 @@ describe("ProviderCommandReactor", () => {
 
     expect(harness.startSession).toHaveBeenCalledTimes(1);
     expect(harness.stopSession).toHaveBeenCalledWith({ threadId: forkThreadId });
+    expect(harness.clearSessionResumeCursor).toHaveBeenCalledWith(forkThreadId);
     expect(harness.runtimeSessions).toEqual([]);
-    expect(await harness.runEffect(harness.getSessionBinding(forkThreadId))).toBeNull();
+    expect(await harness.runEffect(harness.getSessionBinding(forkThreadId))).toMatchObject({
+      threadId: forkThreadId,
+      status: "stopped",
+      resumeCursor: null,
+    });
     expect(harness.sendTurn).not.toHaveBeenCalled();
     const fork = (await harness.readModel()).threads.find((thread) => thread.id === forkThreadId);
     expect(fork?.session?.status).toBe("error");
     expect(
       fork?.activities.find((activity) => activity.kind === "provider.turn.start.failed")?.payload,
     ).toMatchObject({ detail: expect.stringContaining("advanced") });
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-latest-turn-start-race-retry"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("message-latest-turn-start-race-retry"),
+          role: "user",
+          text: "Retry while the source remains advanced.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-09-03T12:04:06.000Z",
+      }),
+    );
+    await harness.drain();
+
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+    const failures = (await harness.readModel()).threads
+      .find((thread) => thread.id === forkThreadId)
+      ?.activities.filter((activity) => activity.kind === "provider.turn.start.failed");
+    expect(failures).toHaveLength(2);
+    expect(failures?.[1]?.payload).toMatchObject({
+      detail: expect.stringContaining("advanced"),
+    });
   });
 
   it("rejects retrying an unbound latest-turn fork when stopping its stale session failed", async () => {

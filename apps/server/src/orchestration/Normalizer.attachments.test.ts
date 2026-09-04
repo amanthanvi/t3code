@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
+import { ProviderService } from "../provider/Services/ProviderService.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { cleanupFailedUploadedAttachments, normalizeDispatchCommand } from "./Normalizer.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
@@ -23,6 +24,9 @@ const testLayer = Layer.mergeAll(
   ServerConfig.layerTest(process.cwd(), { prefix: "t3-normalizer-attachments-" }),
   Layer.mock(ProjectionSnapshotQuery, {
     getThreadTurnState: () => Effect.die("unused"),
+  }),
+  Layer.mock(ProviderService, {
+    getCapabilities: () => Effect.die("unused"),
   }),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 

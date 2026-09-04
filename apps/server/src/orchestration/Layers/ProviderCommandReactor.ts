@@ -868,6 +868,7 @@ const make = Effect.gen(function* () {
           );
         }),
       );
+      yield* providerService.clearSessionResumeCursor(threadId);
       return yield* boundaryError;
     }
     yield* bindSessionToThread(startedSession);

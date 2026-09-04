@@ -97,6 +97,13 @@ export interface ProviderServiceShape {
   ) => Effect.Effect<ProviderRuntimeBinding | null, ProviderServiceError>;
 
   /**
+   * Clear persisted provider resume state without dropping the thread binding.
+   */
+  readonly clearSessionResumeCursor: (
+    threadId: ThreadId,
+  ) => Effect.Effect<void, ProviderServiceError>;
+
+  /**
    * Read capabilities for the adapter bound to a configured provider instance.
    */
   readonly getCapabilities: (

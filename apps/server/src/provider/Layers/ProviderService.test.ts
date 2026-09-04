@@ -1194,6 +1194,30 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("clears a persisted resume cursor without dropping the session binding", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-clear-resume-cursor");
+      const session = yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      yield* provider.clearSessionResumeCursor(threadId);
+
+      const binding = yield* provider.getSessionBinding(threadId);
+      assert.equal(binding?.threadId, threadId);
+      assert.equal(binding?.provider, CODEX_DRIVER);
+      assert.equal(binding?.providerInstanceId, codexInstanceId);
+      assert.equal(binding?.resumeCursor, null);
+      assert.notEqual(session.resumeCursor, undefined);
+      yield* provider.stopSession({ threadId });
+      routing.codex.startSession.mockClear();
+    }),
+  );
+
   it.effect("rejects fork sources bound to another provider instance", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;

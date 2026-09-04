@@ -1167,6 +1167,19 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const getSessionBinding: ProviderServiceMethod<"getSessionBinding"> = (threadId) =>
     directory.getBinding(threadId).pipe(Effect.map(Option.getOrNull));
 
+  const clearSessionResumeCursor: ProviderServiceMethod<"clearSessionResumeCursor"> = Effect.fn(
+    "clearSessionResumeCursor",
+  )(function* (threadId) {
+    const binding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+    if (binding === undefined || binding.resumeCursor == null) {
+      return;
+    }
+    yield* directory.upsert({
+      ...binding,
+      resumeCursor: null,
+    });
+  });
+
   const getInstanceInfo: ProviderServiceMethod<"getInstanceInfo"> = (instanceId) =>
     registry.getInstanceInfo(instanceId);
 
@@ -1337,6 +1350,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     stopSession,
     listSessions,
     getSessionBinding,
+    clearSessionResumeCursor,
     getCapabilities,
     getInstanceInfo,
     assertConversationRollbackSupported,
