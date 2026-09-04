@@ -1,5 +1,6 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type {
+  OrchestrationCheckpointSummary,
   OrchestrationLatestTurn,
   ServerConfig,
   ServerProviderSessionFork,
@@ -7,10 +8,17 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 
-export function visibleTopLevelThreads<T extends { readonly sideChat?: boolean }>(
-  threads: ReadonlyArray<T>,
-): T[] {
-  return threads.filter((thread) => thread.sideChat !== true);
+export function visibleTopLevelThreads<
+  T extends Pick<EnvironmentThreadShell, "fork" | "id" | "sideChat">,
+>(threads: ReadonlyArray<T>, knownThreadIds: ReadonlySet<ThreadId>): T[] {
+  return threads.filter((thread) => {
+    const sourceThreadId = thread.fork?.sourceThreadId;
+    return (
+      thread.sideChat !== true ||
+      sourceThreadId === undefined ||
+      !knownThreadIds.has(sourceThreadId)
+    );
+  });
 }
 
 export function resolveMobileThreadForkCapability(
@@ -30,9 +38,20 @@ export function resolveMobileLatestCompletedTurnId(
     : null;
 }
 
+export function completedTurnIdsFromCheckpoints(
+  checkpoints: ReadonlyArray<Pick<OrchestrationCheckpointSummary, "status" | "turnId">>,
+): ReadonlySet<TurnId> {
+  return new Set(
+    checkpoints
+      .filter((checkpoint) => checkpoint.status === "ready")
+      .map((checkpoint) => checkpoint.turnId),
+  );
+}
+
 export function canForkMobileAssistantMessage(input: {
   readonly capability: ServerProviderSessionFork | undefined;
   readonly completed: boolean;
+  readonly completedTurnIds: ReadonlySet<TurnId>;
   readonly messageTurnId: TurnId | null;
   readonly latestTurn:
     | Pick<OrchestrationLatestTurn, "turnId" | "state" | "completedAt">
@@ -46,11 +65,16 @@ export function canForkMobileAssistantMessage(input: {
   ) {
     return false;
   }
-  if (input.capability === "any-turn") return true;
-  return (
-    input.capability === "latest-turn" &&
-    input.messageTurnId === resolveMobileLatestCompletedTurnId(input.latestTurn)
-  );
+  const latestCompletedTurnId = resolveMobileLatestCompletedTurnId(input.latestTurn);
+  if (input.capability === "any-turn") {
+    // The latest completed turn is forkable as soon as it completes; older
+    // turns need a ready checkpoint to prove they finished, same as web.
+    return (
+      input.messageTurnId === latestCompletedTurnId ||
+      input.completedTurnIds.has(input.messageTurnId)
+    );
+  }
+  return input.capability === "latest-turn" && input.messageTurnId === latestCompletedTurnId;
 }
 
 export interface MobileSideChatMenuItem {

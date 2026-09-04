@@ -211,9 +211,7 @@ function ChatRouteGlobalShortcuts() {
     selectedThreadKeysSize,
     legacySidebarEnabled,
     terminalOpen,
-    threadFork.forkLatest,
-    threadFork.latest.disabledReason,
-    threadFork.latest.enabled,
+    threadFork,
   ]);
 
   return null;

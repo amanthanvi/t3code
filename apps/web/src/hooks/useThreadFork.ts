@@ -5,6 +5,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type {
   MessageId,
+  OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationLatestTurn,
   EnvironmentId,
@@ -14,7 +15,7 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { newThreadId } from "../lib/utils";
 import { useRightPanelStore } from "../rightPanelStore";
@@ -23,6 +24,7 @@ import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
   canForkCompletedAssistantMessage,
+  completedTurnIdsFromCheckpoints,
   resolveForkEntryAvailability,
   type ThreadForkTarget,
 } from "../threadForking.logic";
@@ -33,6 +35,7 @@ interface ForkableThread {
   readonly id: ThreadId;
   readonly latestTurn: OrchestrationLatestTurn | null;
   readonly messages: ReadonlyArray<OrchestrationMessage>;
+  readonly checkpoints: ReadonlyArray<OrchestrationCheckpointSummary>;
   readonly modelSelection: { readonly instanceId: ProviderInstanceId };
   readonly session: { readonly providerInstanceId?: ProviderInstanceId | undefined } | null;
 }
@@ -64,25 +67,39 @@ export function useThreadForkActions(
       resolveForkEntryAvailability({
         capability,
         latestTurn: sourceThread?.latestTurn,
-        ...(sourceThread ? { messages: sourceThread.messages } : {}),
+        ...(sourceThread
+          ? {
+              messages: sourceThread.messages,
+              completedTurnIds: completedTurnIdsFromCheckpoints(sourceThread.checkpoints),
+            }
+          : {}),
       }),
-    [capability, sourceThread?.latestTurn, sourceThread?.messages],
+    [capability, sourceThread],
   );
 
-  const sourceThreadRef = useRef(sourceThread);
-  sourceThreadRef.current = sourceThread;
-  const capabilityRef = useRef(capability);
-  capabilityRef.current = capability;
-  const latestTargetRef = useRef(latest.target);
-  latestTargetRef.current = latest.target;
-  const latestEnabledRef = useRef(latest.enabled);
-  latestEnabledRef.current = latest.enabled;
-  const panelHostThreadIdRef = useRef(options?.panelHostThreadId ?? null);
-  panelHostThreadIdRef.current = options?.panelHostThreadId ?? null;
-  const forkCommandRef = useRef(forkCommand);
-  forkCommandRef.current = forkCommand;
-  const navigateRef = useRef(navigate);
-  navigateRef.current = navigate;
+  // Callbacks handed to memoized rows must stay identity-stable, so they read
+  // the latest inputs from one ref that is refreshed in an effect rather than
+  // during render.
+  const latestInputsRef = useRef({
+    sourceThread,
+    capability,
+    latestTarget: latest.target,
+    latestEnabled: latest.enabled,
+    panelHostThreadId: options?.panelHostThreadId ?? null,
+    forkCommand,
+    navigate,
+  });
+  useEffect(() => {
+    latestInputsRef.current = {
+      sourceThread,
+      capability,
+      latestTarget: latest.target,
+      latestEnabled: latest.enabled,
+      panelHostThreadId: options?.panelHostThreadId ?? null,
+      forkCommand,
+      navigate,
+    };
+  });
   const forkInFlightRef = useRef(false);
 
   const dispatchFork = useCallback(
@@ -91,19 +108,19 @@ export function useThreadForkActions(
       sideChat: boolean,
       sourceOverride?: ForkSourceThread,
     ): Promise<boolean> => {
-      const currentSourceThread = sourceOverride ?? sourceThreadRef.current;
+      const currentSourceThread = sourceOverride ?? latestInputsRef.current.sourceThread;
       if (!currentSourceThread) return false;
       if (forkInFlightRef.current) return false;
       // Resolve the panel host before awaiting: the user can navigate while
       // the fork syncs, and the side chat must open beside the thread it was
       // started from, not wherever the route ended up.
       const hostThreadId =
-        sourceOverride?.id ?? panelHostThreadIdRef.current ?? currentSourceThread.id;
+        sourceOverride?.id ?? latestInputsRef.current.panelHostThreadId ?? currentSourceThread.id;
       const hostIsActiveRoute = sourceOverride === undefined;
       forkInFlightRef.current = true;
       try {
         const threadId = newThreadId();
-        const result = await forkCommandRef.current({
+        const result = await latestInputsRef.current.forkCommand({
           environmentId: currentSourceThread.environmentId,
           input: {
             threadId,
@@ -147,7 +164,7 @@ export function useThreadForkActions(
           // A side chat started from another thread's row (sidebar menu) is
           // only visible in that thread's panel, so go there first.
           if (!hostIsActiveRoute) {
-            await navigateRef.current({
+            await latestInputsRef.current.navigate({
               to: "/$environmentId/$threadId",
               params: { environmentId: hostRef.environmentId, threadId: hostRef.threadId },
             });
@@ -156,7 +173,7 @@ export function useThreadForkActions(
           return true;
         }
 
-        await navigateRef.current({
+        await latestInputsRef.current.navigate({
           to: "/$environmentId/$threadId",
           params: { environmentId: currentSourceThread.environmentId, threadId },
         });
@@ -167,20 +184,21 @@ export function useThreadForkActions(
     },
     [],
   );
-  const dispatchForkRef = useRef(dispatchFork);
-  dispatchForkRef.current = dispatchFork;
 
-  const forkLatest = useCallback((sideChat: boolean) => {
-    const target = latestTargetRef.current;
-    return latestEnabledRef.current && target
-      ? dispatchForkRef.current(target, sideChat)
-      : Promise.resolve(false);
-  }, []);
+  const forkLatest = useCallback(
+    (sideChat: boolean) => {
+      const target = latestInputsRef.current.latestTarget;
+      return latestInputsRef.current.latestEnabled && target
+        ? dispatchFork(target, sideChat)
+        : Promise.resolve(false);
+    },
+    [dispatchFork],
+  );
 
   const forkTarget = useCallback(
     (source: ForkSourceThread, target: ThreadForkTarget, sideChat: boolean) =>
-      dispatchForkRef.current(target, sideChat, source),
-    [],
+      dispatchFork(target, sideChat, source),
+    [dispatchFork],
   );
 
   const onForkAssistantMessage = useCallback(
@@ -191,20 +209,17 @@ export function useThreadForkActions(
     }) => {
       if (
         !canForkCompletedAssistantMessage({
-          capability: capabilityRef.current,
+          capability: latestInputsRef.current.capability,
           completed: true,
           messageTurnId: input.turnId,
-          latestCompletedTurnId: latestTargetRef.current?.turnId ?? null,
+          latestCompletedTurnId: latestInputsRef.current.latestTarget?.turnId ?? null,
         })
       ) {
         return Promise.resolve(false);
       }
-      return dispatchForkRef.current(
-        { turnId: input.turnId, messageId: input.messageId },
-        input.sideChat,
-      );
+      return dispatchFork({ turnId: input.turnId, messageId: input.messageId }, input.sideChat);
     },
-    [],
+    [dispatchFork],
   );
 
   return useMemo(

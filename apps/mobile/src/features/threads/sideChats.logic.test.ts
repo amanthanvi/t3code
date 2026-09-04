@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildMobileSideChatMenuItems,
   canForkMobileAssistantMessage,
+  completedTurnIdsFromCheckpoints,
   visibleTopLevelThreads,
 } from "./sideChats.logic";
 
@@ -18,12 +19,47 @@ const latestTurn = {
 };
 
 describe("mobile side-chat list helpers", () => {
-  it("hides side chats from top-level lists", () => {
+  it("hides side chats whose parent is still known", () => {
+    const parentId = ThreadId.make("main");
     expect(
-      visibleTopLevelThreads([{ id: "main" }, { id: "side", sideChat: true }]).map(
-        (thread) => thread.id,
-      ),
-    ).toEqual(["main"]);
+      visibleTopLevelThreads(
+        [
+          { id: parentId },
+          {
+            id: ThreadId.make("side"),
+            sideChat: true,
+            fork: {
+              sourceThreadId: parentId,
+              sourceTurnId: null,
+              sourceMessageId: null,
+              forkedAt: "2026-09-03T12:00:00.000Z",
+            },
+          },
+        ],
+        new Set([parentId, ThreadId.make("side")]),
+      ).map((thread) => thread.id),
+    ).toEqual([parentId]);
+  });
+
+  it("shows orphaned side chats in top-level lists", () => {
+    const sideChatId = ThreadId.make("side");
+    expect(
+      visibleTopLevelThreads(
+        [
+          {
+            id: sideChatId,
+            sideChat: true,
+            fork: {
+              sourceThreadId: ThreadId.make("missing-parent"),
+              sourceTurnId: null,
+              sourceMessageId: null,
+              forkedAt: "2026-09-03T12:00:00.000Z",
+            },
+          },
+        ],
+        new Set([sideChatId]),
+      ).map((thread) => thread.id),
+    ).toEqual([sideChatId]);
   });
 
   it("lists child side chats for the parent thread menu", () => {
@@ -47,6 +83,7 @@ describe("mobile message fork availability", () => {
       canForkMobileAssistantMessage({
         capability: "any-turn",
         completed: true,
+        completedTurnIds: new Set([TurnId.make("turn-1")]),
         messageTurnId: TurnId.make("turn-1"),
         latestTurn,
       }),
@@ -55,6 +92,7 @@ describe("mobile message fork availability", () => {
       canForkMobileAssistantMessage({
         capability: "latest-turn",
         completed: true,
+        completedTurnIds: new Set(),
         messageTurnId: TurnId.make("turn-1"),
         latestTurn,
       }),
@@ -63,6 +101,41 @@ describe("mobile message fork availability", () => {
       canForkMobileAssistantMessage({
         capability: "latest-turn",
         completed: true,
+        completedTurnIds: new Set(),
+        messageTurnId: latestTurn.turnId,
+        latestTurn,
+      }),
+    ).toBe(true);
+  });
+
+  it("derives completed turns only from ready checkpoints", () => {
+    expect(
+      completedTurnIdsFromCheckpoints([
+        { turnId: TurnId.make("turn-ready"), status: "ready" },
+        { turnId: TurnId.make("turn-missing"), status: "missing" },
+        { turnId: TurnId.make("turn-error"), status: "error" },
+      ]),
+    ).toEqual(new Set([TurnId.make("turn-ready")]));
+  });
+
+  it("requires a ready checkpoint for earlier any-turn responses", () => {
+    expect(
+      canForkMobileAssistantMessage({
+        capability: "any-turn",
+        completed: true,
+        completedTurnIds: new Set(),
+        messageTurnId: TurnId.make("turn-1"),
+        latestTurn,
+      }),
+    ).toBe(false);
+  });
+
+  it("forks the latest completed any-turn response before its checkpoint is ready", () => {
+    expect(
+      canForkMobileAssistantMessage({
+        capability: "any-turn",
+        completed: true,
+        completedTurnIds: new Set(),
         messageTurnId: latestTurn.turnId,
         latestTurn,
       }),
@@ -75,6 +148,7 @@ describe("mobile message fork availability", () => {
         canForkMobileAssistantMessage({
           capability: "any-turn",
           completed: true,
+          completedTurnIds: new Set([latestTurn.turnId]),
           messageTurnId: latestTurn.turnId,
           latestTurn: { ...latestTurn, state },
         }),
