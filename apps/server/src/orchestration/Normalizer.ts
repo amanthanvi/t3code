@@ -173,9 +173,12 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
           );
       if (Option.isSome(sourceThread)) {
         const providerService = yield* ProviderService;
-        const capabilities = yield* providerService.getCapabilities(
-          sourceThread.value.modelSelection.instanceId,
-        );
+        // The live session's instance wins over the stored selection, matching
+        // the reactor and the clients after a provider switch.
+        const sourceInstanceId =
+          sourceThread.value.session?.providerInstanceId ??
+          sourceThread.value.modelSelection.instanceId;
+        const capabilities = yield* providerService.getCapabilities(sourceInstanceId);
         const latestTurn = sourceThread.value.latestTurn;
         if (
           capabilities.sessionFork === "latest-turn" &&
@@ -184,7 +187,7 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
         ) {
           return yield* new OrchestrationCommandInvariantError({
             commandType: canonicalCommand.type,
-            detail: `Turn '${canonicalCommand.sourceTurnId}' is not the latest completed turn of source thread '${canonicalCommand.sourceThreadId}'. Provider instance '${sourceThread.value.modelSelection.instanceId}' can only fork from the source's current completed head.`,
+            detail: `Turn '${canonicalCommand.sourceTurnId}' is not the latest completed turn of source thread '${canonicalCommand.sourceThreadId}'. Provider instance '${sourceInstanceId}' can only fork from the source's current completed head.`,
           });
         }
       }

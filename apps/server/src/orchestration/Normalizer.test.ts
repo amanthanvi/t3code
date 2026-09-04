@@ -29,6 +29,17 @@ const serverReceivedAt = "2026-07-18T00:00:00.000Z";
 const sourceThreadId = ThreadId.make("thread-source");
 const sourceTurnId = TurnId.make("turn-source");
 const sourceMessageId = MessageId.make("message-source");
+const liveSourceInstanceId = ProviderInstanceId.make("codex-live");
+const liveSourceSession: NonNullable<OrchestrationThreadShell["session"]> = {
+  threadId: sourceThreadId,
+  status: "ready",
+  providerName: "codex",
+  providerInstanceId: liveSourceInstanceId,
+  runtimeMode: "full-access",
+  activeTurnId: null,
+  lastError: null,
+  updatedAt: "2026-09-03T12:00:00.000Z",
+};
 const latestSourceTurnId = TurnId.make("turn-source-latest");
 const sourceProviderInstanceId = ProviderInstanceId.make("claudeAgent");
 
@@ -48,6 +59,7 @@ const makeLatestTurn = (turnId: TurnId): NonNullable<OrchestrationThreadShell["l
 
 const makeSourceThread = (
   latestTurn: OrchestrationThreadShell["latestTurn"],
+  session: OrchestrationThreadShell["session"] = null,
 ): OrchestrationThreadShell => ({
   id: sourceThreadId,
   projectId: ProjectId.make("project-source"),
@@ -66,7 +78,7 @@ const makeSourceThread = (
   archivedAt: null,
   settledOverride: null,
   settledAt: null,
-  session: null,
+  session,
   latestUserMessageAt: null,
   hasPendingApprovals: false,
   hasPendingUserInput: false,
@@ -77,6 +89,8 @@ const normalizeFork = (
   sourceTurn: Option.Option<ProjectionThreadTurnState>,
   options?: {
     readonly sessionFork?: "any-turn" | "latest-turn" | "unsupported";
+    /** Capability of the instance the source's live session is bound to, when it differs. */
+    readonly liveSessionSessionFork?: "any-turn" | "latest-turn" | "unsupported";
     readonly latestTurn?: OrchestrationThreadShell["latestTurn"];
     readonly sourceArchived?: boolean;
   },
@@ -101,7 +115,10 @@ const normalizeFork = (
               options?.sourceArchived === true
                 ? Option.none()
                 : Option.some(
-                    makeSourceThread(options?.latestTurn ?? makeLatestTurn(sourceTurnId)),
+                    makeSourceThread(
+                      options?.latestTurn ?? makeLatestTurn(sourceTurnId),
+                      options?.liveSessionSessionFork === undefined ? null : liveSourceSession,
+                    ),
                   ),
             ),
           getArchivedShellSnapshot: () =>
@@ -116,10 +133,13 @@ const normalizeFork = (
             }),
         }),
         Layer.mock(ProviderService, {
-          getCapabilities: () =>
+          getCapabilities: (instanceId) =>
             Effect.succeed({
               sessionModelSwitch: "in-session",
-              sessionFork: options?.sessionFork ?? "any-turn",
+              sessionFork:
+                instanceId === liveSourceInstanceId
+                  ? (options?.liveSessionSessionFork ?? options?.sessionFork ?? "any-turn")
+                  : (options?.sessionFork ?? "any-turn"),
             }),
         }),
       ),
@@ -232,6 +252,22 @@ describe("normalizeDispatchCommand thread.fork", () => {
 
       expect(error._tag).toBe("OrchestrationCommandInvariantError");
       expect(error.message).toContain("not the latest completed turn");
+    }),
+  );
+
+  effectIt.effect("reads the fork capability from the source's live session instance", () =>
+    Effect.gen(function* () {
+      // The stored selection points at a latest-turn instance, but the live
+      // session moved to an any-turn one; the live instance decides.
+      const error = yield* normalizeFork(
+        Option.some({ state: "completed", assistantMessageId: sourceMessageId }),
+        {
+          sessionFork: "latest-turn",
+          latestTurn: makeLatestTurn(latestSourceTurnId),
+          liveSessionSessionFork: "any-turn",
+        },
+      ).pipe(Effect.flip, Effect.option);
+      expect(Option.isNone(error)).toBe(true);
     }),
   );
 

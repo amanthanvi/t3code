@@ -896,7 +896,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             ON projects.project_id = threads.project_id
           WHERE threads.deleted_at IS NULL
             AND threads.archived_at IS NULL
-            AND threads.side_chat = 0
+            AND (
+              threads.side_chat = 0
+              OR NOT EXISTS (
+                SELECT 1
+                FROM projection_threads AS parents
+                WHERE parents.thread_id = json_extract(threads.fork_json, '$.sourceThreadId')
+                  AND parents.deleted_at IS NULL
+              )
+            )
             AND projects.deleted_at IS NULL
             AND messages.is_streaming = 0
             AND (
