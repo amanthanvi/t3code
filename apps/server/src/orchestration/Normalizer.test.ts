@@ -91,6 +91,7 @@ const normalizeFork = (
     readonly sessionFork?: "any-turn" | "latest-turn" | "unsupported";
     /** Capability of the instance the source's live session is bound to, when it differs. */
     readonly liveSessionSessionFork?: "any-turn" | "latest-turn" | "unsupported";
+    readonly sourceSessionStatus?: NonNullable<OrchestrationThreadShell["session"]>["status"];
     readonly latestTurn?: OrchestrationThreadShell["latestTurn"];
     readonly sourceArchived?: boolean;
   },
@@ -117,7 +118,12 @@ const normalizeFork = (
                 : Option.some(
                     makeSourceThread(
                       options?.latestTurn ?? makeLatestTurn(sourceTurnId),
-                      options?.liveSessionSessionFork === undefined ? null : liveSourceSession,
+                      options?.liveSessionSessionFork === undefined
+                        ? null
+                        : {
+                            ...liveSourceSession,
+                            status: options.sourceSessionStatus ?? "ready",
+                          },
                     ),
                   ),
             ),
@@ -268,6 +274,39 @@ describe("normalizeDispatchCommand thread.fork", () => {
         },
       ).pipe(Effect.flip, Effect.option);
       expect(Option.isNone(error)).toBe(true);
+    }),
+  );
+
+  effectIt.effect("ignores a stopped source session when selecting fork capability", () =>
+    Effect.gen(function* () {
+      const error = yield* normalizeFork(
+        Option.some({ state: "completed", assistantMessageId: sourceMessageId }),
+        {
+          sessionFork: "latest-turn",
+          latestTurn: makeLatestTurn(latestSourceTurnId),
+          liveSessionSessionFork: "any-turn",
+          sourceSessionStatus: "stopped",
+        },
+      ).pipe(Effect.flip);
+
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+      expect(error.message).toContain(`Provider instance '${sourceProviderInstanceId}'`);
+    }),
+  );
+
+  effectIt.effect("overrides a stale source selection with the live session instance", () =>
+    Effect.gen(function* () {
+      const normalized = yield* normalizeFork(
+        Option.some({ state: "completed", assistantMessageId: sourceMessageId }),
+        { liveSessionSessionFork: "any-turn" },
+      );
+
+      expect(normalized.type).toBe("thread.fork");
+      if (normalized.type !== "thread.fork") return;
+      expect(normalized.modelSelection).toEqual({
+        instanceId: liveSourceInstanceId,
+        model: "claude-opus-4-6",
+      });
     }),
   );
 

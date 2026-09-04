@@ -392,6 +392,8 @@ describe("ProviderCommandReactor", () => {
     const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
     const getSessionBinding = (threadId: ThreadId) =>
       Effect.succeed(persistedBindings.get(threadId) ?? null);
+    const persistSessionBinding = (binding: ProviderRuntimeBinding) =>
+      persistedBindings.set(binding.threadId, binding);
     const service: ProviderServiceShape = {
       startSession: startSession as ProviderServiceShape["startSession"],
       sendTurn: sendTurn as ProviderServiceShape["sendTurn"],
@@ -625,6 +627,7 @@ describe("ProviderCommandReactor", () => {
       generateBranchName,
       generateThreadTitle,
       getSessionBinding,
+      persistSessionBinding,
       runtimeSessions,
       stateDir,
       drain,
@@ -929,6 +932,58 @@ describe("ProviderCommandReactor", () => {
       threadId: forkThreadId,
       forkFrom: { threadId: ThreadId.make("thread-1") },
     });
+    expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("resumes a fork's persisted cursor without issuing another native fork", async () => {
+    const harness = await createHarness();
+    const forkThreadId = ThreadId.make("thread-fork-persisted-cursor");
+    const resumeCursor = { opaque: "persisted-fork-cursor" };
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("cmd-fork-persisted-cursor"),
+        threadId: forkThreadId,
+        sourceThreadId: ThreadId.make("thread-1"),
+        sideChat: true,
+        createdAt: "2026-09-03T12:00:00.000Z",
+      }),
+    );
+    harness.persistSessionBinding({
+      threadId: forkThreadId,
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      runtimeMode: "approval-required",
+      status: "stopped",
+      resumeCursor,
+    });
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-fork-persisted-cursor-turn"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("message-fork-persisted-cursor"),
+          role: "user",
+          text: "Resume the existing fork.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-09-03T12:00:01.000Z",
+      }),
+    );
+    await harness.drain();
+
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+    const startInput = harness.startSession.mock.calls[0]?.[1];
+    expect(startInput).toMatchObject({
+      threadId: forkThreadId,
+      resumeCursor,
+    });
+    expect(startInput).not.toHaveProperty("forkFrom");
     expect(harness.sendTurn).toHaveBeenCalledTimes(1);
   });
 

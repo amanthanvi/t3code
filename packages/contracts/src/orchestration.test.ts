@@ -465,7 +465,7 @@ it.effect("decodes thread.created runtime mode for historical events", () =>
   }),
 );
 
-it.effect("decodes thread fork commands and side-chat metadata", () =>
+it.effect("decodes normalized thread fork overrides and side-chat metadata", () =>
   Effect.gen(function* () {
     const command = yield* decodeOrchestrationCommand({
       type: "thread.fork",
@@ -474,12 +474,17 @@ it.effect("decodes thread fork commands and side-chat metadata", () =>
       sourceThreadId: "thread-source",
       sourceTurnId: "turn-1",
       sourceMessageId: "message-1",
+      modelSelection: {
+        instanceId: "codex-live",
+        model: "gpt-5.6-sol",
+      },
       sideChat: true,
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(command.type, "thread.fork");
     if (command.type === "thread.fork") {
       assert.strictEqual(command.sourceThreadId, "thread-source");
+      assert.strictEqual(command.modelSelection?.instanceId, "codex-live");
       assert.strictEqual(command.sideChat, true);
     }
 

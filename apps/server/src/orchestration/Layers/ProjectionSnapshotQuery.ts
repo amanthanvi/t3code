@@ -903,6 +903,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 FROM projection_threads AS parents
                 WHERE parents.thread_id = json_extract(threads.fork_json, '$.sourceThreadId')
                   AND parents.deleted_at IS NULL
+                  AND parents.archived_at IS NULL
               )
             )
             AND projects.deleted_at IS NULL

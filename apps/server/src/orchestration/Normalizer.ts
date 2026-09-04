@@ -133,32 +133,34 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
       } satisfies OrchestrationCommand;
     }
 
-    if (canonicalCommand.type === "thread.fork" && canonicalCommand.sourceTurnId !== undefined) {
+    if (canonicalCommand.type === "thread.fork") {
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
-      const sourceTurn = yield* projectionSnapshotQuery.getThreadTurnState(
-        canonicalCommand.sourceThreadId,
-        canonicalCommand.sourceTurnId,
-      );
-      if (Option.isNone(sourceTurn)) {
-        return yield* new OrchestrationCommandInvariantError({
-          commandType: canonicalCommand.type,
-          detail: `Turn '${canonicalCommand.sourceTurnId}' does not exist on source thread '${canonicalCommand.sourceThreadId}'.`,
-        });
-      }
-      if (sourceTurn.value.state !== "completed") {
-        return yield* new OrchestrationCommandInvariantError({
-          commandType: canonicalCommand.type,
-          detail: `Turn '${canonicalCommand.sourceTurnId}' is not a completed turn of source thread '${canonicalCommand.sourceThreadId}'.`,
-        });
-      }
-      if (
-        canonicalCommand.sourceMessageId !== undefined &&
-        sourceTurn.value.assistantMessageId !== canonicalCommand.sourceMessageId
-      ) {
-        return yield* new OrchestrationCommandInvariantError({
-          commandType: canonicalCommand.type,
-          detail: `Message '${canonicalCommand.sourceMessageId}' is not the assistant message for turn '${canonicalCommand.sourceTurnId}' on source thread '${canonicalCommand.sourceThreadId}'.`,
-        });
+      if (canonicalCommand.sourceTurnId !== undefined) {
+        const sourceTurn = yield* projectionSnapshotQuery.getThreadTurnState(
+          canonicalCommand.sourceThreadId,
+          canonicalCommand.sourceTurnId,
+        );
+        if (Option.isNone(sourceTurn)) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: canonicalCommand.type,
+            detail: `Turn '${canonicalCommand.sourceTurnId}' does not exist on source thread '${canonicalCommand.sourceThreadId}'.`,
+          });
+        }
+        if (sourceTurn.value.state !== "completed") {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: canonicalCommand.type,
+            detail: `Turn '${canonicalCommand.sourceTurnId}' is not a completed turn of source thread '${canonicalCommand.sourceThreadId}'.`,
+          });
+        }
+        if (
+          canonicalCommand.sourceMessageId !== undefined &&
+          sourceTurn.value.assistantMessageId !== canonicalCommand.sourceMessageId
+        ) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: canonicalCommand.type,
+            detail: `Message '${canonicalCommand.sourceMessageId}' is not the assistant message for turn '${canonicalCommand.sourceTurnId}' on source thread '${canonicalCommand.sourceThreadId}'.`,
+          });
+        }
       }
 
       const activeSourceThread = yield* projectionSnapshotQuery.getThreadShellById(
@@ -172,25 +174,41 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
             ),
           );
       if (Option.isSome(sourceThread)) {
-        const providerService = yield* ProviderService;
-        // The live session's instance wins over the stored selection, matching
-        // the reactor and the clients after a provider switch.
+        const sourceSession = sourceThread.value.session;
         const sourceInstanceId =
-          sourceThread.value.session?.providerInstanceId ??
-          sourceThread.value.modelSelection.instanceId;
-        const capabilities = yield* providerService.getCapabilities(sourceInstanceId);
-        const latestTurn = sourceThread.value.latestTurn;
-        if (
-          capabilities.sessionFork === "latest-turn" &&
-          (latestTurn?.turnId !== canonicalCommand.sourceTurnId ||
-            latestTurn?.state !== "completed")
-        ) {
-          return yield* new OrchestrationCommandInvariantError({
-            commandType: canonicalCommand.type,
-            detail: `Turn '${canonicalCommand.sourceTurnId}' is not the latest completed turn of source thread '${canonicalCommand.sourceThreadId}'. Provider instance '${sourceInstanceId}' can only fork from the source's current completed head.`,
-          });
+          sourceSession !== null &&
+          sourceSession.status !== "stopped" &&
+          sourceSession.status !== "error"
+            ? (sourceSession.providerInstanceId ?? sourceThread.value.modelSelection.instanceId)
+            : sourceThread.value.modelSelection.instanceId;
+        if (canonicalCommand.sourceTurnId !== undefined) {
+          const providerService = yield* ProviderService;
+          const capabilities = yield* providerService.getCapabilities(sourceInstanceId);
+          const latestTurn = sourceThread.value.latestTurn;
+          if (
+            capabilities.sessionFork === "latest-turn" &&
+            (latestTurn?.turnId !== canonicalCommand.sourceTurnId ||
+              latestTurn?.state !== "completed")
+          ) {
+            return yield* new OrchestrationCommandInvariantError({
+              commandType: canonicalCommand.type,
+              detail: `Turn '${canonicalCommand.sourceTurnId}' is not the latest completed turn of source thread '${canonicalCommand.sourceThreadId}'. Provider instance '${sourceInstanceId}' can only fork from the source's current completed head.`,
+            });
+          }
+        }
+        if (sourceInstanceId !== sourceThread.value.modelSelection.instanceId) {
+          const normalizedFork: OrchestrationCommand = {
+            ...canonicalCommand,
+            modelSelection: {
+              ...sourceThread.value.modelSelection,
+              instanceId: sourceInstanceId,
+            },
+          };
+          return normalizedFork;
         }
       }
+      const normalizedFork: OrchestrationCommand = canonicalCommand;
+      return normalizedFork;
     }
 
     if (canonicalCommand.type !== "thread.turn.start") {

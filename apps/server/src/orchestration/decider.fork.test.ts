@@ -112,6 +112,28 @@ it.layer(NodeServices.layer)("thread fork decider", (it) => {
     }),
   );
 
+  it.effect("uses the normalized source instance override", () =>
+    Effect.gen(function* () {
+      const event = yield* decideOrchestrationCommand({
+        command: {
+          ...forkCommand,
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex-live"),
+            model: "gpt-5.6-sol",
+          },
+        },
+        readModel: makeReadModel(),
+      });
+      const created = Array.isArray(event) ? event[0] : event;
+      expect(created?.type).toBe("thread.created");
+      if (created?.type !== "thread.created") return;
+      expect(created.payload.modelSelection).toEqual({
+        instanceId: ProviderInstanceId.make("codex-live"),
+        model: "gpt-5.6-sol",
+      });
+    }),
+  );
+
   it.effect("rejects a source whose latest boundary is still running", () =>
     Effect.gen(function* () {
       const error = yield* decideOrchestrationCommand({

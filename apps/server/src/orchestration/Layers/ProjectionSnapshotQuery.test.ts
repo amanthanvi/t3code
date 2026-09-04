@@ -2141,6 +2141,74 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       `;
 
       yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          side_chat,
+          fork_json,
+          latest_turn_id,
+          latest_user_message_at,
+          pending_approval_count,
+          pending_user_input_count,
+          has_actionable_proposed_plan,
+          created_at,
+          updated_at,
+          archived_at,
+          deleted_at
+        )
+        VALUES (
+          'thread-archived-parent-side-chat-search',
+          'project-search',
+          'Archived parent side chat search',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          'full-access',
+          'default',
+          NULL,
+          NULL,
+          1,
+          '{"sourceThreadId":"thread-hidden","sourceTurnId":null,"sourceMessageId":null,"forkedAt":"2026-05-01T00:00:08.000Z"}',
+          NULL,
+          NULL,
+          0,
+          0,
+          0,
+          '2026-05-01T00:00:08.000Z',
+          '2026-05-01T00:00:09.000Z',
+          NULL,
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id,
+          thread_id,
+          turn_id,
+          role,
+          text,
+          is_streaming,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          'message-archived-parent-side-chat',
+          'thread-archived-parent-side-chat-search',
+          NULL,
+          'user',
+          'Archived parent side chat remains discoverable.',
+          0,
+          '2026-05-01T00:00:19.000Z',
+          '2026-05-01T00:00:19.000Z'
+        )
+      `;
+
+      yield* sql`
         INSERT INTO projection_thread_messages (
           message_id,
           thread_id,
@@ -2248,6 +2316,13 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       assert.deepStrictEqual(
         (yield* snapshotQuery.searchThreads({ query: "side chat needle" })).matches,
         [],
+      );
+      assert.deepStrictEqual(
+        (yield* snapshotQuery.searchThreads({ query: "discoverable" })).matches.map((match) => [
+          match.threadId,
+          match.source,
+        ]),
+        [[ThreadId.make("thread-archived-parent-side-chat-search"), "user"]],
       );
       yield* sql`
         UPDATE projection_threads

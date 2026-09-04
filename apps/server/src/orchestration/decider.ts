@@ -17,7 +17,6 @@ import {
 } from "./Errors.ts";
 import {
   listThreadsByProjectId,
-  findThreadById,
   requireActiveProjectWorkspaceRootAbsent,
   requireProject,
   requireProjectAbsent,
@@ -28,7 +27,7 @@ import {
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
 import { threadHasQueuedTurnStart } from "./ThreadSettlementPolicy.ts";
-import { DEFAULT_THREAD_TITLE, forkThreadTitle } from "./threadTitles.ts";
+import { forkThreadTitle } from "./threadTitles.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -435,7 +434,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           projectId: source.projectId,
           title,
-          modelSelection: source.modelSelection,
+          modelSelection: command.modelSelection ?? source.modelSelection,
           runtimeMode: source.runtimeMode,
           interactionMode: source.interactionMode,
           branch: source.branch,

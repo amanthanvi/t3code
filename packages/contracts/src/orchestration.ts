@@ -814,7 +814,7 @@ const ThreadCreateCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-export const ThreadForkCommand = Schema.Struct({
+const ThreadForkCommandFields = {
   type: Schema.Literal("thread.fork"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -824,6 +824,13 @@ export const ThreadForkCommand = Schema.Struct({
   sideChat: Schema.Boolean,
   title: Schema.optional(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
+};
+
+const ClientThreadForkCommand = Schema.Struct(ThreadForkCommandFields);
+
+export const ThreadForkCommand = Schema.Struct({
+  ...ThreadForkCommandFields,
+  modelSelection: Schema.optional(ModelSelection),
 });
 export type ThreadForkCommand = typeof ThreadForkCommand.Type;
 
@@ -1100,7 +1107,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
   ThreadCreateCommand,
-  ThreadForkCommand,
+  ClientThreadForkCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,

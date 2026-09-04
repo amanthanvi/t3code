@@ -539,7 +539,8 @@ const make = Effect.gen(function* () {
     const requestedModelSelection = options?.modelSelection;
     const forkBinding =
       thread.fork == null ? null : yield* providerService.getSessionBinding(threadId);
-    const forkHasOwnResumeCursor = forkBinding?.resumeCursor != null;
+    const forkResumeCursor = forkBinding?.resumeCursor ?? undefined;
+    const forkHasOwnResumeCursor = forkResumeCursor !== undefined;
     const resolveActiveSession = (threadId: ThreadId) =>
       providerService
         .listSessions()
@@ -844,12 +845,14 @@ const make = Effect.gen(function* () {
     const startedSession = yield* startProviderSession(
       thread.fork == null
         ? undefined
-        : {
-            forkFrom: {
-              threadId: thread.fork.sourceThreadId,
-              ...(thread.fork.sourceTurnId !== null ? { turnId: thread.fork.sourceTurnId } : {}),
+        : forkResumeCursor !== undefined
+          ? { resumeCursor: forkResumeCursor }
+          : {
+              forkFrom: {
+                threadId: thread.fork.sourceThreadId,
+                ...(thread.fork.sourceTurnId !== null ? { turnId: thread.fork.sourceTurnId } : {}),
+              },
             },
-          },
     );
     if (!(yield* sourceStillAtRecordedForkBoundary())) {
       const boundaryError = latestTurnForkBoundaryError();
