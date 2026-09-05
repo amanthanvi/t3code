@@ -185,7 +185,11 @@ describe("ProviderCommandReactor", () => {
     readonly additionalProviders?: ReadonlyArray<{
       readonly instanceId: ProviderInstanceId;
       readonly driver: ProviderDriverKind;
-      readonly models: ReadonlyArray<{ readonly slug: string; readonly name: string }>;
+      readonly models: ReadonlyArray<{
+        readonly slug: string;
+        readonly name: string;
+        readonly isDefault?: boolean;
+      }>;
     }>;
   }) {
     const now = "2026-01-01T00:00:00.000Z";
@@ -1271,6 +1275,100 @@ describe("ProviderCommandReactor", () => {
       threadId: forkThreadId,
       providerInstanceId: boundInstanceId,
       modelSelection: { instanceId: boundInstanceId, model: "gpt-5-codex" },
+      forkFrom: { threadId: sourceThreadId },
+    });
+    expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts a fork of a stopped source on its bound instance's default model when the source selection points at another driver", async () => {
+    const boundInstanceId = ProviderInstanceId.make("codex-work");
+    const harness = await createHarness({
+      additionalProviders: [
+        {
+          instanceId: boundInstanceId,
+          driver: ProviderDriverKind.make("codex"),
+          models: [
+            { slug: "gpt-5-codex", name: "GPT-5 Codex" },
+            { slug: "gpt-5.6-sol", name: "GPT-5.6 Sol", isDefault: true },
+          ],
+        },
+      ],
+    });
+    const sourceThreadId = ThreadId.make("thread-1");
+    const forkThreadId = ThreadId.make("thread-fork-stopped-source-other-driver");
+
+    harness.persistSessionBinding({
+      threadId: sourceThreadId,
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: boundInstanceId,
+      runtimeMode: "approval-required",
+      status: "stopped",
+      resumeCursor: { opaque: "source-bound" },
+    });
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-stopped-source-other-driver-session"),
+        threadId: sourceThreadId,
+        session: {
+          threadId: sourceThreadId,
+          status: "stopped",
+          providerName: ProviderDriverKind.make("codex"),
+          providerInstanceId: boundInstanceId,
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: "2026-09-03T12:00:09.000Z",
+        },
+        createdAt: "2026-09-03T12:00:09.000Z",
+      }),
+    );
+    // The picker on the stopped source now points at another driver; the fork
+    // inherits that selection but the conversation still lives on codex-work.
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-stopped-source-picker-other-driver"),
+        threadId: sourceThreadId,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-opus-5",
+        },
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("cmd-fork-stopped-source-other-driver"),
+        threadId: forkThreadId,
+        sourceThreadId,
+        sideChat: false,
+        createdAt: "2026-09-03T12:00:10.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-start-fork-stopped-source-other-driver"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("message-fork-stopped-source-other-driver"),
+          role: "user",
+          text: "Continue where the source really lives.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-09-03T12:00:12.000Z",
+      }),
+    );
+    await harness.drain();
+
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      threadId: forkThreadId,
+      providerInstanceId: boundInstanceId,
+      modelSelection: { instanceId: boundInstanceId, model: "gpt-5.6-sol" },
       forkFrom: { threadId: sourceThreadId },
     });
     expect(harness.sendTurn).toHaveBeenCalledTimes(1);

@@ -7,6 +7,8 @@ import {
   ProviderDriverKind,
   type ProjectId,
   type OrchestrationSession,
+  type ProviderInstanceId,
+  type ServerProvider,
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
@@ -72,6 +74,28 @@ type ProviderIntentEvent = Extract<
 function toNonEmptyProviderInput(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : undefined;
+}
+
+// Selection for a fork whose source conversation lives on `instanceId`. The
+// model the source is running wins; then a stored selection that already
+// targets that instance; then the instance's default model, because a
+// selection made for another driver cannot be reused there.
+function resolveForkSourceSelection(input: {
+  readonly instanceId: ProviderInstanceId;
+  readonly runtimeModel: string | undefined;
+  readonly candidates: ReadonlyArray<ModelSelection>;
+  readonly provider: ServerProvider | undefined;
+}): ModelSelection | undefined {
+  const stored = input.candidates.find((candidate) => candidate.instanceId === input.instanceId);
+  if (input.runtimeModel !== undefined) {
+    return { ...stored, instanceId: input.instanceId, model: input.runtimeModel };
+  }
+  if (stored !== undefined) return stored;
+  const defaultModel =
+    input.provider?.models.find((model) => model.isDefault === true) ?? input.provider?.models[0];
+  return defaultModel === undefined
+    ? undefined
+    : { instanceId: input.instanceId, model: defaultModel.slug };
 }
 
 function mapProviderSessionStatusToOrchestrationStatus(
@@ -551,12 +575,20 @@ const make = Effect.gen(function* () {
     // it, and a source with neither stays on the selection the fork
     // inherited. The source's stored selection alone is not enough: it can
     // change before any turn moves the conversation.
+    const resolveActiveSession = (threadId: ThreadId) =>
+      providerService
+        .listSessions()
+        .pipe(Effect.map((sessions) => sessions.find((session) => session.threadId === threadId)));
     const forkSourceSession =
       forkSource?.session != null &&
       forkSource.session.status !== "stopped" &&
       forkSource.session.status !== "error"
         ? forkSource.session
         : null;
+    const forkSourceRuntimeSession =
+      forkSource !== undefined && forkSourceSession !== null
+        ? yield* resolveActiveSession(forkSource.id)
+        : undefined;
     const forkSourceBinding =
       forkSource !== undefined && forkSourceSession?.providerInstanceId === undefined
         ? yield* providerService.getSessionBinding(forkSource.id)
@@ -567,10 +599,6 @@ const make = Effect.gen(function* () {
         : (forkSourceSession?.providerInstanceId ??
           forkSourceBinding?.providerInstanceId ??
           thread.modelSelection.instanceId);
-    const resolveActiveSession = (threadId: ThreadId) =>
-      providerService
-        .listSessions()
-        .pipe(Effect.map((sessions) => sessions.find((session) => session.threadId === threadId)));
 
     const activeSession = yield* resolveActiveSession(threadId);
     const activeThreadSession =
@@ -598,13 +626,33 @@ const make = Effect.gen(function* () {
     const baseDesiredModelSelection = requestedModelSelection ?? thread.modelSelection;
     // When the source moved, the fork follows it onto the source's current
     // instance and model: the inherited selection described the old home.
-    const forkSourceMoved =
+    let movedForkSourceSelection: ModelSelection | undefined;
+    if (
       forkSource !== undefined &&
       forkSourceInstanceId !== undefined &&
-      forkSourceInstanceId !== thread.modelSelection.instanceId;
-    const movedForkSourceSelection: ModelSelection | undefined = forkSourceMoved
-      ? { ...forkSource.modelSelection, instanceId: forkSourceInstanceId }
-      : undefined;
+      forkSourceInstanceId !== thread.modelSelection.instanceId
+    ) {
+      movedForkSourceSelection = resolveForkSourceSelection({
+        instanceId: forkSourceInstanceId,
+        runtimeModel:
+          forkSourceRuntimeSession?.providerInstanceId === forkSourceInstanceId
+            ? forkSourceRuntimeSession.model
+            : undefined,
+        candidates: [forkSource.modelSelection, thread.modelSelection],
+        provider: (yield* providerRegistry.getProviders).find(
+          (provider) => provider.instanceId === forkSourceInstanceId,
+        ),
+      });
+      if (movedForkSourceSelection === undefined) {
+        return yield* new ProviderAdapterRequestError({
+          provider: providerErrorLabelFromInstanceHint({
+            instanceId: String(forkSourceInstanceId),
+          }),
+          method: "thread.turn.start",
+          detail: `Fork '${threadId}' cannot start because source thread '${forkSource.id}' lives on provider instance '${forkSourceInstanceId}', which is not configured in this build.`,
+        });
+      }
+    }
     const desiredModelSelection = movedForkSourceSelection ?? baseDesiredModelSelection;
     const desiredInstanceId = desiredModelSelection.instanceId;
     const inheritedForkInstanceId =
