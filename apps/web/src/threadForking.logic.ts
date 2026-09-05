@@ -102,10 +102,14 @@ export function canForkCompletedAssistantMessage(input: {
   readonly completed: boolean;
   readonly messageTurnId: TurnId | null;
   readonly latestCompletedTurnId: TurnId | null;
+  readonly completedTurnIds: ReadonlySet<TurnId>;
 }): boolean {
   if (!input.completed || input.messageTurnId === null) return false;
-  if (input.capability === "any-turn") return true;
-  return input.capability === "latest-turn" && input.messageTurnId === input.latestCompletedTurnId;
+  if (input.messageTurnId === input.latestCompletedTurnId) return input.capability !== undefined;
+  // Older turns need a ready checkpoint to prove they finished: a finalized
+  // assistant row can also belong to an interrupted or failed turn, which the
+  // server refuses to fork. Same rule as the header and palette entry points.
+  return input.capability === "any-turn" && input.completedTurnIds.has(input.messageTurnId);
 }
 
 export async function runPromoteSideChat(input: {

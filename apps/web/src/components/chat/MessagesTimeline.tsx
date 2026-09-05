@@ -212,6 +212,7 @@ interface TimelineRowSharedState {
   forkCapability: ServerProviderSessionFork | undefined;
   latestCompletedTurnId: TurnId | null;
   incompleteLatestTurnId: TurnId | null;
+  forkCompletedTurnIds: ReadonlySet<TurnId>;
   onForkAssistantMessage:
     | ((input: { messageId: MessageId; turnId: TurnId; sideChat: boolean }) => void)
     | undefined;
@@ -343,6 +344,8 @@ interface MessagesTimelineProps {
   loadEarlier?: CitationHistoryPage | null;
   forkCapability?: ServerProviderSessionFork | undefined;
   latestCompletedTurnId?: TurnId | null;
+  /** Turns proven complete by a ready checkpoint; gates fork menus on older responses. */
+  forkCompletedTurnIds?: ReadonlySet<TurnId>;
   onForkAssistantMessage?:
     | ((input: { messageId: MessageId; turnId: TurnId; sideChat: boolean }) => void)
     | undefined;
@@ -352,6 +355,8 @@ interface MessagesTimelineProps {
 // ---------------------------------------------------------------------------
 // MessagesTimeline — list owner
 // ---------------------------------------------------------------------------
+
+const EMPTY_FORK_COMPLETED_TURN_IDS: ReadonlySet<TurnId> = new Set();
 
 export const MessagesTimeline = memo(function MessagesTimeline({
   citationRequest = null,
@@ -393,6 +398,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   loadEarlier = null,
   forkCapability,
   latestCompletedTurnId = null,
+  forkCompletedTurnIds = EMPTY_FORK_COMPLETED_TURN_IDS,
   onForkAssistantMessage,
   transcriptHeader,
 }: MessagesTimelineProps) {
@@ -682,6 +688,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         latestTurn && (latestTurn.state !== "completed" || latestTurn.completedAt === null)
           ? latestTurn.turnId
           : null,
+      forkCompletedTurnIds,
       onForkAssistantMessage,
     }),
     [
@@ -712,6 +719,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       latestTurn?.completedAt,
       latestTurn?.state,
       latestTurn?.turnId,
+      forkCompletedTurnIds,
       onForkAssistantMessage,
     ],
   );
@@ -1608,6 +1616,7 @@ function AssistantForkMenu({ message }: { message: ChatMessage }) {
     completed: !message.streaming && turnId !== ctx.incompleteLatestTurnId,
     messageTurnId: turnId,
     latestCompletedTurnId: ctx.latestCompletedTurnId,
+    completedTurnIds: ctx.forkCompletedTurnIds,
   });
   if (!visible || turnId === null || !ctx.onForkAssistantMessage) return null;
 

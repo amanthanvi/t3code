@@ -67,19 +67,18 @@ export function useThreadForkActions(
   const capability = sourceThread
     ? providerConfigForThread(sourceThread, serverConfigs)?.sessionFork
     : undefined;
+  const completedTurnIds = useMemo(
+    () => completedTurnIdsFromCheckpoints(sourceThread?.checkpoints ?? []),
+    [sourceThread?.checkpoints],
+  );
   const latest = useMemo(
     () =>
       resolveForkEntryAvailability({
         capability,
         latestTurn: sourceThread?.latestTurn,
-        ...(sourceThread
-          ? {
-              messages: sourceThread.messages,
-              completedTurnIds: completedTurnIdsFromCheckpoints(sourceThread.checkpoints),
-            }
-          : {}),
+        ...(sourceThread ? { messages: sourceThread.messages, completedTurnIds } : {}),
       }),
-    [capability, sourceThread],
+    [capability, completedTurnIds, sourceThread],
   );
 
   // Callbacks handed to memoized rows must stay identity-stable, so they read
@@ -88,6 +87,7 @@ export function useThreadForkActions(
   const latestInputsRef = useRef({
     sourceThread,
     capability,
+    completedTurnIds,
     latestTarget: latest.target,
     latestEnabled: latest.enabled,
     panelHostThreadId: options?.panelHostThreadId ?? null,
@@ -98,6 +98,7 @@ export function useThreadForkActions(
     latestInputsRef.current = {
       sourceThread,
       capability,
+      completedTurnIds,
       latestTarget: latest.target,
       latestEnabled: latest.enabled,
       panelHostThreadId: options?.panelHostThreadId ?? null,
@@ -218,6 +219,7 @@ export function useThreadForkActions(
           completed: true,
           messageTurnId: input.turnId,
           latestCompletedTurnId: latestInputsRef.current.latestTarget?.turnId ?? null,
+          completedTurnIds: latestInputsRef.current.completedTurnIds,
         })
       ) {
         return Promise.resolve(false);
@@ -228,7 +230,14 @@ export function useThreadForkActions(
   );
 
   return useMemo(
-    () => ({ capability, latest, forkLatest, forkTarget, onForkAssistantMessage }),
-    [capability, forkLatest, forkTarget, latest, onForkAssistantMessage],
+    () => ({
+      capability,
+      completedTurnIds,
+      latest,
+      forkLatest,
+      forkTarget,
+      onForkAssistantMessage,
+    }),
+    [capability, completedTurnIds, forkLatest, forkTarget, latest, onForkAssistantMessage],
   );
 }

@@ -126,21 +126,25 @@ describe("thread fork entry availability", () => {
     ).toEqual(new Set([TurnId.make("turn-ready")]));
   });
 
-  it("allows every completed response for any-turn providers and only the latest for latest-turn providers", () => {
+  it("allows checkpointed earlier responses for any-turn providers and only the latest for latest-turn providers", () => {
+    const earlierTurnId = TurnId.make("turn-1");
+    const completedTurnIds = new Set([earlierTurnId]);
     expect(
       canForkCompletedAssistantMessage({
         capability: "any-turn",
         completed: true,
-        messageTurnId: TurnId.make("turn-1"),
+        messageTurnId: earlierTurnId,
         latestCompletedTurnId: completedTurn.turnId,
+        completedTurnIds,
       }),
     ).toBe(true);
     expect(
       canForkCompletedAssistantMessage({
         capability: "latest-turn",
         completed: true,
-        messageTurnId: TurnId.make("turn-1"),
+        messageTurnId: earlierTurnId,
         latestCompletedTurnId: completedTurn.turnId,
+        completedTurnIds,
       }),
     ).toBe(false);
     expect(
@@ -149,6 +153,7 @@ describe("thread fork entry availability", () => {
         completed: true,
         messageTurnId: completedTurn.turnId,
         latestCompletedTurnId: completedTurn.turnId,
+        completedTurnIds: new Set(),
       }),
     ).toBe(true);
     expect(
@@ -157,6 +162,40 @@ describe("thread fork entry availability", () => {
         completed: false,
         messageTurnId: completedTurn.turnId,
         latestCompletedTurnId: completedTurn.turnId,
+        completedTurnIds,
+      }),
+    ).toBe(false);
+  });
+
+  it("hides the fork menu on earlier responses from interrupted or failed turns", () => {
+    // A finalized assistant row from a turn without a ready checkpoint is
+    // not forkable; the server would refuse it as not completed.
+    expect(
+      canForkCompletedAssistantMessage({
+        capability: "any-turn",
+        completed: true,
+        messageTurnId: TurnId.make("turn-interrupted"),
+        latestCompletedTurnId: completedTurn.turnId,
+        completedTurnIds: new Set([TurnId.make("turn-1")]),
+      }),
+    ).toBe(false);
+    // The latest completed turn is forkable before its checkpoint lands.
+    expect(
+      canForkCompletedAssistantMessage({
+        capability: "any-turn",
+        completed: true,
+        messageTurnId: completedTurn.turnId,
+        latestCompletedTurnId: completedTurn.turnId,
+        completedTurnIds: new Set(),
+      }),
+    ).toBe(true);
+    expect(
+      canForkCompletedAssistantMessage({
+        capability: undefined,
+        completed: true,
+        messageTurnId: completedTurn.turnId,
+        latestCompletedTurnId: completedTurn.turnId,
+        completedTurnIds: new Set(),
       }),
     ).toBe(false);
   });

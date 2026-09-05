@@ -7941,6 +7941,7 @@ function ChatViewContent(props: ChatViewProps) {
                 loadEarlier={loadEarlierTurns}
                 forkCapability={threadFork.capability}
                 latestCompletedTurnId={threadFork.latest.target?.turnId ?? null}
+                forkCompletedTurnIds={threadFork.completedTurnIds}
                 onForkAssistantMessage={threadFork.onForkAssistantMessage}
                 transcriptHeader={transcriptHeader}
               />
