@@ -1,11 +1,19 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { MessageId, ThreadId, TurnId } from "@t3tools/contracts";
+import {
+  MessageId,
+  type OrchestrationSession,
+  ProviderInstanceId,
+  type ServerConfig,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildMobileSideChatMenuItems,
   canForkMobileAssistantMessage,
   completedTurnIdsFromCheckpoints,
+  resolveMobileThreadForkCapability,
   visibleTopLevelThreads,
 } from "./sideChats.logic";
 
@@ -74,6 +82,51 @@ describe("mobile side-chat list helpers", () => {
       { id: "side-chat:side-1", title: "Try another approach" },
       { id: "side-chat:side-2", title: "Check the tests" },
     ]);
+  });
+});
+
+describe("mobile thread fork capability", () => {
+  const serverConfig = {
+    providers: [
+      { instanceId: ProviderInstanceId.make("claude"), sessionFork: "latest-turn" },
+      { instanceId: ProviderInstanceId.make("codex-work"), sessionFork: "any-turn" },
+    ],
+  } as unknown as ServerConfig;
+  const modelSelection = { instanceId: ProviderInstanceId.make("claude"), model: "claude-opus-5" };
+  const session = (status: OrchestrationSession["status"]) =>
+    ({
+      threadId: ThreadId.make("thread"),
+      status,
+      providerName: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex-work"),
+      runtimeMode: "full-access",
+      activeTurnId: null,
+      lastError: null,
+      updatedAt: "2026-09-03T12:00:00.000Z",
+    }) satisfies OrchestrationSession;
+
+  it("follows a live session's instance and falls back to the stored selection otherwise", () => {
+    expect(resolveMobileThreadForkCapability({ modelSelection, session: null }, serverConfig)).toBe(
+      "latest-turn",
+    );
+    expect(
+      resolveMobileThreadForkCapability(
+        { modelSelection, session: session("ready") },
+        serverConfig,
+      ),
+    ).toBe("any-turn");
+    expect(
+      resolveMobileThreadForkCapability(
+        { modelSelection, session: session("stopped") },
+        serverConfig,
+      ),
+    ).toBe("latest-turn");
+    expect(
+      resolveMobileThreadForkCapability(
+        { modelSelection, session: session("error") },
+        serverConfig,
+      ),
+    ).toBe("latest-turn");
   });
 });
 

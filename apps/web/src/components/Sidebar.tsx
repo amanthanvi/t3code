@@ -35,6 +35,7 @@ import {
   type ProjectIconOverride,
   type ScopedThreadRef,
   ThreadId,
+  threadProviderInstanceId,
 } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
@@ -3184,8 +3185,7 @@ export default function Sidebar() {
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
         const isPinned = thread.pinnedAt != null;
-        const providerInstanceId =
-          thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
+        const providerInstanceId = threadProviderInstanceId(thread);
         const forkCapability = serverConfigs
           .get(thread.environmentId)
           ?.providers.find((provider) => provider.instanceId === providerInstanceId)?.sessionFork;

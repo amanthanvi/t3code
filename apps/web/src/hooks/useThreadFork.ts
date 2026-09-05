@@ -3,16 +3,18 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type {
-  MessageId,
-  OrchestrationCheckpointSummary,
-  OrchestrationMessage,
-  OrchestrationLatestTurn,
-  EnvironmentId,
-  ProviderInstanceId,
-  ServerConfig,
-  ThreadId,
-  TurnId,
+import {
+  type MessageId,
+  type OrchestrationCheckpointSummary,
+  type OrchestrationMessage,
+  type OrchestrationLatestTurn,
+  type OrchestrationSessionStatus,
+  type EnvironmentId,
+  type ProviderInstanceId,
+  type ServerConfig,
+  type ThreadId,
+  type TurnId,
+  threadProviderInstanceId,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef } from "react";
@@ -37,7 +39,10 @@ interface ForkableThread {
   readonly messages: ReadonlyArray<OrchestrationMessage>;
   readonly checkpoints: ReadonlyArray<OrchestrationCheckpointSummary>;
   readonly modelSelection: { readonly instanceId: ProviderInstanceId };
-  readonly session: { readonly providerInstanceId?: ProviderInstanceId | undefined } | null;
+  readonly session: {
+    readonly status: OrchestrationSessionStatus;
+    readonly providerInstanceId?: ProviderInstanceId | undefined;
+  } | null;
 }
 
 type ForkSourceThread = Pick<ForkableThread, "environmentId" | "id">;
@@ -46,7 +51,7 @@ function providerConfigForThread(
   thread: ForkableThread,
   serverConfigs: ReadonlyMap<EnvironmentId, ServerConfig>,
 ) {
-  const instanceId = thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
+  const instanceId = threadProviderInstanceId(thread);
   return serverConfigs
     .get(thread.environmentId)
     ?.providers.find((provider) => provider.instanceId === instanceId);

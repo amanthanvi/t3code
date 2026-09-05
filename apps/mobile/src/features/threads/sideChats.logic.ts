@@ -1,11 +1,12 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import type {
-  OrchestrationCheckpointSummary,
-  OrchestrationLatestTurn,
-  ServerConfig,
-  ServerProviderSessionFork,
-  ThreadId,
-  TurnId,
+import {
+  type OrchestrationCheckpointSummary,
+  type OrchestrationLatestTurn,
+  type ServerConfig,
+  type ServerProviderSessionFork,
+  type ThreadId,
+  type TurnId,
+  threadProviderInstanceId,
 } from "@t3tools/contracts";
 
 export function visibleTopLevelThreads<
@@ -25,7 +26,7 @@ export function resolveMobileThreadForkCapability(
   thread: Pick<EnvironmentThreadShell, "modelSelection" | "session">,
   serverConfig: ServerConfig | null,
 ): ServerProviderSessionFork | undefined {
-  const instanceId = thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
+  const instanceId = threadProviderInstanceId(thread);
   return serverConfig?.providers.find((provider) => provider.instanceId === instanceId)
     ?.sessionFork;
 }
