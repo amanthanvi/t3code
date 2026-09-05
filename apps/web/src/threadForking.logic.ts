@@ -105,7 +105,8 @@ export function canForkCompletedAssistantMessage(input: {
   readonly completedTurnIds: ReadonlySet<TurnId>;
 }): boolean {
   if (!input.completed || input.messageTurnId === null) return false;
-  if (input.messageTurnId === input.latestCompletedTurnId) return input.capability !== undefined;
+  if (input.capability === undefined || input.capability === "unsupported") return false;
+  if (input.messageTurnId === input.latestCompletedTurnId) return true;
   // Older turns need a ready checkpoint to prove they finished: a finalized
   // assistant row can also belong to an interrupted or failed turn, which the
   // server refuses to fork. Same rule as the header and palette entry points.

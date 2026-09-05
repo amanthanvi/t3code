@@ -198,6 +198,15 @@ describe("thread fork entry availability", () => {
         completedTurnIds: new Set(),
       }),
     ).toBe(false);
+    expect(
+      canForkCompletedAssistantMessage({
+        capability: "unsupported",
+        completed: true,
+        messageTurnId: completedTurn.turnId,
+        latestCompletedTurnId: completedTurn.turnId,
+        completedTurnIds: new Set([completedTurn.turnId]),
+      }),
+    ).toBe(false);
   });
 });
 
