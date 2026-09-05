@@ -9,6 +9,7 @@ import {
   type OrchestrationCommand,
   OrchestrationDispatchCommandError,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  threadProviderInstanceId,
 } from "@t3tools/contracts";
 
 import {
@@ -174,13 +175,7 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
             ),
           );
       if (Option.isSome(sourceThread)) {
-        const sourceSession = sourceThread.value.session;
-        const sourceInstanceId =
-          sourceSession !== null &&
-          sourceSession.status !== "stopped" &&
-          sourceSession.status !== "error"
-            ? (sourceSession.providerInstanceId ?? sourceThread.value.modelSelection.instanceId)
-            : sourceThread.value.modelSelection.instanceId;
+        const sourceInstanceId = threadProviderInstanceId(sourceThread.value);
         if (canonicalCommand.sourceTurnId !== undefined) {
           const providerService = yield* ProviderService;
           const capabilities = yield* providerService.getCapabilities(sourceInstanceId);

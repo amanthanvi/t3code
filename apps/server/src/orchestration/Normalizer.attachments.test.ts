@@ -24,6 +24,7 @@ const testLayer = Layer.mergeAll(
   ServerConfig.layerTest(process.cwd(), { prefix: "t3-normalizer-attachments-" }),
   Layer.mock(ProjectionSnapshotQuery, {
     getThreadTurnState: () => Effect.die("unused"),
+    getForkSourceHead: () => Effect.die("unused"),
   }),
   Layer.mock(ProviderService, {
     getCapabilities: () => Effect.die("unused"),

@@ -1034,6 +1034,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             interaction_mode,
             branch,
             worktree_path,
+            fork_json,
             side_chat,
             latest_turn_id,
             created_at,
@@ -1050,6 +1051,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             'default',
             NULL,
             NULL,
+            '{"sourceThreadId":"thread-first","sourceTurnId":null,"sourceMessageId":null,"forkedAt":"2026-03-01T00:00:04.000Z"}',
             1,
             NULL,
             '2026-03-01T00:00:04.000Z',
@@ -1067,6 +1069,183 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           assert.equal(firstThreadId.value, ThreadId.make("thread-first"));
           assert.notEqual(firstThreadId.value, ThreadId.make("thread-side-chat-first"));
         }
+
+        // A side chat whose parent is gone is an ordinary thread again and
+        // counts as the project's first thread when it is the oldest.
+        yield* sql`
+          INSERT INTO projection_threads (
+            thread_id,
+            project_id,
+            title,
+            model_selection_json,
+            runtime_mode,
+            interaction_mode,
+            branch,
+            worktree_path,
+            fork_json,
+            side_chat,
+            latest_turn_id,
+            created_at,
+            updated_at,
+            archived_at,
+            deleted_at
+          )
+          VALUES (
+            'thread-orphan-side-chat-first',
+            'project-active',
+            'Orphaned Side Chat',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            '{"sourceThreadId":"thread-deleted","sourceTurnId":null,"sourceMessageId":null,"forkedAt":"2026-03-01T00:00:03.000Z"}',
+            1,
+            NULL,
+            '2026-03-01T00:00:03.000Z',
+            '2026-03-01T00:00:03.000Z',
+            NULL,
+            NULL
+          )
+        `;
+
+        const orphanFirst = yield* snapshotQuery.getFirstActiveThreadIdByProjectId(
+          asProjectId("project-active"),
+        );
+        assert.deepStrictEqual(
+          Option.getOrUndefined(orphanFirst),
+          ThreadId.make("thread-orphan-side-chat-first"),
+        );
+      }),
+  );
+
+  it.effect(
+    "reads a fork source's head across archive state and reports deleted sources as gone",
+    () =>
+      Effect.gen(function* () {
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        const sql = yield* SqlClient.SqlClient;
+
+        yield* sql`DELETE FROM projection_threads`;
+        yield* sql`DELETE FROM projection_turns`;
+        yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          created_at,
+          updated_at,
+          archived_at,
+          deleted_at
+        )
+        VALUES
+          (
+            'thread-archived-source',
+            'project-fork',
+            'Archived Source',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            'turn-archived-head',
+            '2026-09-03T12:00:00.000Z',
+            '2026-09-03T12:00:02.000Z',
+            '2026-09-03T12:00:03.000Z',
+            NULL
+          ),
+          (
+            'thread-headless-source',
+            'project-fork',
+            'Headless Source',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            NULL,
+            '2026-09-03T12:00:00.000Z',
+            '2026-09-03T12:00:00.000Z',
+            NULL,
+            NULL
+          ),
+          (
+            'thread-deleted-source',
+            'project-fork',
+            'Deleted Source',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            NULL,
+            '2026-09-03T12:00:00.000Z',
+            '2026-09-03T12:00:04.000Z',
+            NULL,
+            '2026-09-03T12:00:04.000Z'
+          )
+      `;
+        yield* sql`
+        INSERT INTO projection_turns (
+          thread_id,
+          turn_id,
+          pending_message_id,
+          source_proposed_plan_thread_id,
+          source_proposed_plan_id,
+          assistant_message_id,
+          state,
+          requested_at,
+          started_at,
+          completed_at,
+          checkpoint_turn_count,
+          checkpoint_ref,
+          checkpoint_status,
+          checkpoint_files_json
+        )
+        VALUES (
+          'thread-archived-source',
+          'turn-archived-head',
+          NULL,
+          NULL,
+          NULL,
+          'message-archived-head',
+          'completed',
+          '2026-09-03T12:00:01.000Z',
+          '2026-09-03T12:00:01.000Z',
+          '2026-09-03T12:00:02.000Z',
+          NULL,
+          NULL,
+          NULL,
+          '[]'
+        )
+      `;
+
+        assert.deepStrictEqual(
+          Option.getOrUndefined(
+            yield* snapshotQuery.getForkSourceHead(ThreadId.make("thread-archived-source")),
+          ),
+          { latestTurn: { turnId: TurnId.make("turn-archived-head"), state: "completed" } },
+        );
+        assert.deepStrictEqual(
+          Option.getOrUndefined(
+            yield* snapshotQuery.getForkSourceHead(ThreadId.make("thread-headless-source")),
+          ),
+          { latestTurn: null },
+        );
+        assert.isTrue(
+          Option.isNone(
+            yield* snapshotQuery.getForkSourceHead(ThreadId.make("thread-deleted-source")),
+          ),
+        );
+        assert.isTrue(
+          Option.isNone(yield* snapshotQuery.getForkSourceHead(ThreadId.make("thread-missing"))),
+        );
       }),
   );
 

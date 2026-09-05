@@ -226,6 +226,7 @@ describe("ProviderSessionReaper", () => {
                 : Option.none(),
             ),
           getThreadTurnState: () => Effect.die("unused"),
+          getForkSourceHead: () => Effect.die("unused"),
           getThreadDetailById: () => Effect.die("unused"),
           getThreadDetailSnapshot: () => Effect.die("unused"),
           searchThreads: () => Effect.succeed({ matches: [] }),

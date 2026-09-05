@@ -67,6 +67,10 @@ export interface ProjectionThreadTurnState {
   readonly assistantMessageId: MessageId | null;
 }
 
+export interface ProjectionForkSourceHead {
+  readonly latestTurn: { readonly turnId: TurnId; readonly state: ProjectionTurnState } | null;
+}
+
 export interface ProjectionThreadDetailQuery {
   /**
    * Limit activities before SQLite returns and decodes their payloads.
@@ -200,6 +204,16 @@ export interface ProjectionSnapshotQueryShape {
     threadId: ThreadId,
     turnId: TurnId,
   ) => Effect.Effect<Option.Option<ProjectionThreadTurnState>, ProjectionRepositoryError>;
+
+  /**
+   * Read a fork source's current head regardless of archive state. `None`
+   * means the source row is gone (deleted or never existed); an archived
+   * source still reports its head so forks that outlive their parent can
+   * judge the recorded latest-turn boundary.
+   */
+  readonly getForkSourceHead: (
+    threadId: ThreadId,
+  ) => Effect.Effect<Option.Option<ProjectionForkSourceHead>, ProjectionRepositoryError>;
 
   /**
    * Read a single active thread detail snapshot by id.

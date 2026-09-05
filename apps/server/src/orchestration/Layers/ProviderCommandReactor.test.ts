@@ -181,6 +181,12 @@ describe("ProviderCommandReactor", () => {
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
     readonly tryHandlePromptCommandEffect?: ProviderAuthService["Service"]["tryHandlePromptCommand"];
+    /** Extra configured instances beyond the thread's own, with their selectable models. */
+    readonly additionalProviders?: ReadonlyArray<{
+      readonly instanceId: ProviderInstanceId;
+      readonly driver: ProviderDriverKind;
+      readonly models: ReadonlyArray<{ readonly slug: string; readonly name: string }>;
+    }>;
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir =
@@ -387,6 +393,7 @@ describe("ProviderCommandReactor", () => {
           ? { requiresNewThreadForModelChange: true }
           : {}),
       },
+      ...(input?.additionalProviders ?? []),
     ];
 
     const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
@@ -936,14 +943,27 @@ describe("ProviderCommandReactor", () => {
   });
 
   it("starts an unstarted fork on the source thread's current provider instance", async () => {
-    const harness = await createHarness();
+    const currentInstanceId = ProviderInstanceId.make("codex-work");
+    const currentModel = "gpt-5.6-sol";
+    // The moved instance also offers the fork's inherited slug; the fork must
+    // still follow the source's current model rather than keep the old one.
+    const harness = await createHarness({
+      additionalProviders: [
+        {
+          instanceId: currentInstanceId,
+          driver: ProviderDriverKind.make("codex"),
+          models: [
+            { slug: "gpt-5-codex", name: "GPT-5 Codex" },
+            { slug: currentModel, name: "GPT-5.6 Sol" },
+          ],
+        },
+      ],
+    });
     const sourceThreadId = ThreadId.make("thread-1");
     const forkThreadId = ThreadId.make("thread-fork-source-moved");
     const forkWithCurrentSelectionThreadId = ThreadId.make(
       "thread-fork-source-moved-current-selection",
     );
-    const currentInstanceId = ProviderInstanceId.make("codex-work");
-    const currentModel = "gpt-5.6-sol";
 
     await harness.runEffect(
       harness.engine.dispatch({
@@ -1079,6 +1099,229 @@ describe("ProviderCommandReactor", () => {
       },
       forkFrom: { threadId: sourceThreadId },
     });
+  });
+
+  it("rejects a first-turn model that differs from the moved source's current model", async () => {
+    const currentInstanceId = ProviderInstanceId.make("codex-work");
+    const harness = await createHarness({
+      additionalProviders: [
+        {
+          instanceId: currentInstanceId,
+          driver: ProviderDriverKind.make("codex"),
+          models: [
+            { slug: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
+            { slug: "gpt-5.6-luna", name: "GPT-5.6 Luna" },
+          ],
+        },
+      ],
+    });
+    const sourceThreadId = ThreadId.make("thread-1");
+    const forkThreadId = ThreadId.make("thread-fork-source-moved-other-model");
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("cmd-fork-before-source-moved-other-model"),
+        threadId: forkThreadId,
+        sourceThreadId,
+        sideChat: false,
+        createdAt: "2026-09-03T12:00:10.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-source-model-moved-other-model"),
+        threadId: sourceThreadId,
+        modelSelection: { instanceId: currentInstanceId, model: "gpt-5.6-sol" },
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-source-session-moved-other-model"),
+        threadId: sourceThreadId,
+        session: {
+          threadId: sourceThreadId,
+          status: "ready",
+          providerName: ProviderDriverKind.make("codex"),
+          providerInstanceId: currentInstanceId,
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: "2026-09-03T12:00:11.000Z",
+        },
+        createdAt: "2026-09-03T12:00:11.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-start-fork-moved-other-model"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("message-fork-moved-other-model"),
+          role: "user",
+          text: "Start on a different model than the source uses.",
+          attachments: [],
+        },
+        modelSelection: { instanceId: currentInstanceId, model: "gpt-5.6-luna" },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-09-03T12:00:12.000Z",
+      }),
+    );
+    await harness.drain();
+
+    expect(harness.startSession).not.toHaveBeenCalled();
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+    const readModel = await harness.readModel();
+    const failure = readModel.threads
+      .find((thread) => thread.id === forkThreadId)
+      ?.activities.find((activity) => activity.kind === "provider.turn.start.failed");
+    expect(failure?.payload).toMatchObject({
+      detail: expect.stringContaining("cannot switch provider instance or model"),
+    });
+  });
+
+  it("starts an unstarted fork on the stopped source's bound instance, not its stored selection", async () => {
+    const boundInstanceId = ProviderInstanceId.make("codex-work");
+    const harness = await createHarness({
+      additionalProviders: [
+        {
+          instanceId: boundInstanceId,
+          driver: ProviderDriverKind.make("codex"),
+          models: [{ slug: "gpt-5-codex", name: "GPT-5 Codex" }],
+        },
+      ],
+    });
+    const sourceThreadId = ThreadId.make("thread-1");
+    const forkThreadId = ThreadId.make("thread-fork-stopped-source");
+
+    // The source conversation lives on codex-work, but its session is stopped
+    // and its stored selection has since been pointed at another instance.
+    harness.persistSessionBinding({
+      threadId: sourceThreadId,
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: boundInstanceId,
+      runtimeMode: "approval-required",
+      status: "stopped",
+      resumeCursor: { opaque: "source-bound" },
+    });
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-stopped-source-session"),
+        threadId: sourceThreadId,
+        session: {
+          threadId: sourceThreadId,
+          status: "stopped",
+          providerName: ProviderDriverKind.make("codex"),
+          providerInstanceId: boundInstanceId,
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: "2026-09-03T12:00:09.000Z",
+        },
+        createdAt: "2026-09-03T12:00:09.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("cmd-fork-stopped-source"),
+        threadId: forkThreadId,
+        sourceThreadId,
+        sideChat: false,
+        modelSelection: { instanceId: boundInstanceId, model: "gpt-5-codex" },
+        createdAt: "2026-09-03T12:00:10.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-stopped-source-selection-changed"),
+        threadId: sourceThreadId,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex-elsewhere"),
+          model: "gpt-5-codex",
+        },
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-start-fork-stopped-source"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("message-fork-stopped-source"),
+          role: "user",
+          text: "Continue from the stopped source.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-09-03T12:00:12.000Z",
+      }),
+    );
+    await harness.drain();
+
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      threadId: forkThreadId,
+      providerInstanceId: boundInstanceId,
+      modelSelection: { instanceId: boundInstanceId, model: "gpt-5-codex" },
+      forkFrom: { threadId: sourceThreadId },
+    });
+    expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts a latest-turn fork whose source thread was deleted", async () => {
+    const harness = await createHarness({ sessionFork: "latest-turn" });
+    const sourceThreadId = ThreadId.make("thread-1");
+    const forkThreadId = ThreadId.make("thread-latest-turn-orphan");
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("cmd-latest-turn-orphan-fork"),
+        threadId: forkThreadId,
+        sourceThreadId,
+        sideChat: true,
+        createdAt: "2026-09-03T12:04:00.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("cmd-latest-turn-orphan-delete-source"),
+        threadId: sourceThreadId,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-latest-turn-orphan-start"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("message-latest-turn-orphan-start"),
+          role: "user",
+          text: "Keep going without the parent.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-09-03T12:04:01.000Z",
+      }),
+    );
+    await harness.drain();
+
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      threadId: forkThreadId,
+      forkFrom: { threadId: sourceThreadId },
+    });
+    expect(harness.sendTurn).toHaveBeenCalledTimes(1);
   });
 
   it("resumes a fork's persisted cursor without issuing another native fork", async () => {

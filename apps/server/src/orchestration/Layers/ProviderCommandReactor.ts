@@ -14,7 +14,6 @@ import {
 } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
-import { resolveSelectableModel } from "@t3tools/shared/model";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -546,16 +545,28 @@ const make = Effect.gen(function* () {
       thread.fork != null && !forkHasOwnResumeCursor
         ? yield* resolveThread(thread.fork.sourceThreadId)
         : undefined;
-    // Only a live source session says where the source runs now; a stopped
-    // or errored session is history, so the stored selection wins.
+    // An unstarted fork must start where the source conversation actually
+    // lives. The source's live session is the only proof it moved; without
+    // one, the source's persisted binding says which instance still holds
+    // it, and a source with neither stays on the selection the fork
+    // inherited. The source's stored selection alone is not enough: it can
+    // change before any turn moves the conversation.
     const forkSourceSession =
       forkSource?.session != null &&
       forkSource.session.status !== "stopped" &&
       forkSource.session.status !== "error"
         ? forkSource.session
         : null;
+    const forkSourceBinding =
+      forkSource !== undefined && forkSourceSession?.providerInstanceId === undefined
+        ? yield* providerService.getSessionBinding(forkSource.id)
+        : null;
     const forkSourceInstanceId =
-      forkSourceSession?.providerInstanceId ?? forkSource?.modelSelection.instanceId;
+      forkSource === undefined
+        ? undefined
+        : (forkSourceSession?.providerInstanceId ??
+          forkSourceBinding?.providerInstanceId ??
+          thread.modelSelection.instanceId);
     const resolveActiveSession = (threadId: ThreadId) =>
       providerService
         .listSessions()
@@ -585,48 +596,34 @@ const make = Effect.gen(function* () {
         ? activeSession.providerInstanceId
         : (forkBinding?.providerInstanceId ?? thread.modelSelection.instanceId);
     const baseDesiredModelSelection = requestedModelSelection ?? thread.modelSelection;
-    const desiredModelSelection =
+    // When the source moved, the fork follows it onto the source's current
+    // instance and model: the inherited selection described the old home.
+    const forkSourceMoved =
       forkSource !== undefined &&
       forkSourceInstanceId !== undefined &&
-      baseDesiredModelSelection.instanceId !== forkSourceInstanceId
-        ? yield* Effect.gen(function* () {
-            const sourceProvider = (yield* providerRegistry.getProviders).find(
-              (provider) => provider.instanceId === forkSourceInstanceId,
-            );
-            const resolvedModel = sourceProvider
-              ? resolveSelectableModel(
-                  sourceProvider.driver,
-                  baseDesiredModelSelection.model,
-                  sourceProvider.models,
-                )
-              : null;
-            return resolvedModel === null
-              ? { ...forkSource.modelSelection, instanceId: forkSourceInstanceId }
-              : {
-                  ...baseDesiredModelSelection,
-                  instanceId: forkSourceInstanceId,
-                  model: resolvedModel,
-                };
-          })
-        : baseDesiredModelSelection;
+      forkSourceInstanceId !== thread.modelSelection.instanceId;
+    const movedForkSourceSelection: ModelSelection | undefined = forkSourceMoved
+      ? { ...forkSource.modelSelection, instanceId: forkSourceInstanceId }
+      : undefined;
+    const desiredModelSelection = movedForkSourceSelection ?? baseDesiredModelSelection;
     const desiredInstanceId = desiredModelSelection.instanceId;
     const inheritedForkInstanceId =
       forkSourceInstanceId ??
       forkBinding?.providerInstanceId ??
       thread.session?.providerInstanceId ??
       thread.modelSelection.instanceId;
-    const requestedSelectionMatchesMovedForkSource =
+    // Before its inherited session starts, a fork's model is locked: to the
+    // inherited selection, or to the source's current selection once the
+    // source moved.
+    const forkModelLockViolated =
       requestedModelSelection !== undefined &&
-      forkSourceInstanceId !== undefined &&
-      forkSourceInstanceId !== thread.modelSelection.instanceId &&
-      requestedModelSelection.instanceId === forkSourceInstanceId;
+      !Equal.equals(requestedModelSelection, thread.modelSelection) &&
+      (movedForkSourceSelection === undefined ||
+        !Equal.equals(requestedModelSelection, movedForkSourceSelection));
     if (
       thread.fork != null &&
       !forkHasOwnResumeCursor &&
-      (desiredInstanceId !== inheritedForkInstanceId ||
-        (requestedModelSelection !== undefined &&
-          !Equal.equals(requestedModelSelection, thread.modelSelection) &&
-          !requestedSelectionMatchesMovedForkSource))
+      (desiredInstanceId !== inheritedForkInstanceId || forkModelLockViolated)
     ) {
       return yield* new ProviderAdapterRequestError({
         provider: providerErrorLabelFromInstanceHint({
@@ -796,10 +793,16 @@ const make = Effect.gen(function* () {
       }
     }
 
+    // A source that is gone cannot have advanced, and an archived source
+    // still reports its head, so forks that outlive their parent keep
+    // working as ordinary threads.
     const sourceStillAtRecordedForkBoundary = Effect.fnUntraced(function* () {
       if (latestTurnFork === null) return true;
-      const source = yield* resolveThread(latestTurnFork.sourceThreadId);
-      const sourceLatestTurn = source?.latestTurn ?? null;
+      const source = yield* projectionSnapshotQuery.getForkSourceHead(
+        latestTurnFork.sourceThreadId,
+      );
+      if (Option.isNone(source)) return true;
+      const sourceLatestTurn = source.value.latestTurn;
       return latestTurnFork.sourceTurnId === null
         ? sourceLatestTurn === null
         : sourceLatestTurn?.turnId === latestTurnFork.sourceTurnId &&

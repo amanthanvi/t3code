@@ -29,6 +29,7 @@ import {
   ThreadTurnDiff,
   ThreadTurnStartRequestedPayload,
   isProviderSendTurnSupportedImageMimeType,
+  threadProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
@@ -1177,4 +1178,34 @@ it("isProviderSendTurnSupportedImageMimeType accepts raster formats and rejects 
   assert.strictEqual(isProviderSendTurnSupportedImageMimeType("image/png"), true);
   assert.strictEqual(isProviderSendTurnSupportedImageMimeType("IMAGE/JPEG"), true);
   assert.strictEqual(isProviderSendTurnSupportedImageMimeType("image/svg+xml"), false);
+});
+
+it("threadProviderInstanceId follows a live session and ignores stopped or errored ones", () => {
+  const modelSelection = { instanceId: ProviderInstanceId.make("codex") };
+  const session = (status: OrchestrationSession["status"]) => ({
+    status,
+    providerInstanceId: ProviderInstanceId.make("codex-work"),
+  });
+
+  assert.strictEqual(threadProviderInstanceId({ modelSelection, session: null }), "codex");
+  assert.strictEqual(
+    threadProviderInstanceId({ modelSelection, session: session("ready") }),
+    "codex-work",
+  );
+  assert.strictEqual(
+    threadProviderInstanceId({ modelSelection, session: session("running") }),
+    "codex-work",
+  );
+  assert.strictEqual(
+    threadProviderInstanceId({ modelSelection, session: session("stopped") }),
+    "codex",
+  );
+  assert.strictEqual(
+    threadProviderInstanceId({ modelSelection, session: session("error") }),
+    "codex",
+  );
+  assert.strictEqual(
+    threadProviderInstanceId({ modelSelection, session: { status: "ready" } }),
+    "codex",
+  );
 });
