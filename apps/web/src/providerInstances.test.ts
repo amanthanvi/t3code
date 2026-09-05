@@ -491,6 +491,23 @@ describe("resolveDefaultProviderModelSelection", () => {
     expect(resolveDefaultProviderModelSelection(providers, stored)).toBe(stored);
   });
 
+  it("preserves a saved Codex selection when Astra is the live default", () => {
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("codex"),
+        instanceId: "codex",
+        models: [model("gpt-6-astra", false, true), model("gpt-5.6-sol")],
+      }),
+    ];
+    const stored = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.6-sol",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    };
+
+    expect(resolveDefaultProviderModelSelection(providers, stored)).toBe(stored);
+  });
+
   it("replaces a stale stored instance with the first ready instance and its model", () => {
     const providers = [
       provider({

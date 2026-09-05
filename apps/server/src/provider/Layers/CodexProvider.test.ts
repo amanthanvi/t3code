@@ -118,13 +118,19 @@ it("marks the most preferred available model as default", () => {
   );
 });
 
-it("prefers sol over terra when both are available", () => {
+it("prefers Astra, then Sol, then Terra", () => {
   const models = applyPreferredCodexDefaultModel([
     { slug: "gpt-5.6-terra", name: "GPT-5.6-Terra", isCustom: false, capabilities: null },
     { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null },
+    { slug: "gpt-6-astra", name: "GPT-6-Astra", isCustom: false, capabilities: null },
   ]);
 
-  assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-5.6-sol");
+  assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-6-astra");
+
+  const withoutAstra = applyPreferredCodexDefaultModel(
+    models.filter((model) => model.slug !== "gpt-6-astra"),
+  );
+  assert.deepStrictEqual(withoutAstra.find((model) => model.isDefault)?.slug, "gpt-5.6-sol");
 });
 
 it("keeps Codex's own default when no preferred model is available", () => {
@@ -138,7 +144,7 @@ it("keeps Codex's own default when no preferred model is available", () => {
 
 it("ignores custom models that shadow a preferred slug", () => {
   const models = applyPreferredCodexDefaultModel([
-    { slug: "gpt-5.6-sol", name: "gpt-5.6-sol", isCustom: true, capabilities: null },
+    { slug: "gpt-6-astra", name: "gpt-6-astra", isCustom: true, capabilities: null },
     { slug: "gpt-5.4", name: "GPT-5.4", isCustom: false, isDefault: true, capabilities: null },
   ]);
 
