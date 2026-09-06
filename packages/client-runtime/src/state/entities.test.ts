@@ -228,14 +228,25 @@ describe("environment entity projections", () => {
       ),
     );
 
+    const visibleRefs = harness.registry.get(
+      harness.threadShells.environmentVisibleThreadRefsAtom(ENVIRONMENT_ID),
+    );
+    expect(visibleRefs.some((ref) => ref.threadId === SIDE_CHAT_ID)).toBe(false);
+    // Ownership reads keep the side chat: its worktree is still in use.
     const refs = harness.registry.get(
       harness.threadShells.environmentThreadRefsAtom(ENVIRONMENT_ID),
     );
-    expect(refs.some((ref) => ref.threadId === SIDE_CHAT_ID)).toBe(false);
-    const allRefs = harness.registry.get(
-      harness.threadShells.environmentAllThreadRefsAtom(ENVIRONMENT_ID),
-    );
-    expect(allRefs.some((ref) => ref.threadId === SIDE_CHAT_ID)).toBe(true);
+    expect(refs.some((ref) => ref.threadId === SIDE_CHAT_ID)).toBe(true);
+    expect(
+      harness.registry
+        .get(harness.threadShells.visibleThreadShellsAtom)
+        .some((thread) => thread.id === SIDE_CHAT_ID),
+    ).toBe(false);
+    expect(
+      harness.registry
+        .get(harness.threadShells.threadShellsAtom)
+        .some((thread) => thread.id === SIDE_CHAT_ID),
+    ).toBe(true);
     const refsByProject = harness.registry.get(
       harness.threadShells.environmentThreadRefsByProjectAtom(ENVIRONMENT_ID),
     );
@@ -285,9 +296,14 @@ describe("environment entity projections", () => {
     );
 
     const refs = harness.registry.get(
-      harness.threadShells.environmentThreadRefsAtom(ENVIRONMENT_ID),
+      harness.threadShells.environmentVisibleThreadRefsAtom(ENVIRONMENT_ID),
     );
     expect(refs.some((ref) => ref.threadId === SIDE_CHAT_ID)).toBe(true);
+    expect(
+      harness.registry
+        .get(harness.threadShells.visibleThreadShellsAtom)
+        .some((thread) => thread.id === SIDE_CHAT_ID),
+    ).toBe(true);
     const refsByProject = harness.registry.get(
       harness.threadShells.environmentThreadRefsByProjectAtom(ENVIRONMENT_ID),
     );

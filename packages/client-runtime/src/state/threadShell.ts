@@ -94,7 +94,28 @@ export function createEnvironmentThreadShellAtoms(input: {
     }).pipe(Atom.withLabel(`environment-thread-index:${environmentId}`)),
   );
 
+  // Every thread the environment owns, side chats included. Ownership checks
+  // (worktree cleanup, membership, outbox routing) must read this list: a
+  // side chat shares its parent's worktree, and forgetting it would make that
+  // worktree look orphaned when the parent is deleted.
   const environmentThreadRefsAtom = Atom.family((environmentId: EnvironmentId) => {
+    let previous: ReadonlyArray<ScopedThreadRef> = [];
+    return Atom.make((get) => {
+      const next = get(environmentThreadsAtom(environmentId)).map((thread) => ({
+        environmentId,
+        threadId: thread.id,
+      }));
+      if (threadRefsEqual(previous, next)) {
+        return previous;
+      }
+      previous = next;
+      return next;
+    }).pipe(Atom.withLabel(`environment-thread-refs:${environmentId}`));
+  });
+
+  // What thread lists show: side chats stay hidden while their parent exists
+  // and are grouped beside it instead.
+  const environmentVisibleThreadRefsAtom = Atom.family((environmentId: EnvironmentId) => {
     let previous: ReadonlyArray<ScopedThreadRef> = [];
     return Atom.make((get) => {
       const threadIds = get(environmentThreadIndexAtom(environmentId));
@@ -109,22 +130,7 @@ export function createEnvironmentThreadShellAtoms(input: {
       }
       previous = next;
       return next;
-    }).pipe(Atom.withLabel(`environment-thread-refs:${environmentId}`));
-  });
-
-  const environmentAllThreadRefsAtom = Atom.family((environmentId: EnvironmentId) => {
-    let previous: ReadonlyArray<ScopedThreadRef> = [];
-    return Atom.make((get) => {
-      const next = get(environmentThreadsAtom(environmentId)).map((thread) => ({
-        environmentId,
-        threadId: thread.id,
-      }));
-      if (threadRefsEqual(previous, next)) {
-        return previous;
-      }
-      previous = next;
-      return next;
-    }).pipe(Atom.withLabel(`environment-all-thread-refs:${environmentId}`));
+    }).pipe(Atom.withLabel(`environment-visible-thread-refs:${environmentId}`));
   });
 
   const environmentThreadRefsByProjectAtom = Atom.family((environmentId: EnvironmentId) => {
@@ -298,15 +304,35 @@ export function createEnvironmentThreadShellAtoms(input: {
     return previousThreadShells;
   }).pipe(Atom.withLabel("environment-thread-shell-list"));
 
+  // The list a thread picker or sidebar renders: `threadShellsAtom` minus side
+  // chats whose parent is still present.
+  let previousVisibleThreadShells: ReadonlyArray<EnvironmentThreadShell> = [];
+  const visibleThreadShellsAtom = Atom.make((get) => {
+    const next: EnvironmentThreadShell[] = [];
+    for (const environmentId of get(input.catalogValueAtom).entries.keys()) {
+      const threadIds = get(environmentThreadIndexAtom(environmentId));
+      for (const thread of get(environmentThreadsAtom(environmentId))) {
+        if (isHiddenSideChat(thread, threadIds)) continue;
+        next.push(scopedThread(environmentId, thread));
+      }
+    }
+    if (arrayElementsEqual(previousVisibleThreadShells, next)) {
+      return previousVisibleThreadShells;
+    }
+    previousVisibleThreadShells = next;
+    return previousVisibleThreadShells;
+  }).pipe(Atom.withLabel("environment-visible-thread-shell-list"));
+
   return {
     environmentThreadsAtom,
     environmentThreadIndexAtom,
-    environmentAllThreadRefsAtom,
     environmentThreadRefsAtom,
+    environmentVisibleThreadRefsAtom,
     environmentThreadRefsByProjectAtom,
     environmentSideChatsByParentAtom,
     threadRefsAtom,
     threadShellsAtom,
+    visibleThreadShellsAtom,
     sideChatsByParentAtom: (ref: ScopedThreadRef) => sideChatsByParentAtomFamily(threadKey(ref)),
     threadShellsForProjectRefsAtom: (refs: ReadonlyArray<ScopedProjectRef>) =>
       threadShellsForProjectRefsAtomFamily(projectRefCollectionKey(refs)),
