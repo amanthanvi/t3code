@@ -1,3 +1,4 @@
+import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
@@ -5,7 +6,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { ContextMenuItem, EnvironmentId, VcsRef, ThreadId } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import { ChevronDownIcon, GitBranchIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
+import { ChevronDownIcon, GitBranchIcon, SearchIcon } from "lucide-react";
 import {
   useCallback,
   useDeferredValue,
@@ -34,6 +35,7 @@ import { vcsEnvironment } from "../state/vcs";
 import { cn } from "../lib/utils";
 import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
+import { composerFloatingLayerProps } from "./chat/composerEventScope";
 import {
   deriveLocalBranchNameFromRemoteRef,
   resolveBranchTriggerLabel,
@@ -744,8 +746,22 @@ export function BranchToolbarBranchSelector({
                 />
               }
             >
-              <ChangeRequestStatusIcon className="size-3" />
-              <span>#{branchPr.number}</span>
+              <ChangeRequestStatusIcon
+                state={branchPr.state}
+                isDraft={branchPr.isDraft}
+                className="size-3"
+              />
+              <span
+                data-composer-label
+                className="min-w-0 max-w-12 overflow-hidden group-data-[compact]/composer-context:max-w-0"
+              >
+                <span
+                  data-composer-label-motion
+                  className="block w-full min-w-0 max-w-12 origin-left truncate transition-[opacity,transform] duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:[transform:translateX(-0.25rem)_scaleX(0.95)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transform-none motion-reduce:transition-opacity"
+                >
+                  #{branchPr.number}
+                </span>
+              </span>
             </TooltipTrigger>
             <TooltipPopup side="top">{branchPrTooltip}</TooltipPopup>
           </Tooltip>
@@ -759,7 +775,7 @@ export function BranchToolbarBranchSelector({
         >
           <ComboboxTrigger
             render={<Button variant="ghost" size="xs" />}
-            className="min-w-0 max-w-full text-muted-foreground/70 hover:text-foreground/80"
+            className="min-w-0 max-w-full font-normal text-muted-foreground/70 text-xs! hover:text-foreground/80"
             disabled={isInitialBranchesLoadPending || isBranchActionPending}
           >
             <GitBranchIcon className="size-3 shrink-0 opacity-70" />
@@ -778,7 +794,12 @@ export function BranchToolbarBranchSelector({
           </ComboboxTrigger>
         </span>
       </div>
-      <ComboboxPopup align="end" side="top" className="flex w-80 flex-col">
+      <ComboboxPopup
+        align="end"
+        side="top"
+        className="flex w-80 flex-col"
+        {...composerFloatingLayerProps}
+      >
         <div className="shrink-0 px-3 pt-2.5">
           <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
             <SearchIcon
@@ -844,7 +865,7 @@ export function BranchToolbarBranchSelector({
                     className="flex cursor-pointer items-center justify-between gap-3 border-t border-border/60 px-3 py-2 text-xs"
                   >
                     <span className="flex min-w-0 items-center gap-1.5 font-medium text-muted-foreground">
-                      <RefreshCwIcon aria-hidden="true" className="size-3 shrink-0 opacity-70" />
+                      <RefreshIcon aria-hidden="true" className="size-3 shrink-0 opacity-70" />
                       <span className="truncate">Start from origin</span>
                     </span>
                     <Switch

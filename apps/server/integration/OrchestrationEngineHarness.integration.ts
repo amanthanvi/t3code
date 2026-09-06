@@ -47,6 +47,7 @@ import {
   ProviderEventLoggers,
 } from "../src/provider/Layers/ProviderEventLoggers.ts";
 import { ProviderService } from "../src/provider/Services/ProviderService.ts";
+import { ProviderAuthService } from "../src/provider/Services/ProviderAuthService.ts";
 import { AnalyticsService } from "../src/telemetry/AnalyticsService.ts";
 import { CheckpointReactorLive } from "../src/orchestration/Layers/CheckpointReactor.ts";
 import * as RepositoryIdentityResolver from "../src/project/RepositoryIdentityResolver.ts";
@@ -86,6 +87,7 @@ import { VcsStatusBroadcaster } from "../src/vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../src/git/GitWorkflowService.ts";
 import * as VcsProcess from "../src/vcs/VcsProcess.ts";
 import * as AgentAwarenessRelay from "../src/relay/AgentAwarenessRelay.ts";
+import * as PullRequestService from "../src/pullRequest/PullRequestService.ts";
 
 const decodeCodexSettings = Schema.decodeEffect(CodexSettings);
 
@@ -339,6 +341,11 @@ export const makeOrchestrationIntegrationHarness = (
       generateThreadTitle: () => Effect.succeed({ title: "New thread" }),
     } as unknown as TextGeneration["Service"]);
     const providerCommandReactorLayer = ProviderCommandReactorLive.pipe(
+      Layer.provide(
+        Layer.mock(ProviderAuthService)({
+          tryHandlePromptCommand: () => Effect.succeed(false),
+        }),
+      ),
       // Stop drains runtime ingestion before settling background tasks.
       Layer.provideMerge(runtimeIngestionLayer),
       Layer.provideMerge(runtimeServicesLayer),
@@ -348,6 +355,11 @@ export const makeOrchestrationIntegrationHarness = (
     );
     const checkpointReactorLayer = CheckpointReactorLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),
+      Layer.provideMerge(
+        Layer.mock(PullRequestService.PullRequestService)({
+          refreshAfterTurn: Effect.void,
+        }),
+      ),
       Layer.provideMerge(
         Layer.succeed(VcsStatusBroadcaster, {
           getStatus: () => Effect.die("getStatus should not be called in this test"),
@@ -361,6 +373,8 @@ export const makeOrchestrationIntegrationHarness = (
               workingTree: { files: [], insertions: 0, deletions: 0 },
             }),
           refreshStatus: () => Effect.die("refreshStatus should not be called in this test"),
+          refreshPullRequestStatus: () =>
+            Effect.die("refreshPullRequestStatus should not be called in this test"),
           streamStatus: () => Stream.empty,
         }),
       ),
