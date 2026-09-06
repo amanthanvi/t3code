@@ -3,6 +3,7 @@ import {
   type ModelCapabilities,
   type ServerProviderModel,
   type ServerProviderSlashCommand,
+  type CustomModelSetting,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -12,7 +13,7 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { createModelCapabilities } from "@t3tools/shared/model";
+import { createModelCapabilities, readCustomModelEntries } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
   query as claudeQuery,
@@ -65,15 +66,22 @@ const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabili
 function claudeModelsFromSettings(
   catalog: ClaudeModelCatalog,
   builtInModels: ReadonlyArray<ServerProviderModel>,
-  customModels: ReadonlyArray<string>,
+  customModels: ReadonlyArray<CustomModelSetting>,
 ): ReadonlyArray<ServerProviderModel> {
   const scoped = scopeClaudeModelCatalog(catalog, customModels);
+  // Entries that declare their own capabilities keep them; only bare slugs
+  // borrow from the template they route to.
+  const declared = new Set(
+    readCustomModelEntries(customModels)
+      .filter((entry) => entry.capabilities !== null)
+      .map((entry) => entry.slug),
+  );
   return providerModelsFromSettings(
     builtInModels,
     customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   ).map((model) => {
-    if (!model.isCustom) return model;
+    if (!model.isCustom || declared.has(model.slug)) return model;
     const capabilities = resolveClaudeCatalogTemplate(scoped, model.slug)?.model.capabilities;
     return capabilities ? { ...model, capabilities } : model;
   });
