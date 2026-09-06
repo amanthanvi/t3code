@@ -781,7 +781,8 @@ it.effect("settles background agent tasks left running by an orphaned session", 
       upsert: () => Effect.void,
       getProvider: () => Effect.die("unused"),
       listThreadIds: () => Effect.die("unused"),
-      listBindings: () => Effect.die("unused"),
+      listBindings: () => Effect.succeed([]),
+      recordImportedTranscript: () => Effect.die("unused"),
     },
     dispatch: (command) => {
       dispatched.push(command);
@@ -844,7 +845,8 @@ it("settles background agents on ready and stopped threads, and writes nothing w
       upsert: () => Effect.void,
       getProvider: () => Effect.die("unused"),
       listThreadIds: () => Effect.die("unused"),
-      listBindings: () => Effect.die("unused"),
+      listBindings: () => Effect.succeed([]),
+      recordImportedTranscript: () => Effect.die("unused"),
     },
     dispatch: (command) => {
       dispatched.push(command);

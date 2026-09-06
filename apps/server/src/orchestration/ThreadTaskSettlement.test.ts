@@ -63,6 +63,8 @@ const withSettlementServices = (input: {
       ),
       Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {
         readEvents: () => Stream.empty,
+        readThreadEvents: () => Stream.empty,
+        getThreadReplayStats: () => Effect.die("unused thread replay stats"),
         dispatch: (command) => {
           if (input.failFor?.(command) === true) {
             return Effect.fail(
