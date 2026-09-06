@@ -620,7 +620,7 @@ const make = Effect.gen(function* () {
     const forkHasOwnResumeCursor = forkResumeCursor !== undefined;
     const forkSource =
       thread.fork != null && !forkHasOwnResumeCursor
-        ? yield* resolveThread(thread.fork.sourceThreadId)
+        ? yield* resolveThreadShell(thread.fork.sourceThreadId)
         : undefined;
     // An unstarted fork must start where the source conversation actually
     // lives. The source's live session is the only proof it moved; without
@@ -688,7 +688,8 @@ const make = Effect.gen(function* () {
       movedForkSourceSelection = resolveForkSourceSelection({
         instanceId: forkSourceInstanceId,
         runtimeModel:
-          forkSourceRuntimeSession?.providerInstanceId === forkSourceInstanceId
+          forkSourceRuntimeSession !== undefined &&
+          forkSourceRuntimeSession.providerInstanceId === forkSourceInstanceId
             ? forkSourceRuntimeSession.model
             : undefined,
         candidates: [forkSource.modelSelection, thread.modelSelection],

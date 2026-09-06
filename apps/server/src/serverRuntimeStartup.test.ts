@@ -286,6 +286,8 @@ it.effect(
           getThreadCheckpointContext: () => Effect.succeed(Option.none()),
           getFullThreadDiffContext: () => Effect.succeed(Option.none()),
           getThreadRuntimeContext: () => Effect.die("unused"),
+          getThreadTurnState: () => Effect.die("unused"),
+          getForkSourceHead: () => Effect.die("unused"),
           getThreadShellById: () => Effect.die("unused"),
           getThreadDetailById: () => Effect.die("unused"),
           getThreadDetailSnapshot: () => Effect.die("unused"),
