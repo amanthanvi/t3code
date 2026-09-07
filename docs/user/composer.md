@@ -112,10 +112,10 @@ provider supports it. Web and desktop also offer compaction from the context met
 ## Background agents after a turn
 
 When background agents keep working after a turn ends, a banner above the composer counts them
-and offers **Stop**. Pressing Stop, or the provider session ending, marks any agents still listed
-as working as interrupted, so the banner clears and the Agents panel stops showing them as
-working, even when the provider never reports those agents again. Restarting T3 Code does the
-same for threads whose provider session did not survive.
+and offers **Stop**. Pressing Stop, or the provider session ending, interrupts every agent still
+shown as working, so the banner clears and the Agents panel stops counting them, even when the
+provider never reports those agents again. Restarting T3 Code does the same for threads whose
+provider session did not survive.
 
 ## Images and videos in messages
 

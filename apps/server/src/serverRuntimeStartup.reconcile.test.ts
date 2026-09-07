@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  EventId,
   type OrchestrationCommand,
   type OrchestrationSessionStatus,
   ProviderDriverKind,
@@ -81,25 +82,45 @@ const queryWithThreads = (threads: ReadonlyArray<ReturnType<typeof makeThread>>)
     getCommandReadModel: () => Effect.succeed({ threads } as never),
   }) as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"];
 
+/**
+ * Fills the columns settlement never reads, so the repository double returns
+ * the same rows the real one does.
+ */
+const toActivityRows = (
+  threadId: ThreadId,
+  rows: ReadonlyArray<TaskActivityRow>,
+): ReadonlyArray<ProjectionThreadActivities.ProjectionThreadActivity> =>
+  rows.map((row, index) => ({
+    activityId: EventId.make(`activity-${threadId}-${index}`),
+    threadId,
+    turnId: null,
+    tone: "info",
+    kind: row.kind,
+    summary: row.kind,
+    payload: row.payload,
+    createdAt: updatedAt,
+  }));
+
 const activityRepositoryWith = (
   activitiesByThreadId: Readonly<Record<string, ReadonlyArray<TaskActivityRow>>>,
   batchReads: Array<ReadonlyArray<ThreadId>> = [],
 ) =>
   ({
-    listTaskLifecycleByThreadId: ({ threadId }: { readonly threadId: ThreadId }) =>
-      Effect.succeed(activitiesByThreadId[threadId] ?? []),
-    listTaskLifecycleByThreadIds: ({
-      threadIds,
-    }: {
-      readonly threadIds: ReadonlyArray<ThreadId>;
-    }) =>
+    upsert: () => Effect.die("unused"),
+    listByThreadId: () => Effect.die("unused"),
+    listUserInputLifecycleByThreadId: () => Effect.die("unused"),
+    getLatestTaskActivity: () => Effect.die("unused"),
+    deleteByThreadId: () => Effect.die("unused"),
+    listTaskLifecycleByThreadId: ({ threadId }) =>
+      Effect.succeed(toActivityRows(threadId, activitiesByThreadId[threadId] ?? [])),
+    listTaskLifecycleByThreadIds: ({ threadIds }) =>
       Effect.sync(() => {
         batchReads.push(threadIds);
         return threadIds.flatMap((threadId) =>
-          (activitiesByThreadId[threadId] ?? []).map((row) => ({ ...row, threadId })),
+          toActivityRows(threadId, activitiesByThreadId[threadId] ?? []),
         );
       }),
-  }) as unknown as ProjectionThreadActivities.ProjectionThreadActivityRepository["Service"];
+  }) satisfies ProjectionThreadActivities.ProjectionThreadActivityRepository["Service"];
 
 const runReconciliation = (input: {
   readonly threads: ReadonlyArray<ReturnType<typeof makeThread>>;

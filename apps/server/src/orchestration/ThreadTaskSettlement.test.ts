@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { type OrchestrationCommand, ThreadId } from "@t3tools/contracts";
+import { EventId, type OrchestrationCommand, ThreadId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
@@ -21,6 +21,25 @@ const liveRowsFor = (taskId: string): ReadonlyArray<TaskActivityRow> => [
   { kind: "task.updated", payload: { taskId, status: "running", agentKind: "agent" } },
 ];
 
+/**
+ * Fills the columns settlement never reads, so the repository double returns
+ * the same rows the real one does.
+ */
+const toActivityRows = (
+  threadId: ThreadId,
+  rows: ReadonlyArray<TaskActivityRow>,
+): ReadonlyArray<ProjectionThreadActivities.ProjectionThreadActivity> =>
+  rows.map((row, index) => ({
+    activityId: EventId.make(`activity-${threadId}-${index}`),
+    threadId,
+    turnId: null,
+    tone: "info",
+    kind: row.kind,
+    summary: row.kind,
+    payload: row.payload,
+    createdAt,
+  }));
+
 const settledTaskIds = (dispatched: ReadonlyArray<OrchestrationCommand>): ReadonlyArray<string> =>
   dispatched.flatMap((command) =>
     command.type === "thread.activity.append" &&
@@ -41,19 +60,20 @@ const withSettlementServices = (input: {
   readonly failFor?: (command: OrchestrationCommand) => boolean;
 }) => {
   const repository = {
-    listTaskLifecycleByThreadId: ({ threadId }: { readonly threadId: ThreadId }) =>
-      Effect.succeed(input.activitiesByThreadId[threadId] ?? []),
-    listTaskLifecycleByThreadIds: ({
-      threadIds,
-    }: {
-      readonly threadIds: ReadonlyArray<ThreadId>;
-    }) =>
+    upsert: () => Effect.die("unused"),
+    listByThreadId: () => Effect.die("unused"),
+    listUserInputLifecycleByThreadId: () => Effect.die("unused"),
+    getLatestTaskActivity: () => Effect.die("unused"),
+    deleteByThreadId: () => Effect.die("unused"),
+    listTaskLifecycleByThreadId: ({ threadId }) =>
+      Effect.succeed(toActivityRows(threadId, input.activitiesByThreadId[threadId] ?? [])),
+    listTaskLifecycleByThreadIds: ({ threadIds }) =>
       Effect.succeed(
         threadIds.flatMap((threadId) =>
-          (input.activitiesByThreadId[threadId] ?? []).map((row) => ({ ...row, threadId })),
+          toActivityRows(threadId, input.activitiesByThreadId[threadId] ?? []),
         ),
       ),
-  } as unknown as ProjectionThreadActivities.ProjectionThreadActivityRepository["Service"];
+  } satisfies ProjectionThreadActivities.ProjectionThreadActivityRepository["Service"];
 
   return <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
