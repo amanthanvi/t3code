@@ -43,8 +43,10 @@ import {
   FileSearchIcon,
   FolderIcon,
   FolderPlusIcon,
+  GitForkIcon,
   LinkIcon,
   MessageSquareIcon,
+  MessageSquarePlusIcon,
   PaletteIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -68,6 +70,7 @@ import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
+import { useThreadForkActions } from "../hooks/useThreadFork";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { useClientSettings } from "../hooks/useSettings";
 import { useTheme } from "../hooks/useTheme";
@@ -80,7 +83,7 @@ import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import { useProjects, useThreadShells } from "../state/entities";
+import { useProject, useProjects, useThread, useThreadShells } from "../state/entities";
 import { useThreadSearch } from "../state/queries";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
@@ -97,7 +100,11 @@ import {
 import { onOpenCommandPalette } from "../commandPaletteBus";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
+import {
+  selectActiveRightPanel,
+  selectActiveRightPanelSurface,
+  useRightPanelStore,
+} from "../rightPanelStore";
 import { getLatestThreadForProject, sortThreads } from "../lib/threadSort";
 import {
   cn,
@@ -596,8 +603,24 @@ function OpenCommandPaletteDialog(props: {
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const availableSettingsSearchItems = useAvailableSettingsSearchItems();
-  const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
+  const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef } =
     useHandleNewThread();
+  const activeConversationSurface = useRightPanelStore((state) =>
+    selectActiveRightPanelSurface(state.byThreadKey, routeThreadRef),
+  );
+  const activeSideChatRef = useMemo(
+    () =>
+      routeThreadRef && activeConversationSurface?.kind === "side-chat"
+        ? scopeThreadRef(routeThreadRef.environmentId, activeConversationSurface.threadId)
+        : null,
+    [activeConversationSurface, routeThreadRef],
+  );
+  const activeSideChat = useThread(activeSideChatRef);
+  const forkSourceThread =
+    activeConversationSurface?.kind === "side-chat" ? activeSideChat : activeThread;
+  const threadFork = useThreadForkActions(forkSourceThread, {
+    panelHostThreadId: routeThreadRef?.threadId ?? null,
+  });
   const projects = useProjects();
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(
     activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null,
@@ -1018,6 +1041,7 @@ function OpenCommandPaletteDialog(props: {
 
   const openProjectFromSearch = useMemo(
     () => async (project: (typeof projects)[number]) => {
+      const primaryThreads = threads.filter((thread) => thread.sideChat !== true);
       const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
       const groupedProjectKeys = group
         ? new Set(
@@ -1028,7 +1052,7 @@ function OpenCommandPaletteDialog(props: {
         : null;
       const latestThread = groupedProjectKeys
         ? (sortThreads(
-            threads.filter(
+            primaryThreads.filter(
               (thread) =>
                 thread.archivedAt === null &&
                 groupedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`),
@@ -1036,7 +1060,7 @@ function OpenCommandPaletteDialog(props: {
             clientSettings.sidebarThreadSortOrder,
           )[0] ?? null)
         : getLatestThreadForProject(
-            threads.filter((thread) => thread.environmentId === project.environmentId),
+            primaryThreads.filter((thread) => thread.environmentId === project.environmentId),
             project.id,
             clientSettings.sidebarThreadSortOrder,
           );
@@ -1591,6 +1615,37 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  if (forkSourceThread) {
+    actionItems.push(
+      {
+        kind: "action",
+        value: "action:open-side-chat",
+        searchTerms: ["open side chat", "fork", "branch conversation"],
+        title: "Open side chat",
+        description: threadFork.latest.disabledReason ?? undefined,
+        icon: <MessageSquarePlusIcon className={ITEM_ICON_CLASS} />,
+        shortcutCommand: "chat.sideChat",
+        disabled: !threadFork.latest.enabled,
+        run: async () => {
+          await threadFork.forkLatest(true);
+        },
+      },
+      {
+        kind: "action",
+        value: "action:fork-thread",
+        searchTerms: ["fork thread", "new thread", "branch conversation"],
+        title: "Fork thread",
+        description: threadFork.latest.disabledReason ?? undefined,
+        icon: <GitForkIcon className={ITEM_ICON_CLASS} />,
+        shortcutCommand: "chat.forkThread",
+        disabled: !threadFork.latest.enabled,
+        run: async () => {
+          await threadFork.forkLatest(false);
+        },
+      },
+    );
+  }
+
   if (activeThreadReferenceCopyTarget !== null) {
     actionItems.push({
       kind: "action",
@@ -1838,7 +1893,9 @@ function OpenCommandPaletteDialog(props: {
       );
       if (existing) {
         const latestThread = getLatestThreadForProject(
-          threads.filter((thread) => thread.environmentId === existing.environmentId),
+          threads.filter(
+            (thread) => thread.environmentId === existing.environmentId && thread.sideChat !== true,
+          ),
           existing.id,
           clientSettings.sidebarThreadSortOrder,
         );

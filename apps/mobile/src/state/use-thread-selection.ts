@@ -82,6 +82,8 @@ function threadDetailToShell(
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    ...(thread.fork ? { fork: thread.fork } : {}),
+    ...(thread.sideChat === undefined ? {} : { sideChat: thread.sideChat }),
   };
 }
 
