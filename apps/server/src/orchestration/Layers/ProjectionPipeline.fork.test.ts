@@ -74,7 +74,7 @@ layer("OrchestrationProjectionPipeline fork projection", (it) => {
       });
       yield* projectionPipeline.bootstrap;
 
-      let rows = yield* sql<{ readonly forkJson: string | null; readonly sideChat: number }>`
+      const rows = yield* sql<{ readonly forkJson: string | null; readonly sideChat: number }>`
         SELECT fork_json AS "forkJson", side_chat AS "sideChat"
         FROM projection_threads
         WHERE thread_id = ${threadId}
@@ -100,13 +100,32 @@ layer("OrchestrationProjectionPipeline fork projection", (it) => {
         payload: { threadId, sideChat: false, updatedAt: now },
       });
       yield* projectionPipeline.bootstrap;
-      rows = yield* sql<{ readonly forkJson: string | null; readonly sideChat: number }>`
-        SELECT fork_json AS "forkJson", side_chat AS "sideChat"
+      // Promotion clears the side-chat flag but must leave the lineage intact.
+      const promotedRows = yield* sql<{
+        readonly sourceThreadId: string | null;
+        readonly sourceTurnId: string | null;
+        readonly sourceMessageId: string | null;
+        readonly forkedAt: string | null;
+        readonly sideChat: number;
+      }>`
+        SELECT
+          json_extract(fork_json, '$.sourceThreadId') AS "sourceThreadId",
+          json_extract(fork_json, '$.sourceTurnId') AS "sourceTurnId",
+          json_extract(fork_json, '$.sourceMessageId') AS "sourceMessageId",
+          json_extract(fork_json, '$.forkedAt') AS "forkedAt",
+          side_chat AS "sideChat"
         FROM projection_threads
         WHERE thread_id = ${threadId}
       `;
-      assert.equal(rows[0]?.sideChat, 0);
-      assert.isNotNull(rows[0]?.forkJson ?? null);
+      assert.deepEqual(promotedRows, [
+        {
+          sourceThreadId: "thread-source-projection",
+          sourceTurnId: "turn-source-projection",
+          sourceMessageId: null,
+          forkedAt: now,
+          sideChat: 0,
+        },
+      ]);
     }),
   );
 });

@@ -265,15 +265,21 @@ describe("normalizeDispatchCommand thread.fork", () => {
     Effect.gen(function* () {
       // The stored selection points at a latest-turn instance, but the live
       // session moved to an any-turn one; the live instance decides.
-      const error = yield* normalizeFork(
+      const normalized = yield* normalizeFork(
         Option.some({ state: "completed", assistantMessageId: sourceMessageId }),
         {
           sessionFork: "latest-turn",
           latestTurn: makeLatestTurn(latestSourceTurnId),
           liveSessionSessionFork: "any-turn",
         },
-      ).pipe(Effect.flip, Effect.option);
-      expect(Option.isNone(error)).toBe(true);
+      );
+
+      expect(normalized.type).toBe("thread.fork");
+      if (normalized.type !== "thread.fork") return;
+      expect(normalized.modelSelection).toEqual({
+        instanceId: liveSourceInstanceId,
+        model: "claude-opus-4-6",
+      });
     }),
   );
 

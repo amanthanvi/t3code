@@ -180,6 +180,7 @@ it.layer(NodeServices.layer)("thread fork decider", (it) => {
         readModel: makeReadModel({ hasLatestTurn: false }),
       });
       const noTurnsCreated = Array.isArray(noTurns) ? noTurns[0] : noTurns;
+      expect(noTurnsCreated?.type).toBe("thread.created");
       if (noTurnsCreated?.type !== "thread.created") return;
       expect(noTurnsCreated.payload.fork?.sourceTurnId).toBeNull();
 
@@ -189,6 +190,7 @@ it.layer(NodeServices.layer)("thread fork decider", (it) => {
         readModel: makeReadModel(),
       });
       const olderCreated = Array.isArray(older) ? older[0] : older;
+      expect(olderCreated?.type).toBe("thread.created");
       if (olderCreated?.type !== "thread.created") return;
       expect(olderCreated.payload.fork?.sourceTurnId).toBe(olderTurnId);
     }),
