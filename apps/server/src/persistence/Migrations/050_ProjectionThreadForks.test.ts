@@ -5,11 +5,11 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
-import Migration048 from "./048_ProjectionThreadForks.ts";
+import Migration050 from "./050_ProjectionThreadForks.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("048_ProjectionThreadForks", (it) => {
+layer("050_ProjectionThreadForks", (it) => {
   it.effect("adds fork lineage and side-chat columns", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -34,8 +34,8 @@ layer("048_ProjectionThreadForks", (it) => {
       const sql = yield* SqlClient.SqlClient;
 
       yield* runMigrations({ toMigrationInclusive: 47 });
-      yield* Migration048;
-      yield* Migration048;
+      yield* Migration050;
+      yield* Migration050;
 
       const columns = yield* sql<{ readonly name: string }>`PRAGMA table_info(projection_threads)`;
       assert.equal(columns.filter((column) => column.name === "fork_json").length, 1);

@@ -1249,6 +1249,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
       sessionFork: "unsupported",
       supportsConversationRollback: false,
     },
+    compaction: { type: "slash-command", command: "/compact" },
     startSession,
     sendTurn,
     interruptTurn,
