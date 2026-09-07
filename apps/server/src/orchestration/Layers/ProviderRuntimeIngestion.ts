@@ -2037,6 +2037,9 @@ const make = Effect.gen(function* () {
             taskType: payload.taskType,
             status: payload.status,
             agentId: payload.agentId,
+            // The adapter's stamp, not arrival time: this worker can be far
+            // behind, and a host settlement dates late rows against it.
+            occurredAt: event.createdAt,
             kind:
               event.type === "task.started"
                 ? "started"

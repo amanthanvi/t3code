@@ -299,4 +299,56 @@ describe("ThreadBackgroundLiveness", () => {
     });
     expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
   });
+
+  it("a running row the provider stamped before a host settlement stays settled", () => {
+    // Stop bounds its wait on the ingestion drain, so the worker can still be
+    // holding a task.updated(running) the provider emitted BEFORE the Stop and
+    // deliver it after settlement. Persisted rows order it behind the
+    // settlement row by createdAt; the registry has to reach the same answer.
+    const liveness = ThreadBackgroundLiveness.make();
+    const threadId = "t-late-running";
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "child",
+      taskType: undefined,
+      status: "running",
+      kind: "updated",
+      occurredAt: "2026-01-01T00:00:00.000Z",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "child",
+      taskType: undefined,
+      status: "interrupted",
+      kind: "updated",
+      occurredAt: "2026-01-01T00:00:10.000Z",
+      settledByHost: true,
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+
+    // The drained-too-late row. Stale, so it must not re-arm the thread.
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "child",
+      taskType: undefined,
+      status: "running",
+      kind: "updated",
+      occurredAt: "2026-01-01T00:00:05.000Z",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+
+    // A row stamped after the settlement is the provider proving it still owns
+    // the task, which the persisted fold also honours.
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "child",
+      taskType: undefined,
+      status: "running",
+      kind: "updated",
+      occurredAt: "2026-01-01T00:00:11.000Z",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+  });
 });

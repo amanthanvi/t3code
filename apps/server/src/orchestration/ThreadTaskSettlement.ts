@@ -366,6 +366,9 @@ const writeSettledTasks = Effect.fn("writeSettledTasks")(function* (input: {
       taskType: undefined,
       status: input.status,
       kind: "updated",
+      // Same stamp the row carries, so the registry can date a late provider
+      // row against the settlement exactly as the persisted fold does.
+      occurredAt: input.createdAt,
       settledByHost: true,
     });
   }

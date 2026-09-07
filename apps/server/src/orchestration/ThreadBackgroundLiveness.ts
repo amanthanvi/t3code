@@ -67,6 +67,14 @@ export class ThreadBackgroundLivenessService extends Context.Service<
       readonly kind: "started" | "progress" | "updated" | "completed";
       readonly agentId?: string | undefined;
       /**
+       * When the provider stamped this transition (the settlement time on a
+       * host settlement). The registry is fed in arrival order, but persisted
+       * rows are read in `createdAt` order, so without this a row the ingestion
+       * worker delivered late would re-arm a task the rows already show as
+       * settled. Absent means "unordered": the timestamp comparison is skipped.
+       */
+      readonly occurredAt?: string | undefined;
+      /**
        * Set by host settlement (Stop, session death, startup reconciliation).
        * Tombstones the task so a status-free start row already in flight from
        * a provider that still thinks it owns the task cannot re-arm it.
@@ -89,7 +97,8 @@ const taskKey = (threadId: string, taskId: string) => `${threadId}:${taskId}`;
 
 export function make(): ThreadBackgroundLivenessService["Service"] {
   const stateByThreadId = new Map<string, ThreadLivenessState>();
-  const hostSettledTaskKeys = new Set<string>();
+  /** Task key to the settlement's timestamp, or null when it carried none. */
+  const hostSettledAtByTaskKey = new Map<string, string | null>();
 
   const stateFor = (threadId: string): ThreadLivenessState => {
     const existing = stateByThreadId.get(threadId);
@@ -147,11 +156,14 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
         // terminal event is ordinary lifecycle: a later start row for it is a
         // real resumption and must still arm the thread.
         if (input.settledByHost === true) {
-          hostSettledTaskKeys.add(taskKey(input.threadId, input.taskId));
-          if (hostSettledTaskKeys.size > HOST_SETTLED_TASK_MEMORY_LIMIT) {
-            const oldest = hostSettledTaskKeys.values().next().value;
+          hostSettledAtByTaskKey.set(
+            taskKey(input.threadId, input.taskId),
+            input.occurredAt ?? null,
+          );
+          if (hostSettledAtByTaskKey.size > HOST_SETTLED_TASK_MEMORY_LIMIT) {
+            const oldest = hostSettledAtByTaskKey.keys().next().value;
             if (oldest !== undefined) {
-              hostSettledTaskKeys.delete(oldest);
+              hostSettledAtByTaskKey.delete(oldest);
             }
           }
         }
@@ -170,18 +182,32 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
         }
       }
 
-      // A status-free row for a host-settled task is a late delivery, not a
-      // new run. Only an explicit non-terminal status below proves the task
-      // really came back, and it clears the tombstone.
-      if (
-        input.status === undefined &&
-        hostSettledTaskKeys.has(taskKey(input.threadId, input.taskId))
-      ) {
-        return;
+      // A row for a host-settled task has to prove the task really came back.
+      // A status-free one never does. An explicit non-terminal status does,
+      // but only if the provider stamped it AFTER the settlement: the drain
+      // that holds queued provider events ahead of the settlement row is
+      // bounded, so an older row can still arrive here once the ingestion
+      // worker gets to it. The persisted fold orders that row behind the
+      // settlement row by createdAt, and the registry has to agree or the
+      // sidebar pill and the composer banner contradict the rows (#9391).
+      const settledKey = taskKey(input.threadId, input.taskId);
+      if (hostSettledAtByTaskKey.has(settledKey)) {
+        const settledAt = hostSettledAtByTaskKey.get(settledKey);
+        if (input.status === undefined) {
+          return;
+        }
+        if (
+          settledAt !== undefined &&
+          settledAt !== null &&
+          input.occurredAt !== undefined &&
+          input.occurredAt <= settledAt
+        ) {
+          return;
+        }
       }
 
       drop(input.threadId, input.taskId);
-      hostSettledTaskKeys.delete(taskKey(input.threadId, input.taskId));
+      hostSettledAtByTaskKey.delete(settledKey);
       const state = stateFor(input.threadId);
       const bucket =
         taskType !== undefined && MONITOR_TASK_TYPES.has(taskType) ? state.monitors : state.agents;
