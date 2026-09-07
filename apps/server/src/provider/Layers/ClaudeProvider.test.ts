@@ -7,6 +7,7 @@ import {
   SYNTHETIC_CLAUDE_CAPABLE_MODEL,
   SYNTHETIC_CLAUDE_COLLIDING_ALIAS,
   SYNTHETIC_CLAUDE_MODEL_CATALOG,
+  SYNTHETIC_CLAUDE_STANDARD_MODEL,
 } from "../ClaudeModelCatalog.testFixtures.ts";
 import { makePendingClaudeProvider } from "./ClaudeProvider.ts";
 
@@ -27,6 +28,13 @@ describe("Claude provider snapshot", () => {
             "gateway/claude-synthetic-unlisted",
             SYNTHETIC_CLAUDE_COLLIDING_ALIAS,
             `gateway/${SYNTHETIC_CLAUDE_COLLIDING_ALIAS}`,
+            {
+              slug: `gateway/${SYNTHETIC_CLAUDE_STANDARD_MODEL}`,
+              name: "Declared",
+              capabilities: {
+                optionDescriptors: [{ id: "thinking", label: "Thinking", type: "boolean" }],
+              },
+            },
           ],
         }),
         SYNTHETIC_CLAUDE_MODEL_CATALOG,
@@ -45,6 +53,8 @@ describe("Claude provider snapshot", () => {
           [SYNTHETIC_CLAUDE_COLLIDING_ALIAS, []],
           // The custom slug shadows the alias, so the slug prefixing it stays opaque.
           [`gateway/${SYNTHETIC_CLAUDE_COLLIDING_ALIAS}`, []],
+          // Declared capabilities win over the template this slug routes to.
+          [`gateway/${SYNTHETIC_CLAUDE_STANDARD_MODEL}`, ["thinking"]],
         ],
       );
     }),

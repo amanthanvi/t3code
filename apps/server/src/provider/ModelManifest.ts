@@ -234,7 +234,9 @@ export function isLegacyModel(
   const base = gatewayModelBaseSlug(slug);
   if (base) return isLegacyModel(manifest, driverKind, base);
   if (!currentModels) return false;
-  return !currentModels.includes(slug);
+  // A current list exists and the guards above already ruled out membership,
+  // so a slug that reaches here is one the manifest no longer carries.
+  return true;
 }
 
 /**

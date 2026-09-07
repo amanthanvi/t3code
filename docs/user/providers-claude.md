@@ -89,9 +89,8 @@ Claude Code session using that directory before starting the router setup. Cache
 login credentials can conflict with the router token.
 
 Add one of OpenRouter's prefixed model IDs as a custom model and T3 Code reads the
-part after the prefix. `anthropic/claude-opus-4.6` gets the same Reasoning and
-Context Window choices as Claude Opus 4.6, and T3 Code still sends the full
-prefixed ID your gateway expects.
+part after the prefix. `anthropic/claude-opus-4.6` gets the same model options as
+Claude Opus 4.6, and T3 Code still sends the full prefixed ID your gateway expects.
 
 Verify requests in OpenRouter's activity dashboard. For model-role overrides and
 current compatibility requirements, use the
