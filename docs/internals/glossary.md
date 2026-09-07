@@ -5,19 +5,19 @@ Terms whose meaning matters across T3 Code. Architecture and lifecycle constrain
 
 ## Workspace and conversation
 
-| Term           | Meaning                                                                                                                                                                                                                                                                            |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Environment    | One running server and the machine, credentials, workspace access, and state it owns.                                                                                                                                                                                              |
-| Client         | A web, desktop, or mobile UI connected to an environment. The desktop app can also host a server.                                                                                                                                                                                  |
-| Project        | An environment-local workspace record rooted at a directory.                                                                                                                                                                                                                       |
-| Workspace root | The project's base filesystem directory on the environment.                                                                                                                                                                                                                        |
-| Worktree       | A separate Git checkout a thread can use instead of the project's main checkout.                                                                                                                                                                                                   |
-| Thread         | The durable conversation and work history for a project. It survives provider process exits.                                                                                                                                                                                       |
-| Fork           | A thread whose provider context branches from another thread at a completed turn. It records its source thread, turn, and message, starts with an empty transcript, and creates its provider session lazily on its first turn. Latest-turn providers fork only at the source head. |
-| Side chat      | A fork with `sideChat: true`. Hidden from thread lists and grouped beside its parent while the parent exists; it becomes an ordinary thread once the parent is deleted or archived, or when promoted.                                                                              |
-| Turn           | One user-to-agent work cycle. Provider work can finish before checkpoint and diff work settles.                                                                                                                                                                                    |
-| Activity       | A non-message timeline item, such as a tool action, approval, or failure.                                                                                                                                                                                                          |
-| T3 home        | The base data directory. Runtime state normally lives under its `userdata` directory.                                                                                                                                                                                              |
+| Term           | Meaning                                                                                           |
+| -------------- | ------------------------------------------------------------------------------------------------- |
+| Environment    | One running server and the machine, credentials, workspace access, and state it owns.             |
+| Client         | A web, desktop, or mobile UI connected to an environment. The desktop app can also host a server. |
+| Project        | An environment-local workspace record rooted at a directory.                                      |
+| Workspace root | The project's base filesystem directory on the environment.                                       |
+| Worktree       | A separate Git checkout a thread can use instead of the project's main checkout.                  |
+| Thread         | The durable conversation and work history for a project. It survives provider process exits.      |
+| Fork           | A thread whose provider context branches from another thread at a completed turn.                 |
+| Side chat      | A fork hidden from thread lists and shown beside its parent while that parent exists.             |
+| Turn           | One user-to-agent work cycle. Provider work can finish before checkpoint and diff work settles.   |
+| Activity       | A non-message timeline item, such as a tool action, approval, or failure.                         |
+| T3 home        | The base data directory. Runtime state normally lives under its `userdata` directory.             |
 
 ## Orchestration
 
