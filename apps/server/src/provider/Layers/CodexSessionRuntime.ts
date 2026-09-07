@@ -701,10 +701,7 @@ interface CodexThreadOpenClient {
   readonly request: <M extends CodexThreadOpenMethod>(
     method: M,
     payload: CodexRpc.ClientRequestParamsByMethod[M],
-  ) => Effect.Effect<
-    CodexRpc.ClientRequestResponsesByMethod[M],
-    CodexErrors.CodexAppServerError
-  >;
+  ) => Effect.Effect<CodexRpc.ClientRequestResponsesByMethod[M], CodexErrors.CodexAppServerError>;
 }
 
 export const openCodexThread = (input: {
