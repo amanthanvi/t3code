@@ -57,6 +57,12 @@ export interface ProviderAdapterCapabilities {
    * Declares whether changing the model on an existing session is supported.
    */
   readonly sessionModelSwitch: ProviderSessionModelSwitchMode;
+  /**
+   * Which source turns a native session fork can branch from. `any-turn`
+   * accepts any completed turn in the source conversation, `latest-turn` only
+   * accepts the source's current completed head, and `unsupported` rejects
+   * forks outright. Omitted means unsupported.
+   */
   readonly sessionFork?: ProviderSessionForkMode;
   /** Starts a resumed turn with no synthetic user prompt. Omitted means the
       adapter needs an explicit continuation instruction. */

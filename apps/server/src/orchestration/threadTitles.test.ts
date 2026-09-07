@@ -4,8 +4,11 @@ import { canReplaceThreadTitle, forkThreadTitle, DEFAULT_THREAD_TITLE } from "./
 
 it("only replaces known auto-generated thread titles", () => {
   expect(canReplaceThreadTitle(DEFAULT_THREAD_TITLE)).toBe(true);
-  expect(canReplaceThreadTitle("Fork: Parent thread")).toBe(false);
-  expect(canReplaceThreadTitle("Side chat: Parent thread")).toBe(false);
+  // A generated fork title carries the source's real title, so it is never
+  // overwritten by a provider-generated one.
+  expect(
+    canReplaceThreadTitle(forkThreadTitle("Fix the parser", [], { sourceIsFork: false })),
+  ).toBe(false);
   expect(canReplaceThreadTitle("A deliberate title")).toBe(false);
 });
 

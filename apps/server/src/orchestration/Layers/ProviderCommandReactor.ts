@@ -622,16 +622,16 @@ const make = Effect.gen(function* () {
       thread.fork != null && !forkHasOwnResumeCursor
         ? yield* resolveThreadShell(thread.fork.sourceThreadId)
         : undefined;
+    const resolveActiveSession = (threadId: ThreadId) =>
+      providerService
+        .listSessions()
+        .pipe(Effect.map((sessions) => sessions.find((session) => session.threadId === threadId)));
     // An unstarted fork must start where the source conversation actually
     // lives. The source's live session is the only proof it moved; without
     // one, the source's persisted binding says which instance still holds
     // it, and a source with neither stays on the selection the fork
     // inherited. The source's stored selection alone is not enough: it can
     // change before any turn moves the conversation.
-    const resolveActiveSession = (threadId: ThreadId) =>
-      providerService
-        .listSessions()
-        .pipe(Effect.map((sessions) => sessions.find((session) => session.threadId === threadId)));
     const forkSourceSession =
       forkSource?.session != null &&
       forkSource.session.status !== "stopped" &&
@@ -692,7 +692,7 @@ const make = Effect.gen(function* () {
           forkSourceRuntimeSession.providerInstanceId === forkSourceInstanceId
             ? forkSourceRuntimeSession.model
             : undefined,
-        candidates: [forkSource.modelSelection, thread.modelSelection],
+        candidates: [forkSource.modelSelection],
         provider: (yield* providerRegistry.getProviders).find(
           (provider) => provider.instanceId === forkSourceInstanceId,
         ),
