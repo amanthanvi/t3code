@@ -14,8 +14,8 @@ layer("050_ProjectionThreadForks", (it) => {
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 47 });
-      yield* runMigrations({ toMigrationInclusive: 48 });
+      yield* runMigrations({ toMigrationInclusive: 49 });
+      yield* runMigrations({ toMigrationInclusive: 50 });
 
       const columns = yield* sql<{
         readonly name: string;
@@ -33,7 +33,7 @@ layer("050_ProjectionThreadForks", (it) => {
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 47 });
+      yield* runMigrations({ toMigrationInclusive: 49 });
       yield* Migration050;
       yield* Migration050;
 
