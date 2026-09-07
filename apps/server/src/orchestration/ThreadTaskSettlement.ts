@@ -165,11 +165,8 @@ function asFoldStatus(value: unknown): FoldStatus | undefined {
   return typeof value === "string" ? KNOWN_STATUSES.get(value) : undefined;
 }
 
-/** Terminal is sticky: a duplicate or late terminal row never slides state. */
+/** Last status row wins, mirroring the client fold's reactivation rule. */
 function applyStatus(entry: FoldEntry, next: FoldStatus): void {
-  if (entry.status === "terminal" && next === "terminal") {
-    return;
-  }
   entry.status = next;
 }
 

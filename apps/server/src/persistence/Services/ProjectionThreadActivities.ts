@@ -99,8 +99,8 @@ export interface ProjectionThreadActivityRepositoryShape {
    *
    * Startup reconciliation settles background work across every thread this
    * process does not own, so it reads them together instead of issuing one
-   * query per thread. Rows come back grouped-ready: ordered within each
-   * thread, threads interleaved.
+   * query per thread. Rows come back grouped-ready: each thread's rows are
+   * contiguous and ordered within the thread.
    */
   readonly listTaskLifecycleByThreadIds: (
     input: ListProjectionThreadActivitiesByThreadIdsInput,

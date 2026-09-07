@@ -43,7 +43,7 @@ function toProjectionThreadActivity(
 }
 
 /** SQLite's host-parameter ceiling is 999; stay well inside it. */
-const THREAD_ID_BATCH_SIZE = 500;
+export const THREAD_ID_BATCH_SIZE = 500;
 
 const chunk = <A>(items: ReadonlyArray<A>, size: number): ReadonlyArray<ReadonlyArray<A>> => {
   const chunks: A[][] = [];

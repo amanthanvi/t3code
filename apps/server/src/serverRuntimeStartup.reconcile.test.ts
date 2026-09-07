@@ -850,70 +850,73 @@ it.effect("settles background agent tasks left running by an orphaned session", 
   );
 });
 
-it("settles background agents on ready and stopped threads, and writes nothing when idle", () => {
-  // The headline case: the turn finished, so the session is `ready` with no
-  // active turn, but its children kept working and did not survive the
-  // restart. Archived and deleted threads must not be written to.
-  const taskId = "collab-child-1";
-  const linkage = { agentKind: "agent", title: "math_one", timelineBypass: true } as const;
-  const rows = [
-    { kind: "task.started", payload: { taskId, ...linkage } },
-    { kind: "task.updated", payload: { taskId, status: "running", ...linkage } },
-  ];
-  const ready = makeThread("thread-settle-ready", "ready");
-  const archived = makeThread("thread-settle-archived", "ready", null, updatedAt);
-  const deleted = makeThread("thread-settle-deleted", "ready", null, null, updatedAt);
-  // A stopped session still counts: the process can die between marking the
-  // session stopped and settling its children, and no later boot would ever
-  // pick them up if stopped threads were skipped.
-  const stopped = makeThread("thread-settle-stopped", "stopped");
-  // Nothing to settle here, so it must produce no writes at all.
-  const quiet = makeThread("thread-settle-quiet", "ready");
-  const dispatched: OrchestrationCommand[] = [];
-  const batchReads: Array<ReadonlyArray<ThreadId>> = [];
+it.effect(
+  "settles background agents on ready and stopped threads, and writes nothing when idle",
+  () => {
+    // The headline case: the turn finished, so the session is `ready` with no
+    // active turn, but its children kept working and did not survive the
+    // restart. Archived and deleted threads must not be written to.
+    const taskId = "collab-child-1";
+    const linkage = { agentKind: "agent", title: "math_one", timelineBypass: true } as const;
+    const rows = [
+      { kind: "task.started", payload: { taskId, ...linkage } },
+      { kind: "task.updated", payload: { taskId, status: "running", ...linkage } },
+    ];
+    const ready = makeThread("thread-settle-ready", "ready");
+    const archived = makeThread("thread-settle-archived", "ready", null, updatedAt);
+    const deleted = makeThread("thread-settle-deleted", "ready", null, null, updatedAt);
+    // A stopped session still counts: the process can die between marking the
+    // session stopped and settling its children, and no later boot would ever
+    // pick them up if stopped threads were skipped.
+    const stopped = makeThread("thread-settle-stopped", "stopped");
+    // Nothing to settle here, so it must produce no writes at all.
+    const quiet = makeThread("thread-settle-quiet", "ready");
+    const dispatched: OrchestrationCommand[] = [];
+    const batchReads: Array<ReadonlyArray<ThreadId>> = [];
 
-  return runReconciliation({
-    threads: [ready, archived, deleted, stopped, quiet],
-    batchReads,
-    activitiesByThreadId: {
-      [ready.id]: rows,
-      [archived.id]: rows,
-      [deleted.id]: rows,
-      [stopped.id]: rows,
-    },
-    directory: {
-      getBinding: () => Effect.succeed(Option.none()),
-      upsert: () => Effect.void,
-      getProvider: () => Effect.die("unused"),
-      listThreadIds: () => Effect.die("unused"),
-      listBindings: () => Effect.succeed([]),
-      recordImportedTranscript: () => Effect.die("unused"),
-    },
-    dispatch: (command) => {
-      dispatched.push(command);
-      return Effect.succeed({ sequence: dispatched.length });
-    },
-  }).pipe(
-    Effect.tap(() =>
-      Effect.sync(() => {
-        assert.deepStrictEqual(
-          dispatched
-            .filter((command) => command.type === "thread.activity.append")
-            .map((command) => command.threadId),
-          [ready.id, stopped.id],
-        );
-        // One batched read for every candidate thread, not a query per thread,
-        // and archived/deleted threads are never even read.
-        assert.deepStrictEqual(batchReads, [[ready.id, stopped.id, quiet.id]]);
-        // A ready session is not an orphaned turn, so nothing else changes.
-        assert.deepStrictEqual(
-          dispatched.filter((command) => command.type === "thread.session.set"),
-          [],
-        );
-      }),
-    ),
-  );
-});
+    return runReconciliation({
+      threads: [ready, archived, deleted, stopped, quiet],
+      batchReads,
+      activitiesByThreadId: {
+        [ready.id]: rows,
+        [archived.id]: rows,
+        [deleted.id]: rows,
+        [stopped.id]: rows,
+      },
+      directory: {
+        getBinding: () => Effect.succeed(Option.none()),
+        upsert: () => Effect.void,
+        getProvider: () => Effect.die("unused"),
+        listThreadIds: () => Effect.die("unused"),
+        listBindings: () => Effect.succeed([]),
+        recordImportedTranscript: () => Effect.die("unused"),
+      },
+      dispatch: (command) => {
+        dispatched.push(command);
+        return Effect.succeed({ sequence: dispatched.length });
+      },
+    }).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          assert.deepStrictEqual(
+            dispatched
+              .filter((command) => command.type === "thread.activity.append")
+              .map((command) => command.threadId),
+            [ready.id, stopped.id],
+          );
+          // One batched read for every candidate thread, not a query per thread,
+          // and archived/deleted threads are never even read.
+          assert.deepStrictEqual(batchReads, [[ready.id, stopped.id, quiet.id]]);
+          // A ready session is not an orphaned turn, so nothing else changes.
+          assert.deepStrictEqual(
+            dispatched.filter((command) => command.type === "thread.session.set"),
+            [],
+          );
+        }),
+      ),
+    );
+  },
+);
 
 for (const scenario of [
   "disabled",
