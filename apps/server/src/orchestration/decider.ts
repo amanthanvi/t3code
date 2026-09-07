@@ -440,11 +440,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         });
       }
 
+      // Deleted threads are invisible to the user and never come back, so
+      // their titles must not reserve a fork number the project no longer uses.
       const title =
         command.title ??
         forkThreadTitle(
           source.title,
-          listThreadsByProjectId(readModel, source.projectId).map((thread) => thread.title),
+          listThreadsByProjectId(readModel, source.projectId)
+            .filter((thread) => thread.deletedAt === null)
+            .map((thread) => thread.title),
           { sourceIsFork: source.fork != null },
         );
       return {
