@@ -24,6 +24,11 @@ function makeReadModel(input?: {
   readonly hasLatestTurn?: boolean;
   readonly sourceDeleted?: boolean;
   readonly targetExists?: boolean;
+  readonly siblings?: ReadonlyArray<{
+    readonly id: string;
+    readonly title: string;
+    readonly deleted?: boolean;
+  }>;
 }): OrchestrationReadModel {
   const latestTurnState = input?.latestTurnState ?? "completed";
   const source = {
@@ -64,7 +69,16 @@ function makeReadModel(input?: {
   return {
     snapshotSequence: 1,
     projects: [],
-    threads: [source, ...(input?.targetExists === true ? [{ ...source, id: FORK_THREAD_ID }] : [])],
+    threads: [
+      source,
+      ...(input?.targetExists === true ? [{ ...source, id: FORK_THREAD_ID }] : []),
+      ...(input?.siblings ?? []).map((sibling) => ({
+        ...source,
+        id: ThreadId.make(sibling.id),
+        title: sibling.title,
+        deletedAt: sibling.deleted === true ? NOW : null,
+      })),
+    ],
     updatedAt: NOW,
   };
 }
@@ -193,6 +207,36 @@ it.layer(NodeServices.layer)("thread fork decider", (it) => {
       expect(olderCreated?.type).toBe("thread.created");
       if (olderCreated?.type !== "thread.created") return;
       expect(olderCreated.payload.fork?.sourceTurnId).toBe(olderTurnId);
+    }),
+  );
+
+  it.effect("numbers fork titles from live siblings only", () =>
+    Effect.gen(function* () {
+      const afterDeletedFork = yield* decideOrchestrationCommand({
+        command: forkCommand,
+        readModel: makeReadModel({
+          siblings: [{ id: "thread-deleted-fork", title: "Source thread (1)", deleted: true }],
+        }),
+      });
+      const afterDeletedForkCreated = Array.isArray(afterDeletedFork)
+        ? afterDeletedFork[0]
+        : afterDeletedFork;
+      expect(afterDeletedForkCreated?.type).toBe("thread.created");
+      if (afterDeletedForkCreated?.type !== "thread.created") return;
+      expect(afterDeletedForkCreated.payload.title).toBe("Source thread (1)");
+
+      const alongsideLiveFork = yield* decideOrchestrationCommand({
+        command: forkCommand,
+        readModel: makeReadModel({
+          siblings: [{ id: "thread-live-fork", title: "Source thread (1)" }],
+        }),
+      });
+      const alongsideLiveForkCreated = Array.isArray(alongsideLiveFork)
+        ? alongsideLiveFork[0]
+        : alongsideLiveFork;
+      expect(alongsideLiveForkCreated?.type).toBe("thread.created");
+      if (alongsideLiveForkCreated?.type !== "thread.created") return;
+      expect(alongsideLiveForkCreated.payload.title).toBe("Source thread (2)");
     }),
   );
 
