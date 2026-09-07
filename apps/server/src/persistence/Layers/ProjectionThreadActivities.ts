@@ -293,7 +293,7 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
             "ProjectionThreadActivityRepository.listTaskLifecycleByThreadId:decodeRows",
           ),
         ),
-        Effect.map(mapActivityRows),
+        Effect.map((rows) => rows.map(toProjectionThreadActivity)),
       );
 
   const listTaskLifecycleByThreadIds: ProjectionThreadActivityRepositoryShape["listTaskLifecycleByThreadIds"] =
@@ -311,7 +311,7 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
                 "ProjectionThreadActivityRepository.listTaskLifecycleByThreadIds:decodeRows",
               ),
             ),
-            Effect.map(mapActivityRows),
+            Effect.map((rows) => rows.map(toProjectionThreadActivity)),
           ),
         { concurrency: 1 },
       ).pipe(Effect.map((chunks) => chunks.flat()));
