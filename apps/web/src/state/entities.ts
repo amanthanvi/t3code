@@ -98,14 +98,10 @@ export function useServerConfigs(): ReadonlyMap<EnvironmentId, ServerConfig> {
 
 /**
  * Threads a list or picker should show: side chats stay hidden while their
- * parent exists. Ownership and lookup paths use `useAllThreadShells`.
+ * parent exists.
  */
 export function useThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
   return useAtomValue(environmentThreadShells.visibleThreadShellsAtom);
-}
-
-export function useAllThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
-  return useAtomValue(environmentThreadShells.threadShellsAtom);
 }
 
 export function useSideChatsByParent(

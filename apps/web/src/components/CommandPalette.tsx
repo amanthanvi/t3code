@@ -83,7 +83,7 @@ import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import { useProject, useProjects, useThread, useThreadShells } from "../state/entities";
+import { useProjects, useThread, useThreadShells } from "../state/entities";
 import { useThreadSearch } from "../state/queries";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
@@ -1634,7 +1634,7 @@ function OpenCommandPaletteDialog(props: {
         kind: "action",
         value: "action:fork-thread",
         searchTerms: ["fork thread", "new thread", "branch conversation"],
-        title: "Fork thread",
+        title: "Fork to new thread",
         description: threadFork.latest.disabledReason ?? undefined,
         icon: <GitForkIcon className={ITEM_ICON_CLASS} />,
         shortcutCommand: "chat.forkThread",

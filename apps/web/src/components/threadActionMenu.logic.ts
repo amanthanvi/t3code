@@ -82,7 +82,7 @@ export function buildThreadActionMenuItems(
           },
           {
             id: "fork-thread" as const,
-            label: "Fork thread",
+            label: "Fork to new thread",
             icon: "git-fork",
             disabled: !state.forking.enabled,
             disabledReason: state.forking.disabledReason,

@@ -9,16 +9,16 @@ where the new conversation appears:
 
 Use the fork action on a completed agent response to choose the exact point where the new
 conversation begins. You can also open a side chat or fork the latest completed turn from the
-thread menu or command palette. **Open side chat** defaults to `mod+shift+b`. **Fork thread** has
-no default shortcut, but you can assign one in **Settings → Keybindings**.
+thread menu or command palette. **Open side chat** defaults to `mod+shift+b`. **Fork to new thread**
+has no default shortcut, but you can assign one in **Settings → Keybindings**.
 
 ## Provider support
 
 Forking follows the active provider's session capabilities:
 
-- **Codex** can fork from any completed agent response.
-- **Claude** and **OpenCode** can fork only from the latest completed agent response.
-- **Cursor**, **Grok**, and **Antigravity** do not support session forking.
+- Codex can fork from any completed agent response.
+- Claude and OpenCode can fork only from the latest completed agent response.
+- Cursor, Grok, and Antigravity do not support session forking.
 
 When a provider does not support forking, or the thread has no completed turn, the thread-menu and
 command-palette actions remain visible but unavailable. Earlier response actions are omitted for
@@ -37,5 +37,5 @@ Deleting a side chat uses the normal thread delete action and permanently clears
 history. Closing and deleting are separate actions.
 
 Forked threads and promoted side chats show **Forked from _parent title_** at the top of the
-conversation. Select it to return to the source thread. If the source thread was deleted, the label
-stays but no longer opens anything.
+conversation. Select it to return to the source thread. If the source thread was deleted, web and
+desktop show **Forked from a deleted thread** instead, and mobile hides the label.
