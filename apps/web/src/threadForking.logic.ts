@@ -116,7 +116,7 @@ export function canForkCompletedAssistantMessage(input: {
 export async function runPromoteSideChat(input: {
   readonly update: () => Promise<boolean>;
   readonly closeSurface: () => void;
-  readonly navigate: () => Promise<unknown>;
+  readonly navigate: () => Promise<void>;
 }): Promise<boolean> {
   if (!(await input.update())) return false;
   input.closeSurface();

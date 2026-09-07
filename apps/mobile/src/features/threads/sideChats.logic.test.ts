@@ -3,7 +3,6 @@ import {
   MessageId,
   type OrchestrationSession,
   ProviderInstanceId,
-  type ServerConfig,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -13,6 +12,7 @@ import {
   buildMobileSideChatMenuItems,
   canForkMobileAssistantMessage,
   completedTurnIdsFromCheckpoints,
+  type ForkCapabilityConfig,
   resolveMobileThreadForkCapability,
   visibleTopLevelThreads,
 } from "./sideChats.logic";
@@ -91,7 +91,7 @@ describe("mobile thread fork capability", () => {
       { instanceId: ProviderInstanceId.make("claude"), sessionFork: "latest-turn" },
       { instanceId: ProviderInstanceId.make("codex-work"), sessionFork: "any-turn" },
     ],
-  } as unknown as ServerConfig;
+  } satisfies ForkCapabilityConfig;
   const modelSelection = { instanceId: ProviderInstanceId.make("claude"), model: "claude-opus-5" };
   const session = (status: OrchestrationSession["status"]) =>
     ({

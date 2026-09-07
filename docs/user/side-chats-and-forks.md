@@ -18,7 +18,7 @@ Forking follows the active provider's session capabilities:
 
 - **Codex** can fork from any completed agent response.
 - **Claude** and **OpenCode** can fork only from the latest completed agent response.
-- **Cursor**, **Grok**, and **Antigravity** do not currently support session forking.
+- **Cursor**, **Grok**, and **Antigravity** do not support session forking.
 
 When a provider does not support forking, or the thread has no completed turn, the thread-menu and
 command-palette actions remain visible but unavailable. Earlier response actions are omitted for
@@ -30,8 +30,8 @@ Closing a side-chat tab only closes that local panel. The conversation still exi
 reopened from **Side chats** in its parent thread's menu. On mobile, the same menu opens each side
 chat as a full-screen thread.
 
-Choose **Promote to thread** to move a side chat into the main thread list. Its conversation and
-link back to the parent are preserved.
+Choose **Promote to thread** to move a side chat into the main thread list. It keeps its
+conversation and its link back to the parent.
 
 Deleting a side chat uses the normal thread delete action and permanently clears its conversation
 history. Closing and deleting are separate actions.

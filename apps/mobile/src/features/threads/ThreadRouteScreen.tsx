@@ -845,7 +845,7 @@ function ThreadRouteContent(
     onPull: gitActions.onPullSelectedThreadBranch,
     onRunAction: gitActions.onRunSelectedThreadGitAction,
   };
-  const threadHeaderMenuItem = useMemo<Record<string, unknown> | null>(() => {
+  const threadHeaderMenuItem = useMemo<NativeHeaderItems[number] | null>(() => {
     const items: Array<Record<string, unknown>> = [];
     if (selectedThread?.sideChat === true) {
       items.push({

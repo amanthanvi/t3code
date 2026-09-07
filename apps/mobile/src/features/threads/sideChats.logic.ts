@@ -22,9 +22,16 @@ export function visibleTopLevelThreads<
   });
 }
 
+/** The capability lookup reads nothing but each provider's id and fork support. */
+export interface ForkCapabilityConfig {
+  readonly providers: ReadonlyArray<
+    Pick<ServerConfig["providers"][number], "instanceId" | "sessionFork">
+  >;
+}
+
 export function resolveMobileThreadForkCapability(
   thread: Pick<EnvironmentThreadShell, "modelSelection" | "session">,
-  serverConfig: ServerConfig | null,
+  serverConfig: ForkCapabilityConfig | null,
 ): ServerProviderSessionFork | undefined {
   const instanceId = threadProviderInstanceId(thread);
   return serverConfig?.providers.find((provider) => provider.instanceId === instanceId)
