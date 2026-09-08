@@ -79,6 +79,42 @@ describe("thread fork entry availability", () => {
     },
   );
 
+  it("tells the sidebar to open a running any-turn thread rather than claiming no turn completed", () => {
+    // The sidebar builds its menu from the shell, so an unopened thread has no
+    // messages to search. Omitted messages mean unknown, not none.
+    expect(
+      resolveForkEntryAvailability({
+        capability: "any-turn",
+        latestTurn: { ...completedTurn, state: "running", completedAt: null },
+      }),
+    ).toEqual({
+      enabled: false,
+      target: null,
+      disabledReason: "Open this thread to fork an earlier response.",
+    });
+
+    // Loaded detail that really holds no completed turn keeps the original copy.
+    expect(
+      resolveForkEntryAvailability({
+        capability: "any-turn",
+        latestTurn: { ...completedTurn, state: "running", completedAt: null },
+        messages: [],
+        completedTurnIds: new Set(),
+      }),
+    ).toMatchObject({
+      enabled: false,
+      disabledReason: "Complete a turn before forking this thread.",
+    });
+
+    // A thread that has never run a turn has not completed one, loaded or not.
+    expect(
+      resolveForkEntryAvailability({ capability: "any-turn", latestTurn: null }),
+    ).toMatchObject({
+      enabled: false,
+      disabledReason: "Complete a turn before forking this thread.",
+    });
+  });
+
   it("ignores finalized assistant messages from interrupted and failed turns", () => {
     const completedTurnId = TurnId.make("turn-completed");
     const interruptedTurnId = TurnId.make("turn-interrupted");

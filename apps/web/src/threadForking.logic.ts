@@ -88,10 +88,20 @@ export function resolveForkEntryAvailability(input: {
         )
       : null);
   if (target === null) {
+    // The sidebar menu is built from the thread shell alone, so an unopened
+    // thread carries no messages to search for an earlier completed turn.
+    // Say what to do instead of claiming no turn has completed.
+    const earlierTurnUnknown =
+      input.messages === undefined &&
+      input.capability === "any-turn" &&
+      input.latestTurn != null &&
+      input.latestTurn.state !== "completed";
     return {
       enabled: false,
       target: null,
-      disabledReason: "Complete a turn before forking this thread.",
+      disabledReason: earlierTurnUnknown
+        ? "Open this thread to fork an earlier response."
+        : "Complete a turn before forking this thread.",
     };
   }
   return { enabled: true, target, disabledReason: null };

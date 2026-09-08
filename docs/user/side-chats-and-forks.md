@@ -4,7 +4,8 @@ Side chats and forks both branch an existing conversation with its context intac
 where the new conversation appears:
 
 - **Open side chat** opens the branch beside the current thread on web and desktop. On mobile, it
-  opens as a full-screen conversation. Side chats stay out of the main thread sidebar.
+  opens as a full-screen conversation. A side chat stays out of the main thread sidebar for as long
+  as its parent thread exists.
 - **Fork to new thread** creates a normal thread and opens it as the main conversation.
 
 Use the fork action on a completed agent response to choose the exact point where the new
@@ -35,6 +36,9 @@ conversation and its link back to the parent.
 
 Deleting a side chat uses the normal thread delete action and permanently clears its conversation
 history. Closing and deleting are separate actions.
+
+Deleting a parent thread leaves its side chats intact. They no longer have a parent to sit beside,
+so they return to the thread list as ordinary threads.
 
 Forked threads and promoted side chats show **Forked from _parent title_** at the top of the
 conversation. Select it to return to the source thread. If the source thread was deleted, web and

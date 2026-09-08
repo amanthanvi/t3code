@@ -171,7 +171,9 @@ export function sortThreadsForListV2<
   return sortActiveThreadsByOrderKey(threads);
 }
 
-/** Canonical card section for Move up/down, independent of search or scope. */
+/** Canonical card section for Move up/down, independent of search or scope.
+    Attached side chats are never rows, so they must not become move neighbors;
+    callers pass the unfiltered list as `allThreads` to reserve their keys. */
 export function getThreadListV2OrderedSection(input: {
   readonly threads: readonly EnvironmentThreadShell[];
   readonly section: "pinned" | "active";
@@ -181,7 +183,8 @@ export function getThreadListV2OrderedSection(input: {
   readonly snoozeEnvironmentIds?: ReadonlySet<EnvironmentId>;
   readonly queuedThreadKeys?: ReadonlySet<string>;
 }): EnvironmentThreadShell[] {
-  const threads = input.threads.filter((thread) => {
+  const knownThreadIds = new Set(input.threads.map((thread) => thread.id));
+  const threads = visibleTopLevelThreads(input.threads, knownThreadIds).filter((thread) => {
     if (thread.archivedAt !== null) return false;
     if (
       (input.settlementEnvironmentIds?.has(thread.environmentId) ?? true) &&
