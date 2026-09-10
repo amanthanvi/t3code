@@ -4547,7 +4547,7 @@ describe("selectLiveAgentTasks", () => {
   it("keeps linkage from earlier rows when a later row carries only a status", () => {
     // Terminal and status-patch rows commonly carry nothing but taskId and
     // status. If the settled row copied only that newest payload it would
-    // land with no agentKind — and once the start row falls out of the
+    // land with no agentKind. Once the start row falls out of the
     // client's activity window, the client would read the settled row as
     // background work and drop the agent from the panel entirely.
     const live = selectLiveAgentTasks([

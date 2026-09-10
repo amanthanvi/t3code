@@ -1546,10 +1546,11 @@ const make = Effect.gen(function* () {
       .pipe(Effect.catchCause(recoverInterruptFailure));
 
     // Settlement reads persisted rows, so every provider event that was
-    // already queued when Stop arrived has to land first — otherwise a
+    // already queued when Stop arrived has to land first. Otherwise a
     // task.updated(running) from before the interrupt is written after the
     // settlement row and re-arms both the registry and the client fold.
-    // Bounded: a hot event stream must not hold Stop hostage.
+    // The wait is bounded so a busy event stream cannot delay Stop past the
+    // timeout.
     const drained = yield* providerRuntimeIngestion.drain.pipe(
       Effect.timeoutOption(INTERRUPT_INGESTION_DRAIN_TIMEOUT),
     );
@@ -1560,7 +1561,7 @@ const make = Effect.gen(function* () {
       );
     }
 
-    // Stop is a host promise, not a provider request: children the provider
+    // The host guarantees Stop; the provider does not. Children the provider
     // has already forgotten (compaction, a lost thread tree) never emit a
     // terminal event of their own, so settle the persisted rows here. Covers
     // both a successful interrupt and the stopSession fallback above; tasks

@@ -2054,11 +2054,11 @@ const make = Effect.gen(function* () {
         case "session.exited":
           // Rows first, then the registry. Background work dies with its
           // provider session, so any task still listed as running gets a
-          // persisted terminal row before the in-memory mirror is wiped —
-          // otherwise a restart rehydrates "running" rows with an empty
+          // persisted terminal row before the in-memory mirror is wiped.
+          // Otherwise a restart rehydrates "running" rows with an empty
           // registry and the agent reads as working forever.
-          // No drain needed here: this runs inside the ingestion worker, so
-          // every earlier provider event for this thread is already persisted.
+          // This runs inside the ingestion worker, so every earlier provider
+          // event for this thread is already persisted and no drain is needed.
           yield* settleThreadTasks({
             threadId: thread.id,
             status: "interrupted",

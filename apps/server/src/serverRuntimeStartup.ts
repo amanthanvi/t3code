@@ -534,13 +534,13 @@ export const reconcileProviderSessions = Effect.gen(function* () {
 
   // Background work outlives the turn, so the headline case is wider than an
   // orphaned turn: a thread whose turn ended is `ready` with no active turn
-  // while its children keep running. A stopped session qualifies too — the
+  // while its children keep running. A stopped session qualifies too. The
   // process can die between marking the session stopped and settling, and
   // that thread would otherwise never be settled on any later boot. Any
   // thread this process does not own has lost its background work, and a
   // restart leaves the in-memory liveness registry empty while the persisted
-  // rows still read "running". Archived and deleted threads are skipped —
-  // settling writes rows. One batched read, not a query per thread.
+  // rows still read "running". Archived and deleted threads are skipped
+  // because settling writes rows. One batched read, not a query per thread.
   const settleableThreadIds = threads
     .filter(
       (thread) =>

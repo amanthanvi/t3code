@@ -2,18 +2,19 @@
  * Settles a thread's still-running background agent tasks from the persisted
  * activity rows, without the provider's cooperation.
  *
- * Native multi-agent children (Codex collab, workflow members) only leave the
- * live set when the provider keeps reporting them. Compaction, a provider
- * restart, a host Stop for a child the provider has already forgotten, or a
- * T3 restart all lose that reporting, and the last persisted row stays
- * "running" forever — the Agents panel and the composer's "N agents working"
+ * Native multi-agent children (Codex collab, workflow members) leave the live
+ * set only when the provider reports a terminal event for them. Compaction, a
+ * provider restart, a host Stop for a child the provider has already forgotten,
+ * or a T3 restart all lose that reporting, and the last persisted row stays
+ * "running" forever. The Agents panel and the composer's "N agents working"
  * banner never clear.
  *
- * Persisted rows are the authority here: at the three moments where the server
- * knows background work cannot continue (session death, host Stop, startup
- * reconciliation) it folds the thread's task rows, synthesizes one terminal
- * `task.updated` per still-live agent task, and feeds the same transition to
- * the in-memory liveness registry so rows and registry settle together.
+ * Persisted rows are the authority here. The server settles at the three
+ * moments when it knows background work cannot continue: session death, host
+ * Stop, and startup reconciliation. At each one it folds the thread's task
+ * rows, synthesizes one terminal `task.updated` per still-live agent task, and
+ * feeds the same transition to the in-memory liveness registry so rows and
+ * registry settle together.
  *
  * @module ThreadTaskSettlement
  */
@@ -259,7 +260,7 @@ export function selectLiveAgentTasks(
 
   // Consistency pass, mirroring the client fold: once a workflow coordinator
   // has settled, members without a terminal row of their own cannot still be
-  // in flight — the run is over. The client shows them with the coordinator's
+  // in flight. The run is over. The client shows them with the coordinator's
   // outcome, so settling them here would overwrite a completed run with
   // "interrupted".
   for (const coordinator of entries.values()) {
@@ -331,8 +332,8 @@ const writeSettledTasks = Effect.fn("writeSettledTasks")(function* (input: {
       turnId: null,
     };
     const commandId = CommandId.make(`task-settle:${yield* crypto.randomUUIDv4}`);
-    // One task's append must not abandon the rest of the fleet: a partially
-    // settled thread is exactly the state this whole module exists to avoid.
+    // A failed append for one task must not skip the tasks after it. Their
+    // rows would stay "running" and the Agents panel would never clear.
     const appended = yield* orchestrationEngine
       .dispatch({
         type: "thread.activity.append",
@@ -393,7 +394,7 @@ const withSettlementRecovery =
  * Marks every still-live agent task on the thread as settled: one persisted
  * terminal `task.updated` per task, plus the matching liveness transition.
  *
- * Never fails the caller — Stop, session teardown, and startup all continue
+ * Never fails the caller. Stop, session teardown, and startup all continue
  * when settlement cannot read or write.
  */
 export const settleThreadTasks = Effect.fn("settleThreadTasks")(function* (input: {

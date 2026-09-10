@@ -234,7 +234,8 @@ layer("ProjectionThreadActivityRepository", (it) => {
         ThreadId.make(`thread-task-chunk-${String(index).padStart(4, "0")}`),
       );
       // The threads on either side of the boundary carry two rows each, so a
-      // regression that drops or reorders a straddling thread shows up here.
+      // regression that drops rows at the boundary or reorders them inside a
+      // thread shows up here.
       const rows = threadIds.flatMap((threadId, index) =>
         Array.from(
           { length: index === THREAD_ID_BATCH_SIZE - 1 || index === THREAD_ID_BATCH_SIZE ? 2 : 1 },

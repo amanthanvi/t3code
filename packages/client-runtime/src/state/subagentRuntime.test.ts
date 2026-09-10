@@ -896,7 +896,7 @@ describe("host-settled background agents", () => {
   it("reconciles the live count as soon as a terminal row lands", () => {
     // Replay of a real Codex collab child: turnStarted/turnCompleted cycles,
     // the host's settlement row, and the provider's own late idle row after
-    // it. The last word is terminal, so nothing is left working.
+    // it. The last row is terminal, so nothing is left working.
     const linkage = {
       taskId: "collab-child-1",
       title: "math_one",
