@@ -15,8 +15,8 @@ export function canReplaceThreadTitle(currentTitle: string, titleSeed?: string):
 /**
  * Title for a thread forked from `sourceTitle`, following the Codex app's
  * convention: the first fork reuses the source title with " (1)", the next
- * gets " (2)", and so on. The counter is derived from the titles already in
- * the project so it survives renames and deletions of earlier forks. A
+ * gets " (2)", and so on. The counter comes from the titles currently in the
+ * project, so a number freed by a rename or a deletion is reused. A
  * trailing "(n)" is treated as a fork suffix only when the source is itself a
  * fork, so a user title such as "Release (2024)" keeps its parenthetical.
  */

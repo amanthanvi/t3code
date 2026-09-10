@@ -626,12 +626,12 @@ const make = Effect.gen(function* () {
       providerService
         .listSessions()
         .pipe(Effect.map((sessions) => sessions.find((session) => session.threadId === threadId)));
-    // An unstarted fork must start where the source conversation actually
-    // lives. The source's live session is the only proof it moved; without
-    // one, the source's persisted binding says which instance still holds
-    // it, and a source with neither stays on the selection the fork
-    // inherited. The source's stored selection alone is not enough: it can
-    // change before any turn moves the conversation.
+    // An unstarted fork must start where the source conversation lives now.
+    // The source's live session is the only proof it moved; without one, the
+    // source's persisted binding says which instance still holds it, and a
+    // source with neither stays on the selection the fork inherited. The
+    // source's stored selection alone is not enough, because it can change
+    // before any turn moves the conversation.
     const forkSourceSession =
       forkSource?.session != null &&
       forkSource.session.status !== "stopped" &&
@@ -678,7 +678,8 @@ const make = Effect.gen(function* () {
         : (forkBinding?.providerInstanceId ?? thread.modelSelection.instanceId);
     const baseDesiredModelSelection = requestedModelSelection ?? thread.modelSelection;
     // When the source moved, the fork follows it onto the source's current
-    // instance and model: the inherited selection described the old home.
+    // instance and model. The inherited selection describes where the source
+    // used to run.
     let movedForkSourceSelection: ModelSelection | undefined;
     if (
       forkSource !== undefined &&
@@ -714,7 +715,7 @@ const make = Effect.gen(function* () {
       forkBinding?.providerInstanceId ??
       thread.session?.providerInstanceId ??
       thread.modelSelection.instanceId;
-    // Before its inherited session starts, a fork's model is locked: to the
+    // Before its inherited session starts, a fork's model is locked to the
     // inherited selection, or to the source's current selection once the
     // source moved.
     const forkModelLockViolated =
