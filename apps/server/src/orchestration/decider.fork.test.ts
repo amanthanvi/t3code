@@ -43,6 +43,7 @@ function makeReadModel(input?: {
     interactionMode: "plan" as const,
     branch: "feature/source",
     worktreePath: "/tmp/source-worktree",
+    pullRequests: [],
     latestTurn:
       input?.hasLatestTurn === false
         ? null

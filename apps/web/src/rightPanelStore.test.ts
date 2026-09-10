@@ -29,15 +29,17 @@ describe("rightPanelStore", () => {
   });
 
   it.each(["diff-first", "pull-request-first"])(
-    "keeps the linked pull request above the completed diff with %s delivery",
+    "prioritizes the linked pull request over browser and diff with %s delivery",
     (order) => {
       const store = useRightPanelStore.getState();
+      store.openBrowser(refA, "existing-browser");
       const revision = store.getUserActionRevision(refA);
       const requests =
         order === "diff-first"
           ? [completedDiff, linkedPullRequest]
           : [linkedPullRequest, completedDiff];
       for (const surface of requests) store.openProactive(refA, surface, revision);
+      store.reconcileBrowserSurfaces(refA, ["existing-browser", "agent-browser"]);
 
       expect(
         selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
@@ -601,6 +603,18 @@ describe("rightPanelStore", () => {
       selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
     ).toMatchObject({ url });
     expect(state.surfaces[1]).not.toHaveProperty("url");
+  });
+
+  it("keeps matching repository and number on different hosts as separate tabs", () => {
+    const first = { projectId: "project-a", repository: "acme/api", number: 7, host: "github.com" };
+    const second = { ...first, host: "github.example.com" };
+    useRightPanelStore.getState().openPullRequest(refA, first);
+    useRightPanelStore.getState().openPullRequest(refA, second);
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces).toEqual([pullRequestSurface(first), pullRequestSurface(second)]);
+    expect(pullRequestSurfaceId({ ...first, host: "GITHUB.COM" })).toBe(
+      pullRequestSurfaceId(first),
+    );
   });
 
   it("keys side-chat surfaces by child thread", () => {

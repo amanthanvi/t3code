@@ -72,6 +72,7 @@ const makeSourceThread = (
   interactionMode: "default",
   branch: null,
   worktreePath: null,
+  pullRequests: [],
   latestTurn,
   createdAt: "2026-09-03T11:00:00.000Z",
   updatedAt: "2026-09-03T12:00:00.000Z",

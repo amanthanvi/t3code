@@ -57,6 +57,7 @@ it("keeps side chats in archived thread snapshots so they can be unarchived", ()
     interactionMode: "default" as const,
     branch: null,
     worktreePath: null,
+    pullRequests: [],
     fork: {
       sourceThreadId: parentId,
       sourceTurnId: null,
