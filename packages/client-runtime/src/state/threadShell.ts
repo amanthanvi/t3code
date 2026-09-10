@@ -95,9 +95,9 @@ export function createEnvironmentThreadShellAtoms(input: {
   );
 
   // Every thread the environment owns, side chats included. Ownership checks
-  // (worktree cleanup, membership, outbox routing) must read this list: a
-  // side chat shares its parent's worktree, and forgetting it would make that
-  // worktree look orphaned when the parent is deleted.
+  // (worktree cleanup, membership, outbox routing) must read this list. A side
+  // chat shares its parent's worktree, so omitting it would make that worktree
+  // look orphaned when the parent is deleted.
   const environmentThreadRefsAtom = Atom.family((environmentId: EnvironmentId) => {
     let previous: ReadonlyArray<ScopedThreadRef> = [];
     return Atom.make((get) => {

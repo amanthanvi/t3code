@@ -409,9 +409,9 @@ export type OrchestrationSession = typeof OrchestrationSession.Type;
 
 /**
  * Provider instance that currently holds a thread's conversation. A live
- * session says where the thread runs now; a stopped or errored session is
- * history, so the stored selection wins. Server and clients share this rule
- * when they decide which instance's fork capability applies to a thread.
+ * session says where the thread runs now; a stopped or errored session no
+ * longer does, so the stored selection wins. Server and clients share this
+ * rule when they decide which instance's fork capability applies to a thread.
  */
 export function threadProviderInstanceId(thread: {
   readonly modelSelection: { readonly instanceId: ProviderInstanceId };
