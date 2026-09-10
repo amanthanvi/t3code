@@ -51,7 +51,7 @@ describe("Claude provider snapshot", () => {
           [`gateway/${SYNTHETIC_CLAUDE_CAPABLE_MODEL}`, ["effort", "fastMode", "contextWindow"]],
           ["gateway/claude-synthetic-unlisted", []],
           [SYNTHETIC_CLAUDE_COLLIDING_ALIAS, []],
-          // The custom slug shadows the alias, so the slug prefixing it stays opaque.
+          // The custom slug shadows the alias, so the gateway-prefixed slug stays opaque.
           [`gateway/${SYNTHETIC_CLAUDE_COLLIDING_ALIAS}`, []],
           // Declared capabilities win over the template this slug routes to.
           [`gateway/${SYNTHETIC_CLAUDE_STANDARD_MODEL}`, ["thinking"]],

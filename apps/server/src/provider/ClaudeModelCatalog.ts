@@ -74,12 +74,12 @@ export const BUNDLED_CLAUDE_MODEL_CATALOG = resolveClaudeModelCatalog(BUNDLED_MO
 
 /**
  * Scope the catalog to one instance's settings: custom model slugs stay opaque
- * (a built-in alias they shadow is dropped, so a gateway-prefixed slug built on
- * that alias stays opaque too; canonical slugs and capabilities are preserved),
- * and custom entries that declare their own capabilities are appended so the
- * adapter resolves effort / fast mode / thinking against the user's descriptors
- * instead of the empty default. Custom entries carry no runtime profile, so
- * option values pass through to Claude Code verbatim.
+ * (a built-in alias they shadow is dropped, canonical slugs and capabilities
+ * are preserved), and custom entries that declare their own capabilities are
+ * appended so the adapter resolves effort, fast mode, and thinking against the
+ * user's descriptors instead of the empty default. Dropping that alias also
+ * keeps a gateway-prefixed slug built on it opaque. Custom entries carry no
+ * runtime profile, so option values pass through to Claude Code verbatim.
  */
 export function scopeClaudeModelCatalog(
   catalog: ClaudeModelCatalog,
