@@ -76,7 +76,7 @@ describe("mobile side-chat list helpers", () => {
         sideChats: [
           { id: ThreadId.make("side-1"), title: "Try another approach" },
           { id: ThreadId.make("side-2"), title: "Check the tests" },
-        ] as ReadonlyArray<Pick<EnvironmentThreadShell, "id" | "title">>,
+        ] satisfies ReadonlyArray<Pick<EnvironmentThreadShell, "id" | "title">>,
       }),
     ).toEqual([
       { id: "side-chat:side-1", title: "Try another approach" },

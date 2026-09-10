@@ -173,7 +173,8 @@ export function sortThreadsForListV2<
 
 /** Canonical card section for Move up/down, independent of search or scope.
     Attached side chats are never rows, so they must not become move neighbors;
-    callers pass the unfiltered list as `allThreads` to reserve their keys. */
+    callers pass the unfiltered list to `createThreadMovePlanner` as `allThreads`
+    to reserve their keys. */
 export function getThreadListV2OrderedSection(input: {
   readonly threads: readonly EnvironmentThreadShell[];
   readonly section: "pinned" | "active";

@@ -88,7 +88,7 @@ export function resolveForkEntryAvailability(input: {
         )
       : null);
   if (target === null) {
-    // The sidebar menu is built from the thread shell alone, so an unopened
+    // The sidebar builds its menu from the thread shell alone, so an unopened
     // thread carries no messages to search for an earlier completed turn.
     // Say what to do instead of claiming no turn has completed.
     const earlierTurnUnknown =

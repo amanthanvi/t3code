@@ -117,9 +117,9 @@ export function useThreadForkActions(
       const currentSourceThread = sourceOverride ?? latestInputsRef.current.sourceThread;
       if (!currentSourceThread) return false;
       if (forkInFlightRef.current) return false;
-      // Resolve the panel host before awaiting: the user can navigate while
-      // the fork syncs, and the side chat must open beside the thread it was
-      // started from, not wherever the route ended up.
+      // Resolve the panel host before awaiting, because the user can navigate
+      // while the fork syncs. The side chat must open beside the thread the
+      // user started it from, not wherever the route ended up.
       const hostThreadId =
         sourceOverride?.id ?? latestInputsRef.current.panelHostThreadId ?? currentSourceThread.id;
       const hostIsActiveRoute = sourceOverride === undefined;
