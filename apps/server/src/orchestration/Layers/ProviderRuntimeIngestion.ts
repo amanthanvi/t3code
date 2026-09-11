@@ -52,6 +52,7 @@ import { projectActivityPayload } from "../ActivityPayloadProjection.ts";
 import { settleThreadTasks } from "../ThreadTaskSettlement.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { canReplaceThreadTitle } from "../threadTitles.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
@@ -1669,7 +1670,10 @@ const make = Effect.gen(function* () {
 
         const assistantDeliveryMode: AssistantDeliveryMode = yield* Effect.map(
           serverSettingsService.getSettings,
-          (settings) => (settings.enableLegacyTokenStreaming ? "streaming" : "buffered"),
+          (settings) =>
+            resolveProjectSettings(settings, thread.projectId).settings.enableLegacyTokenStreaming
+              ? "streaming"
+              : "buffered",
         );
         if (assistantDeliveryMode === "buffered") {
           const spillChunk = yield* appendBufferedAssistantText(assistantMessageId, assistantDelta);
@@ -1710,7 +1714,10 @@ const make = Effect.gen(function* () {
         });
         const assistantDeliveryMode: AssistantDeliveryMode = yield* Effect.map(
           serverSettingsService.getSettings,
-          (settings) => (settings.enableLegacyTokenStreaming ? "streaming" : "buffered"),
+          (settings) =>
+            resolveProjectSettings(settings, thread.projectId).settings.enableLegacyTokenStreaming
+              ? "streaming"
+              : "buffered",
         );
         const flushedMessageIds =
           assistantDeliveryMode === "buffered"
