@@ -1,7 +1,7 @@
 import { ComposerSelectControl } from "./chat/ComposerControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "./ui/tooltip";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { environmentIconForMachineKind, type EnvironmentId } from "@t3tools/contracts";
 import { ScaleIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 
@@ -64,7 +64,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
         data-composer-context-control
       >
         <EnvironmentMachineIcon
-          kind={activeEnvironment?.machine ?? "server"}
+          icon={activeEnvironment?.machine ?? environmentIconForMachineKind("server")}
           className="size-3 shrink-0"
         />
         <ComposerContextLabel>{activeEnvironment?.label ?? "Run on"}</ComposerContextLabel>
@@ -103,7 +103,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
             <ScaleIcon className="size-3 shrink-0" aria-hidden="true" />
           ) : (
             <EnvironmentMachineIcon
-              kind={activeEnvironment?.machine ?? "server"}
+              icon={activeEnvironment?.machine ?? environmentIconForMachineKind("server")}
               className="size-3 shrink-0"
             />
           )}
@@ -132,7 +132,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
           {availableEnvironments.map((env) => (
             <SelectItem key={env.environmentId} value={env.environmentId}>
               <span className="inline-flex items-center gap-1.5">
-                <EnvironmentMachineIcon kind={env.machine} className="size-3" />
+                <EnvironmentMachineIcon icon={env.machine} className="size-3" />
                 {env.label}
               </span>
             </SelectItem>

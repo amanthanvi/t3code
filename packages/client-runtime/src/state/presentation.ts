@@ -1,6 +1,6 @@
 import {
-  resolveEnvironmentMachineKind,
-  type EnvironmentMachineKind,
+  resolveEnvironmentIcon,
+  type EnvironmentIcon,
   type EnvironmentId,
   type ServerConfig,
 } from "@t3tools/contracts";
@@ -193,15 +193,13 @@ export function createEnvironmentSummaryAtoms(input: {
         (environmentId) =>
           [
             environmentId,
-            resolveEnvironmentMachineKind(
+            resolveEnvironmentIcon(
               get(input.presentationAtom(environmentId))?.serverConfig ?? null,
             ),
           ] as const,
       ),
     );
-    const previous = Option.getOrNull(
-      get.self<ReadonlyMap<EnvironmentId, EnvironmentMachineKind>>(),
-    );
+    const previous = Option.getOrNull(get.self<ReadonlyMap<EnvironmentId, EnvironmentIcon>>());
     return previous !== null && mapsEqual(previous, next) ? previous : next;
   });
   const pullRequestsSupportedAtom = Atom.make((get) =>

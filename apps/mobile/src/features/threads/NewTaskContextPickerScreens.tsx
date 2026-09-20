@@ -2,7 +2,7 @@ import { MaterialListRow } from "../../components/MaterialListRow";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { shouldCheckoutNewTaskBranch } from "./new-task-context-presentation";
 import type { VcsRef } from "@t3tools/client-runtime/state/vcs";
-import { AuthSourceControlWriteScope, resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import { AuthSourceControlWriteScope, resolveEnvironmentIcon } from "@t3tools/contracts";
 import { LegendList } from "@legendapp/list/react-native";
 import {
   isAtomCommandInterrupted,
@@ -238,7 +238,7 @@ export function NewTaskEnvironmentPickerRouteScreen() {
                 key={String(environment.environmentId)}
                 icon={
                   <EnvironmentMachineSymbol
-                    kind={resolveEnvironmentMachineKind(
+                    icon={resolveEnvironmentIcon(
                       serverConfigs.get(environment.environmentId) ?? null,
                     )}
                     size={Platform.OS === "android" ? 24 : 17}

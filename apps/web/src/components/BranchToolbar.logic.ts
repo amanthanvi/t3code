@@ -1,6 +1,6 @@
 import type {
   EnvironmentId,
-  EnvironmentMachineKind,
+  EnvironmentIcon,
   VcsRef,
   ProjectId,
   WorktreeSubmodules,
@@ -20,7 +20,7 @@ export interface EnvironmentOption {
   projectId: ProjectId | null;
   label: string;
   isPrimary: boolean;
-  machine: EnvironmentMachineKind;
+  machine: EnvironmentIcon;
 }
 
 export const EnvMode = Schema.Literals(["local", "worktree"]);

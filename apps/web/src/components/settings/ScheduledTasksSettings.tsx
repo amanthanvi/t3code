@@ -28,7 +28,7 @@ import {
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MIN_SCHEDULED_TASK_INTERVAL_MS,
   ProviderInstanceId,
-  resolveEnvironmentMachineKind,
+  resolveEnvironmentIcon,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -356,7 +356,7 @@ function ScheduledTaskEnvironmentSection({
       hideTitle={!showEnvironmentHeading}
       icon={
         <EnvironmentMachineIcon
-          kind={resolveEnvironmentMachineKind(environment.serverConfig)}
+          icon={resolveEnvironmentIcon(environment.serverConfig)}
           className="size-3.5"
         />
       }
@@ -992,7 +992,7 @@ function ScheduledTaskEditorDialog({
                   <SelectValue>
                     <span className="flex items-center gap-2">
                       <EnvironmentMachineIcon
-                        kind={resolveEnvironmentMachineKind(environment?.serverConfig ?? null)}
+                        icon={resolveEnvironmentIcon(environment?.serverConfig ?? null)}
                         className="size-4"
                       />
                       {environment?.label ?? "Unavailable environment"}
@@ -1003,7 +1003,7 @@ function ScheduledTaskEditorDialog({
                   {connectedEnvironments.map((entry) => (
                     <SelectItem key={entry.environmentId} value={entry.environmentId}>
                       <EnvironmentMachineIcon
-                        kind={resolveEnvironmentMachineKind(entry.serverConfig)}
+                        icon={resolveEnvironmentIcon(entry.serverConfig)}
                         className="size-4"
                       />
                       {entry.label}

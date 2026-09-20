@@ -6,8 +6,8 @@ import { LegendList } from "@legendapp/list/react-native";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
-  type EnvironmentMachineKind,
-  resolveEnvironmentMachineKind,
+  type EnvironmentIcon,
+  resolveEnvironmentIcon,
 } from "@t3tools/contracts";
 import { useNavigation } from "@react-navigation/native";
 import { ScreenHeader } from "../../components/ScreenHeader";
@@ -131,7 +131,7 @@ type ArchivedThreadListItem =
       readonly kind: "project";
       readonly key: string;
       readonly environmentLabel: string | null;
-      readonly environmentMachine: EnvironmentMachineKind;
+      readonly environmentMachine: EnvironmentIcon;
       readonly project: EnvironmentProject;
     }
   | {
@@ -145,7 +145,7 @@ type ArchivedThreadListItem =
 
 function ProjectGroupLabel(props: {
   readonly environmentLabel: string | null;
-  readonly environmentMachine: EnvironmentMachineKind;
+  readonly environmentMachine: EnvironmentIcon;
   readonly project: EnvironmentProject;
 }) {
   return (
@@ -167,7 +167,7 @@ function ProjectGroupLabel(props: {
       {props.environmentLabel ? (
         <View className="max-w-[42%] flex-row items-center gap-1">
           <EnvironmentMachineSymbol
-            kind={props.environmentMachine}
+            icon={props.environmentMachine}
             size={10}
             tintColorClassName="accent-foreground-tertiary"
           />
@@ -327,7 +327,7 @@ export function ArchivedThreadsScreen(props: {
         kind: "project",
         key: `${group.key}:project`,
         environmentLabel,
-        environmentMachine: resolveEnvironmentMachineKind(
+        environmentMachine: resolveEnvironmentIcon(
           serverConfigs.get(group.project.environmentId) ?? null,
         ),
         project: group.project,

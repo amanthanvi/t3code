@@ -1,5 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
-import { EnvironmentId, type ServerConfig } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  environmentIconForMachineKind,
+  type ServerConfig,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
@@ -80,7 +84,9 @@ describe("environment summary subscriptions", () => {
         expect(h.registry.get(h.environmentIdsAtom)).toBe(initialIds);
         expect(h.registry.get(h.identitiesAtom)).toBe(initialLabels);
         h.registry.get(h.environmentsAtom);
-        expect(h.registry.get(h.machineByIdAtom).get(FIRST)).toBe("desktop");
+        expect(h.registry.get(h.machineByIdAtom).get(FIRST)).toBe(
+          environmentIconForMachineKind("desktop"),
+        );
         expect(h.registry.get(h.pullRequestsSupportedAtom)).toBe(false);
       }
       expect(counts).toEqual({
@@ -144,19 +150,27 @@ describe("environment summary subscriptions", () => {
   it("updates machine icons and preserves cached icons for disabled environments", () => {
     const h = harness();
     try {
-      expect(h.registry.get(h.machineByIdAtom).get(FIRST)).toBe("desktop");
+      expect(h.registry.get(h.machineByIdAtom).get(FIRST)).toBe(
+        environmentIconForMachineKind("desktop"),
+      );
       h.registry.set(h.configs(FIRST), {
         ...config(),
         settings: { environmentIcon: { kind: "icon", name: "laptop" } },
       } as ServerConfig);
-      expect(h.registry.get(h.machineByIdAtom).get(FIRST)).toBe("laptop");
+      expect(h.registry.get(h.machineByIdAtom).get(FIRST)).toBe(
+        environmentIconForMachineKind("laptop"),
+      );
       h.registry.set(h.catalog, {
         isReady: true,
         entries: new Map([[FIRST, { ...entry(FIRST), enabled: false }]]),
       });
-      expect(h.registry.get(h.machineByIdAtom)).toEqual(new Map([[FIRST, "laptop"]]));
+      expect(h.registry.get(h.machineByIdAtom)).toEqual(
+        new Map([[FIRST, environmentIconForMachineKind("laptop")]]),
+      );
       h.registry.set(h.configs(FIRST), null);
-      expect(h.registry.get(h.machineByIdAtom).get(FIRST)).toBe("server");
+      expect(h.registry.get(h.machineByIdAtom).get(FIRST)).toBe(
+        environmentIconForMachineKind("server"),
+      );
     } finally {
       h.registry.dispose();
     }

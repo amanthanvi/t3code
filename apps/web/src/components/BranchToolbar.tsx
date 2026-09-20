@@ -3,7 +3,11 @@ import { readLocalApi } from "../localApi";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  environmentIconForMachineKind,
+  type EnvironmentId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import {
   ChevronDownIcon,
   FolderGit2Icon,
@@ -240,7 +244,7 @@ const RunContextSelector = memo(function RunContextSelector({
             />
           ) : (
             <EnvironmentMachineIcon
-              kind={activeEnvironment?.machine ?? "server"}
+              icon={activeEnvironment?.machine ?? environmentIconForMachineKind("server")}
               className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0 mx-0!"}
             />
           )}
@@ -351,7 +355,7 @@ const RunContextSelector = memo(function RunContextSelector({
                     closeOnClick
                   >
                     <span className="flex min-w-0 items-center gap-1.5">
-                      <EnvironmentMachineIcon kind={env.machine} className="size-3" />
+                      <EnvironmentMachineIcon icon={env.machine} className="size-3" />
                       <span className="min-w-0 truncate">{env.label}</span>
                     </span>
                   </MenuRadioItem>

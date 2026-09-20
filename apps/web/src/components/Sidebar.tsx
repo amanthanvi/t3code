@@ -54,7 +54,8 @@ import {
 } from "@t3tools/client-runtime/environment";
 import {
   AuthOrchestrationOperateScope,
-  type EnvironmentMachineKind,
+  environmentIconForMachineKind,
+  type EnvironmentIcon,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -444,7 +445,7 @@ function SidebarThreadTooltip({
   project: ProjectFaviconProject | null;
   projectDisplayName: string | null;
   environmentLabel: string | null;
-  environmentMachine: EnvironmentMachineKind;
+  environmentMachine: EnvironmentIcon;
   providerEntry: ProviderInstanceEntry | null;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   showInstanceBadge: boolean;
@@ -483,7 +484,7 @@ function SidebarThreadTooltip({
         {environmentLabel ? (
           <div className="flex min-w-0 items-center gap-2">
             <EnvironmentMachineIcon
-              kind={environmentMachine}
+              icon={environmentMachine}
               className="size-3 shrink-0 stroke-muted-foreground"
             />
             <div className="min-w-0 truncate text-foreground/75">{environmentLabel}</div>
@@ -1141,7 +1142,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   jumpLabel: string | null;
   currentEnvironmentId: string | null;
   environmentLabel: string | null;
-  environmentMachine: EnvironmentMachineKind;
+  environmentMachine: EnvironmentIcon;
   scratchMachineLabel: string | null;
   project: EnvironmentProject | null;
   projectDisplayName: string | null;
@@ -2171,7 +2172,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 <>
                   <EnvironmentMachineIcon
                     aria-hidden
-                    kind={props.environmentMachine}
+                    icon={props.environmentMachine}
                     className="size-3 shrink-0 text-muted-foreground/40"
                   />
                   <span className="min-w-0 flex-1 truncate text-muted-foreground/40">
@@ -2197,7 +2198,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
                     <EnvironmentMachineIcon
                       aria-hidden
-                      kind={props.environmentMachine}
+                      icon={props.environmentMachine}
                       className="size-3.5"
                     />
                   </span>
@@ -2231,7 +2232,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   project: EnvironmentProject | null;
   projectDisplayName: string | null;
   environmentLabel: string | null;
-  environmentMachine: EnvironmentMachineKind;
+  environmentMachine: EnvironmentIcon;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   isHighlighted: boolean;
   isRouteActive: boolean;
@@ -5173,7 +5174,8 @@ export default function Sidebar() {
                         }
                         environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}
                         environmentMachine={
-                          environmentMachineById.get(thread.environmentId) ?? "server"
+                          environmentMachineById.get(thread.environmentId) ??
+                          environmentIconForMachineKind("server")
                         }
                         providerEntryByInstanceId={
                           providerEntriesByEnvironment.get(thread.environmentId) ??
@@ -5325,7 +5327,8 @@ export default function Sidebar() {
                               environmentLabelById.get(thread.environmentId) ?? null
                             }
                             environmentMachine={
-                              environmentMachineById.get(thread.environmentId) ?? "server"
+                              environmentMachineById.get(thread.environmentId) ??
+                              environmentIconForMachineKind("server")
                             }
                             scratchMachineLabel={scratchMachineLabelFor(thread)}
                             project={
