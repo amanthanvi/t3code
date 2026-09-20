@@ -70,6 +70,28 @@ export const EnvironmentMachineKind = Schema.Literals(ENVIRONMENT_MACHINE_KINDS)
 export type EnvironmentMachineKind = typeof EnvironmentMachineKind.Type;
 export const isEnvironmentMachineKind = Schema.is(EnvironmentMachineKind);
 
+/**
+ * Named glyphs every client draws: the machine kinds a server can detect,
+ * plus roles a machine is given but never detected as. Both renderers hold an
+ * exhaustive map over this list, so a new id fails typecheck until each
+ * surface can draw it. Only the machine kinds have a bare-string form on the
+ * wire; a role always travels as the object, which is why picking one needs
+ * the `environmentIconOverride` capability.
+ */
+export const ENVIRONMENT_CURATED_ICON_IDS = [
+  ...ENVIRONMENT_MACHINE_KINDS,
+  "terminal",
+  "database",
+  "container",
+  "globe",
+  "home",
+  "gpu",
+  "network",
+] as const;
+export const EnvironmentCuratedIconId = Schema.Literals(ENVIRONMENT_CURATED_ICON_IDS);
+export type EnvironmentCuratedIconId = typeof EnvironmentCuratedIconId.Type;
+export const isEnvironmentCuratedIconId = Schema.is(EnvironmentCuratedIconId);
+
 const EnvironmentNamedIcon = Schema.Struct({
   kind: Schema.Literal("icon"),
   // A curated id or a Lucide id. Renderers try the curated map first, so the
