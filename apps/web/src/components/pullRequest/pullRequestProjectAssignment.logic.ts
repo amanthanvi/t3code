@@ -1,4 +1,4 @@
-import type { EnvironmentId, EnvironmentMachineKind, ProjectId } from "@t3tools/contracts";
+import type { EnvironmentId, EnvironmentIcon, ProjectId } from "@t3tools/contracts";
 
 /** The little of a project this needs: who holds it, and which repository it is a copy of. */
 export interface AssignableProject {
@@ -69,7 +69,7 @@ export interface PickableEnvironment {
   readonly projectId: ProjectId;
   readonly workspaceRoot: string;
   readonly label: string;
-  readonly machine?: EnvironmentMachineKind;
+  readonly machine?: EnvironmentIcon;
 }
 
 /**
@@ -89,7 +89,7 @@ export function resolvePickableEnvironments(
   environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly label: string;
-    readonly machine?: EnvironmentMachineKind;
+    readonly machine?: EnvironmentIcon;
   }>,
 ): ReadonlyArray<PickableEnvironment> {
   const own = projects.find(

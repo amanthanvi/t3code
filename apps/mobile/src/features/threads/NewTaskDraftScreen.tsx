@@ -30,7 +30,7 @@ import { useFontFamily } from "../../lib/useFontFamily";
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
-  resolveEnvironmentMachineKind,
+  resolveEnvironmentIcon,
 } from "@t3tools/contracts";
 
 import {
@@ -1478,7 +1478,7 @@ export function NewTaskDraftScreen(props: {
         disabled={isComposerInteractionLocked || voiceInput.isBusy}
         iconNode={
           <EnvironmentMachineSymbol
-            kind={resolveEnvironmentMachineKind(selectedEnvironmentServerConfig)}
+            icon={resolveEnvironmentIcon(selectedEnvironmentServerConfig)}
             size={16}
             tintColorClassName="accent-icon-muted"
           />

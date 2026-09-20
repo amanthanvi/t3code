@@ -40,7 +40,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderInteractionMode,
   ProviderDriverKind,
-  resolveEnvironmentMachineKind,
+  resolveEnvironmentIcon,
   RuntimeMode,
   TerminalOpenInput,
   type WorktreeSetupSnapshot,
@@ -2455,7 +2455,7 @@ export default function ChatView(props: ChatViewProps) {
         projectId: p.id,
         label: environment?.label ?? p.environmentId,
         isPrimary,
-        machine: resolveEnvironmentMachineKind(environment?.serverConfig ?? null),
+        machine: resolveEnvironmentIcon(environment?.serverConfig ?? null),
       });
     }
     // Sort: primary first, then alphabetical

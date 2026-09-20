@@ -1,5 +1,9 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  environmentIconForMachineKind,
+  type EnvironmentId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import {
   ChevronDownIcon,
   FolderGit2Icon,
@@ -164,7 +168,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
             <ScaleIcon className="size-3 shrink-0 mx-0!" aria-hidden="true" />
           ) : (
             <EnvironmentMachineIcon
-              kind={activeEnvironment?.machine ?? "server"}
+              icon={activeEnvironment?.machine ?? environmentIconForMachineKind("server")}
               className="size-3 shrink-0 mx-0!"
             />
           )}
@@ -262,7 +266,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
                     closeOnClick
                   >
                     <span className="flex min-w-0 items-center gap-1.5">
-                      <EnvironmentMachineIcon kind={env.machine} className="size-3" />
+                      <EnvironmentMachineIcon icon={env.machine} className="size-3" />
                       <span className="min-w-0 truncate">{env.label}</span>
                     </span>
                   </MenuRadioItem>

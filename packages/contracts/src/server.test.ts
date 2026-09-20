@@ -3,7 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
-  resolveEnvironmentMachineKind,
+  environmentIconForMachineKind,
+  resolveEnvironmentIcon,
   ServerConfig,
   ServerObservability,
   ServerProvider,
@@ -194,7 +195,7 @@ describe("ServerObservability", () => {
   });
 });
 
-describe("resolveEnvironmentMachineKind", () => {
+describe("resolveEnvironmentIcon", () => {
   const decodeDescriptor = Schema.decodeUnknownSync(ExecutionEnvironmentDescriptor);
   const decodeSettings = Schema.decodeUnknownSync(ServerSettings);
   const descriptor = (platform: Record<string, unknown>) =>
@@ -208,53 +209,73 @@ describe("resolveEnvironmentMachineKind", () => {
 
   it("prefers the user's pick over what the server detected", () => {
     expect(
-      resolveEnvironmentMachineKind({
+      resolveEnvironmentIcon({
         environment: descriptor({ machine: "mac-mini" }),
         settings: decodeSettings({ environmentIcon: "laptop" }),
       }),
-    ).toBe("laptop");
+    ).toEqual({ kind: "icon", name: "laptop" });
+  });
+
+  it("returns a named icon outside the machine kinds as stored", () => {
+    const settings = decodeSettings({ environmentIcon: { kind: "icon", name: "cpu" } });
+    expect(
+      resolveEnvironmentIcon({ environment: descriptor({ machine: "mac-mini" }), settings }),
+    ).toBe(settings.environmentIcon);
+  });
+
+  it("returns the stored value for anything richer than a plain kind", () => {
+    const settings = decodeSettings({ environmentIcon: { kind: "emoji", emoji: "🚀" } });
+    expect(
+      resolveEnvironmentIcon({ environment: descriptor({ machine: "mac-mini" }), settings }),
+    ).toBe(settings.environmentIcon);
+
+    const colored = decodeSettings({
+      environmentIcon: { kind: "icon", name: "laptop", color: "red" },
+    });
+    expect(
+      resolveEnvironmentIcon({
+        environment: descriptor({ machine: "mac-mini" }),
+        settings: colored,
+      }),
+    ).toBe(colored.environmentIcon);
   });
 
   it("uses detection when nothing is picked", () => {
     expect(
-      resolveEnvironmentMachineKind({
+      resolveEnvironmentIcon({
         environment: descriptor({ machine: "mac-mini" }),
         settings: decodeSettings({}),
       }),
-    ).toBe("mac-mini");
-  });
-
-  it("uses detection when the pick is not a machine kind", () => {
-    expect(
-      resolveEnvironmentMachineKind({
-        environment: descriptor({ machine: "mac-mini" }),
-        settings: decodeSettings({ environmentIcon: { kind: "emoji", emoji: "🚀" } }),
-      }),
-    ).toBe("mac-mini");
+    ).toEqual({ kind: "icon", name: "mac-mini" });
   });
 
   it("uses detection from a bare descriptor before connecting", () => {
-    expect(resolveEnvironmentMachineKind({ environment: descriptor({ machine: "laptop" }) })).toBe(
-      "laptop",
-    );
+    expect(resolveEnvironmentIcon({ environment: descriptor({ machine: "laptop" }) })).toEqual({
+      kind: "icon",
+      name: "laptop",
+    });
   });
 
   it("falls back to a server for older servers and before connect", () => {
     expect(
-      resolveEnvironmentMachineKind({
+      resolveEnvironmentIcon({
         environment: descriptor({}),
         settings: decodeSettings({}),
       }),
-    ).toBe("server");
-    expect(resolveEnvironmentMachineKind(null)).toBe("server");
+    ).toEqual({ kind: "icon", name: "server" });
+    expect(resolveEnvironmentIcon(null)).toEqual({ kind: "icon", name: "server" });
   });
 
-  it("drops a machine kind this build does not know instead of failing the descriptor", () => {
-    const parsed = descriptor({ machine: "toaster" });
-
-    expect(parsed.platform.machine).toBeUndefined();
+  it("hands back one reference per plain kind so memoized rows can skip", () => {
+    const detected = resolveEnvironmentIcon({ environment: descriptor({ machine: "laptop" }) });
+    expect(detected).toBe(environmentIconForMachineKind("laptop"));
+    // A pick decoded from a fresh settings snapshot still lands on that reference.
     expect(
-      resolveEnvironmentMachineKind({ environment: parsed, settings: decodeSettings({}) }),
-    ).toBe("server");
+      resolveEnvironmentIcon({
+        environment: descriptor({}),
+        settings: decodeSettings({ environmentIcon: { kind: "icon", name: "laptop" } }),
+      }),
+    ).toBe(detected);
+    expect(resolveEnvironmentIcon(null)).toBe(environmentIconForMachineKind("server"));
   });
 });

@@ -34,8 +34,9 @@ import {
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 import {
-  resolveEnvironmentMachineKind,
-  type EnvironmentMachineKind,
+  environmentIconForMachineKind,
+  resolveEnvironmentIcon,
+  type EnvironmentIcon,
   type ProjectIconOverride,
   type ScopedThreadRef,
   type ThreadId,
@@ -331,7 +332,7 @@ function SidebarThreadTooltip({
   project: ProjectFaviconProject | null;
   projectDisplayName: string | null;
   environmentLabel: string | null;
-  environmentMachine: EnvironmentMachineKind;
+  environmentMachine: EnvironmentIcon;
   providerEntry: ProviderInstanceEntry | null;
   showInstanceBadge: boolean;
   modelInstanceId: string;
@@ -362,7 +363,7 @@ function SidebarThreadTooltip({
           {environmentLabel ? (
             <div className="flex min-w-0 items-center gap-2">
               <EnvironmentMachineIcon
-                kind={environmentMachine}
+                icon={environmentMachine}
                 className="size-3 shrink-0 stroke-muted-foreground"
               />
               <div className="min-w-0 truncate text-foreground/75">{environmentLabel}</div>
@@ -988,7 +989,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   jumpLabel: string | null;
   currentEnvironmentId: string | null;
   environmentLabel: string | null;
-  environmentMachine: EnvironmentMachineKind;
+  environmentMachine: EnvironmentIcon;
   project: EnvironmentProject | null;
   projectDisplayName: string | null;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
@@ -1947,7 +1948,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
                     <EnvironmentMachineIcon
                       aria-hidden
-                      kind={props.environmentMachine}
+                      icon={props.environmentMachine}
                       className="size-3.5"
                     />
                   </span>
@@ -1994,7 +1995,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   project: EnvironmentProject | null;
   projectDisplayName: string | null;
   environmentLabel: string | null;
-  environmentMachine: EnvironmentMachineKind;
+  environmentMachine: EnvironmentIcon;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   isHighlighted: boolean;
   isRouteActive: boolean;
@@ -2276,10 +2277,7 @@ export default function Sidebar() {
       new Map(
         environments.map(
           (environment) =>
-            [
-              environment.environmentId,
-              resolveEnvironmentMachineKind(environment.serverConfig),
-            ] as const,
+            [environment.environmentId, resolveEnvironmentIcon(environment.serverConfig)] as const,
         ),
       ),
     [environments],
@@ -4604,7 +4602,8 @@ export default function Sidebar() {
                         }
                         environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}
                         environmentMachine={
-                          environmentMachineById.get(thread.environmentId) ?? "server"
+                          environmentMachineById.get(thread.environmentId) ??
+                          environmentIconForMachineKind("server")
                         }
                         providerEntryByInstanceId={
                           providerEntriesByEnvironment.get(thread.environmentId) ??
@@ -4742,7 +4741,8 @@ export default function Sidebar() {
                               environmentLabelById.get(thread.environmentId) ?? null
                             }
                             environmentMachine={
-                              environmentMachineById.get(thread.environmentId) ?? "server"
+                              environmentMachineById.get(thread.environmentId) ??
+                              environmentIconForMachineKind("server")
                             }
                             project={
                               projectByKey.get(`${thread.environmentId}:${thread.projectId}`) ??

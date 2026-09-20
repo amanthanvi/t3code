@@ -1,4 +1,8 @@
-import type { EnvironmentMachineKind } from "@t3tools/contracts";
+import {
+  isEnvironmentMachineKind,
+  type EnvironmentIcon,
+  type EnvironmentMachineKind,
+} from "@t3tools/contracts";
 import { SymbolView, type AppSymbolName } from "./AppSymbol";
 
 const SYMBOL_BY_KIND: Record<EnvironmentMachineKind, AppSymbolName> = {
@@ -21,16 +25,24 @@ export const ENVIRONMENT_MACHINE_KIND_LABELS: Record<EnvironmentMachineKind, str
   "mac-studio": "Workstation",
 };
 
-/** The glyph an environment wears in lists; SF Symbols on iOS, Tabler on Android. */
+/**
+ * The glyph an environment wears in lists; SF Symbols on iOS, Tabler on
+ * Android. A name this build cannot draw (picked on a newer client) gets the
+ * generic server so the row still reads as a machine.
+ */
 export function EnvironmentMachineSymbol(props: {
-  readonly kind: EnvironmentMachineKind;
+  readonly icon: EnvironmentIcon;
   readonly size: number;
   readonly tintColorClassName: string;
 }) {
+  const kind =
+    props.icon.kind === "icon" && isEnvironmentMachineKind(props.icon.name)
+      ? props.icon.name
+      : "server";
   return (
     <SymbolView
-      accessibilityLabel={ENVIRONMENT_MACHINE_KIND_LABELS[props.kind]}
-      name={SYMBOL_BY_KIND[props.kind]}
+      accessibilityLabel={ENVIRONMENT_MACHINE_KIND_LABELS[kind]}
+      name={SYMBOL_BY_KIND[kind]}
       size={props.size}
       tintColorClassName={props.tintColorClassName}
       type="monochrome"

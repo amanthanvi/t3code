@@ -12,7 +12,8 @@ import {
   type PullRequestListEntry,
   type PullRequestUpdateMethod,
   type PullRequestRef,
-  resolveEnvironmentMachineKind,
+  environmentIconForMachineKind,
+  resolveEnvironmentIcon,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -303,7 +304,7 @@ function ActOnEnvironmentPicker({
                 need their own row to share a line. */}
             <span className="flex min-w-0 items-center gap-2">
               <EnvironmentMachineIcon
-                kind={environment.machine ?? "server"}
+                icon={environment.machine ?? environmentIconForMachineKind("server")}
                 className="size-3.5 shrink-0"
               />
               <span className="truncate">{environment.label}</span>
@@ -930,7 +931,7 @@ export function PullRequestDetailPanel({
             environments.map((environment) => ({
               environmentId: environment.environmentId,
               label: environment.label,
-              machine: resolveEnvironmentMachineKind(environment.serverConfig),
+              machine: resolveEnvironmentIcon(environment.serverConfig),
             })),
           )
         : [],

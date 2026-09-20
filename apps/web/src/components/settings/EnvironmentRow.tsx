@@ -1,4 +1,4 @@
-import type { DesktopSshEnvironmentTarget, EnvironmentMachineKind } from "@t3tools/contracts";
+import type { DesktopSshEnvironmentTarget, EnvironmentIcon } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import type { ReactNode } from "react";
 
@@ -45,7 +45,7 @@ export function EnvironmentRow({
   className,
   children,
 }: {
-  readonly kind: EnvironmentMachineKind;
+  readonly kind: EnvironmentIcon;
   readonly label: string;
   readonly subtitle: ReactNode;
   /** Extra content under the subtitle, such as update progress. */
@@ -62,7 +62,7 @@ export function EnvironmentRow({
         className,
       )}
     >
-      <EnvironmentMachineIcon aria-hidden kind={kind} className="size-4 text-muted-foreground" />
+      <EnvironmentMachineIcon aria-hidden icon={kind} className="size-4 text-muted-foreground" />
       <div className="min-w-0">
         <p className="truncate text-sm font-medium text-foreground">{label}</p>
         <div className="truncate text-xs text-muted-foreground">{subtitle}</div>

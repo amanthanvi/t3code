@@ -11,7 +11,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-search";
 import {
   type EnvironmentId,
-  resolveEnvironmentMachineKind,
+  resolveEnvironmentIcon,
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -506,8 +506,7 @@ export function HomeScreen(props: HomeScreenProps) {
     () =>
       new Map(
         [...serverConfigs].map(
-          ([environmentId, config]) =>
-            [environmentId, resolveEnvironmentMachineKind(config)] as const,
+          ([environmentId, config]) => [environmentId, resolveEnvironmentIcon(config)] as const,
         ),
       ),
     [serverConfigs],

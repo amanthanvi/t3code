@@ -39,7 +39,8 @@ import {
   type DesktopServerExposureState,
   type DesktopWslState,
   type EnvironmentId,
-  resolveEnvironmentMachineKind,
+  environmentIconForMachineKind,
+  resolveEnvironmentIcon,
 } from "@t3tools/contracts";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import {
@@ -1529,7 +1530,7 @@ function SavedBackendListRow({
   if (discoveredDescriptor !== undefined && discoveredDescriptor !== lastDescriptor) {
     setLastDescriptor(discoveredDescriptor);
   }
-  const machineKind = resolveEnvironmentMachineKind(
+  const machineKind = resolveEnvironmentIcon(
     environment.serverConfig ??
       (lastDescriptor === undefined ? null : { environment: lastDescriptor }),
   );
@@ -3271,10 +3272,10 @@ export function ConnectionsSettings() {
             icon={
               <EnvironmentMachineIcon
                 aria-hidden
-                kind={
+                icon={
                   primaryServerConfig
-                    ? resolveEnvironmentMachineKind(primaryServerConfig)
-                    : "desktop"
+                    ? resolveEnvironmentIcon(primaryServerConfig)
+                    : environmentIconForMachineKind("desktop")
                 }
                 className="size-4"
               />
