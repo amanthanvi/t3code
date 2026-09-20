@@ -39,8 +39,9 @@ export type ExecutionEnvironmentPlatformArch = typeof ExecutionEnvironmentPlatfo
  * The kinds a released server accepts as a bare string. Only these have that
  * wire form. A server without `environmentIconOverride` takes them and
  * nothing else, and an older client decodes them from a snapshot. A kind
- * added later travels as the object, because an older peer decodes a string
- * it does not know as null and loses the icon. The list is frozen.
+ * added later, such as `container`, travels as the object, because an older
+ * peer decodes a string it does not know as null and loses the icon. The
+ * list is frozen.
  *
  * `linux` joined the set a few days after the `environmentIcon` capability
  * shipped, so some nightly builds advertise the capability and reject it. No
@@ -65,7 +66,10 @@ export const isLegacyEnvironmentMachineKind = Schema.is(
  * the `environmentIcon` server setting lets a user pick one instead. This list
  * grows as detection improves, which is why the wire form above does not.
  */
-export const ENVIRONMENT_MACHINE_KINDS = [...LEGACY_ENVIRONMENT_MACHINE_KINDS] as const;
+export const ENVIRONMENT_MACHINE_KINDS = [
+  ...LEGACY_ENVIRONMENT_MACHINE_KINDS,
+  "container",
+] as const;
 export const EnvironmentMachineKind = Schema.Literals(ENVIRONMENT_MACHINE_KINDS);
 export type EnvironmentMachineKind = typeof EnvironmentMachineKind.Type;
 export const isEnvironmentMachineKind = Schema.is(EnvironmentMachineKind);
@@ -82,7 +86,6 @@ export const ENVIRONMENT_CURATED_ICON_IDS = [
   ...ENVIRONMENT_MACHINE_KINDS,
   "terminal",
   "database",
-  "container",
   "globe",
   "home",
   "gpu",

@@ -1,7 +1,8 @@
 import {
   ENVIRONMENT_LUCIDE_ICON_IDS,
   environmentIconForCuratedId,
-  isEnvironmentMachineKind,
+  IconImageDataUrl,
+  isLegacyEnvironmentMachineKind,
   isMonogramLength,
   MonogramText,
   type EnvironmentCuratedIconId,
@@ -16,6 +17,7 @@ import * as Schema from "effect/Schema";
 import { firstEmoji } from "../../iconEmoji";
 
 const isMonogramText = Schema.is(MonogramText);
+const isIconImageDataUrl = Schema.is(IconImageDataUrl);
 
 /**
  * Why the picker is inert, in the order the user can do something about it.
@@ -46,7 +48,7 @@ export function resolveEnvironmentIconChoiceLock(input: {
   readonly serverConfig: ServerConfig | null;
   readonly id: EnvironmentCuratedIconId;
 }): string | null {
-  if (isEnvironmentMachineKind(input.id)) return null;
+  if (isLegacyEnvironmentMachineKind(input.id)) return null;
   return resolveEnvironmentRichIconLock(input.serverConfig);
 }
 
@@ -69,7 +71,7 @@ function resolveNamedIconWrite(input: {
   return input.next === input.detected ? null : environmentIconForCuratedId(input.next);
 }
 
-export type EnvironmentIconDialogMode = "icon" | "emoji" | "monogram";
+export type EnvironmentIconDialogMode = "icon" | "emoji" | "monogram" | "image";
 
 export type EnvironmentIconDialogWrite =
   | { readonly kind: "write"; readonly icon: EnvironmentIcon | null }
@@ -94,6 +96,8 @@ export function resolveEnvironmentIconDialogWrite(input: {
   readonly color: IconColor | null;
   readonly emoji: string;
   readonly monogram: string;
+  /** Already downscaled and validated by the encoder; null until a file is chosen. */
+  readonly imageDataUrl?: string | null;
   readonly detected: EnvironmentMachineKind;
 }): EnvironmentIconDialogWrite {
   switch (input.mode) {
@@ -117,6 +121,12 @@ export function resolveEnvironmentIconDialogWrite(input: {
       return firstEmoji(input.emoji) === input.emoji
         ? { kind: "write", icon: { kind: "emoji", emoji: input.emoji } }
         : { kind: "invalid", reason: "Pick an emoji." };
+    case "image": {
+      const dataUrl = input.imageDataUrl ?? null;
+      return dataUrl !== null && isIconImageDataUrl(dataUrl)
+        ? { kind: "write", icon: { kind: "image", dataUrl } }
+        : { kind: "invalid", reason: "Choose an image." };
+    }
     case "monogram": {
       const text = normalizeMonogram(input.monogram);
       if (!isMonogramText(text) || !isMonogramLength(text)) {

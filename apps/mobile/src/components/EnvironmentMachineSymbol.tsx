@@ -5,6 +5,7 @@ import {
   type EnvironmentCuratedIconId,
   type EnvironmentIcon,
 } from "@t3tools/contracts";
+import { Image } from "expo-image";
 
 import { projectIconColorClassNames } from "../lib/projectIcon";
 import { SymbolView, type AppSymbolName } from "./AppSymbol";
@@ -64,6 +65,17 @@ export function EnvironmentMachineSymbol(props: {
   const { icon, size } = props;
   if (icon.kind === "emoji") {
     return <ProjectIconGlyphView glyph={icon} size={size} />;
+  }
+  if (icon.kind === "image") {
+    // Inline bytes need no disk cache, and the URL itself is the cache key.
+    return (
+      <Image
+        source={{ uri: icon.dataUrl }}
+        cachePolicy="memory"
+        contentFit="cover"
+        style={{ width: size, height: size, borderRadius: size * 0.25 }}
+      />
+    );
   }
   if (icon.kind === "monogram") {
     return (
