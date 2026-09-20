@@ -136,6 +136,18 @@ export function EnvironmentMachineIcon({
   if (icon.kind === "monogram") {
     return <ProjectMonogram text={icon.text} color={icon.color ?? "gray"} className={className} />;
   }
+  if (icon.kind === "image") {
+    // The data URL is self-contained; nothing loads, so no fallback state.
+    return (
+      <img
+        aria-hidden="true"
+        {...props}
+        src={icon.dataUrl}
+        alt=""
+        className={cn("size-4 shrink-0 rounded-[25%] object-cover", className)}
+      />
+    );
+  }
   const color = icon.kind === "icon" && icon.color !== undefined ? icon.color : undefined;
   const coloredClassName =
     color === undefined ? className : cn(className, projectIconColorClassName(color));

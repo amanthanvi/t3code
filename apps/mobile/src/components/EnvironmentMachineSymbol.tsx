@@ -5,6 +5,7 @@ import {
   type EnvironmentCuratedIconId,
   type EnvironmentIcon,
 } from "@t3tools/contracts";
+import { Image } from "expo-image";
 import { Platform, Text, View } from "react-native";
 
 import { cn } from "../lib/cn";
@@ -63,6 +64,17 @@ export function EnvironmentMachineSymbol(props: {
       >
         {icon.emoji}
       </Text>
+    );
+  }
+  if (icon.kind === "image") {
+    // Inline bytes need no disk cache, and the URL itself is the cache key.
+    return (
+      <Image
+        source={{ uri: icon.dataUrl }}
+        cachePolicy="memory"
+        contentFit="cover"
+        style={{ width: size, height: size, borderRadius: size * 0.25 }}
+      />
     );
   }
   if (icon.kind === "monogram") {
