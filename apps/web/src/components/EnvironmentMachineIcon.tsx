@@ -1,9 +1,22 @@
 import {
-  isEnvironmentMachineKind,
+  isEnvironmentCuratedIconId,
+  type EnvironmentCuratedIconId,
   type EnvironmentIcon,
-  type EnvironmentMachineKind,
 } from "@t3tools/contracts";
-import { CloudIcon, LaptopIcon, MonitorIcon, ServerIcon, type LucideProps } from "lucide-react";
+import {
+  BrainIcon,
+  CloudIcon,
+  ContainerIcon,
+  DatabaseIcon,
+  GlobeIcon,
+  HouseIcon,
+  LaptopIcon,
+  MonitorIcon,
+  NetworkIcon,
+  ServerIcon,
+  TerminalIcon,
+  type LucideProps,
+} from "lucide-react";
 import type { FunctionComponent, SVGProps } from "react";
 import { LinuxIcon } from "./Icons";
 
@@ -47,7 +60,7 @@ function MacStudioIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-const ICON_BY_KIND: Record<EnvironmentMachineKind, FunctionComponent<LucideProps>> = {
+const ICON_BY_ID: Record<EnvironmentCuratedIconId, FunctionComponent<LucideProps>> = {
   server: ServerIcon,
   cloud: CloudIcon,
   linux: LinuxIcon,
@@ -55,9 +68,16 @@ const ICON_BY_KIND: Record<EnvironmentMachineKind, FunctionComponent<LucideProps
   laptop: LaptopIcon,
   "mac-mini": MacMiniIcon,
   "mac-studio": MacStudioIcon,
+  terminal: TerminalIcon,
+  database: DatabaseIcon,
+  container: ContainerIcon,
+  globe: GlobeIcon,
+  home: HouseIcon,
+  gpu: BrainIcon,
+  network: NetworkIcon,
 };
 
-export const ENVIRONMENT_MACHINE_KIND_LABELS: Record<EnvironmentMachineKind, string> = {
+export const ENVIRONMENT_ICON_LABELS: Record<EnvironmentCuratedIconId, string> = {
   server: "Server",
   cloud: "Cloud VM",
   linux: "Linux/WSL",
@@ -65,22 +85,32 @@ export const ENVIRONMENT_MACHINE_KIND_LABELS: Record<EnvironmentMachineKind, str
   laptop: "Laptop",
   "mac-mini": "Mini PC",
   "mac-studio": "Workstation",
+  terminal: "Dev box",
+  database: "Database",
+  container: "Container",
+  globe: "Edge",
+  home: "Home server",
+  gpu: "GPU box",
+  network: "Network",
 };
 
 /**
- * The glyph for a named icon. A name this build cannot draw (picked on a
- * newer client) gets the generic server so the row still reads as a machine.
+ * Which curated glyph draws a named icon. A name this build cannot draw
+ * (picked on a newer client) gets the generic server so the row still reads
+ * as a machine.
  */
+function curatedIconId(icon: EnvironmentIcon): EnvironmentCuratedIconId {
+  return icon.kind === "icon" && isEnvironmentCuratedIconId(icon.name) ? icon.name : "server";
+}
+
 export function environmentMachineIcon(icon: EnvironmentIcon): FunctionComponent<LucideProps> {
-  return icon.kind === "icon" && isEnvironmentMachineKind(icon.name)
-    ? ICON_BY_KIND[icon.name]
-    : ICON_BY_KIND.server;
+  return ICON_BY_ID[curatedIconId(icon)];
 }
 
 export function EnvironmentMachineIcon({
   icon,
   ...props
 }: LucideProps & { readonly icon: EnvironmentIcon }) {
-  const Icon = environmentMachineIcon(icon);
+  const Icon = ICON_BY_ID[curatedIconId(icon)];
   return <Icon {...props} />;
 }

@@ -1,11 +1,20 @@
-import type { ServerConfig } from "@t3tools/contracts";
+import { environmentIconForMachineKind, type ServerConfig } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveEnvironmentIconPickerLock } from "./EnvironmentIconPicker";
+import {
+  resolveEnvironmentIconChoiceLock,
+  resolveEnvironmentIconPickerLock,
+  resolveEnvironmentIconWrite,
+} from "./EnvironmentIconPicker";
 
-const config = (environmentIcon: boolean | undefined) =>
+const config = (environmentIcon: boolean | undefined, environmentIconOverride?: boolean) =>
   ({
-    environment: { capabilities: environmentIcon === undefined ? {} : { environmentIcon } },
+    environment: {
+      capabilities: {
+        ...(environmentIcon === undefined ? {} : { environmentIcon }),
+        ...(environmentIconOverride === undefined ? {} : { environmentIconOverride }),
+      },
+    },
   }) as unknown as ServerConfig;
 
 describe("resolveEnvironmentIconPickerLock", () => {
@@ -36,6 +45,43 @@ describe("resolveEnvironmentIconPickerLock", () => {
     ).toBeNull();
     expect(
       resolveEnvironmentIconPickerLock({ serverConfig: config(true), operateAccess: "granted" }),
+    ).toBeNull();
+  });
+});
+
+describe("resolveEnvironmentIconWrite", () => {
+  it("clears the override when the pick matches detection", () => {
+    expect(resolveEnvironmentIconWrite({ next: "laptop", detected: "laptop" })).toBeNull();
+  });
+
+  it("writes a machine kind as its shared reference", () => {
+    expect(resolveEnvironmentIconWrite({ next: "laptop", detected: "server" })).toBe(
+      environmentIconForMachineKind("laptop"),
+    );
+  });
+
+  it("writes a role as a named icon", () => {
+    expect(resolveEnvironmentIconWrite({ next: "database", detected: "server" })).toEqual({
+      kind: "icon",
+      name: "database",
+    });
+  });
+});
+
+describe("resolveEnvironmentIconChoiceLock", () => {
+  it("never locks a machine kind, which every server stores as a string", () => {
+    expect(
+      resolveEnvironmentIconChoiceLock({ serverConfig: config(true), id: "laptop" }),
+    ).toBeNull();
+    expect(resolveEnvironmentIconChoiceLock({ serverConfig: null, id: "laptop" })).toBeNull();
+  });
+
+  it("locks a role until the server stores the object form", () => {
+    expect(
+      resolveEnvironmentIconChoiceLock({ serverConfig: config(true), id: "database" }),
+    ).toMatch(/Update/);
+    expect(
+      resolveEnvironmentIconChoiceLock({ serverConfig: config(true, true), id: "database" }),
     ).toBeNull();
   });
 });
