@@ -1,12 +1,14 @@
 import {
   ENVIRONMENT_ICON_LABELS,
   isEnvironmentCuratedIconId,
+  isEnvironmentLucideIconId,
   type EnvironmentCuratedIconId,
   type EnvironmentIcon,
 } from "@t3tools/contracts";
 
 import { projectIconColorClassNames } from "../lib/projectIcon";
 import { SymbolView, type AppSymbolName } from "./AppSymbol";
+import { EnvironmentLucideIcon } from "./EnvironmentLucideIcon";
 import { ProjectIconGlyphView } from "./ProjectFavicon";
 
 // Every SF name here is already a key of the Android fallback map, so a new
@@ -71,17 +73,31 @@ export function EnvironmentMachineSymbol(props: {
       />
     );
   }
+  const tintColorClassName =
+    icon.kind === "icon" && icon.color !== undefined
+      ? projectIconColorClassNames(icon.color).tint
+      : props.tintColorClassName;
+  // Curated first, then the shared Lucide list; the generated module holds
+  // path data for exactly those ids, so anything else is the generic server.
+  if (icon.kind === "icon" && !isEnvironmentCuratedIconId(icon.name)) {
+    if (isEnvironmentLucideIconId(icon.name)) {
+      return (
+        <EnvironmentLucideIcon
+          id={icon.name}
+          size={size}
+          colorClassName={tintColorClassName}
+          accessibilityLabel={icon.name.replaceAll("-", " ")}
+        />
+      );
+    }
+  }
   const id = symbolId(icon);
   return (
     <SymbolView
       accessibilityLabel={ENVIRONMENT_ICON_LABELS[id]}
       name={SYMBOL_BY_ID[id]}
       size={size}
-      tintColorClassName={
-        icon.kind === "icon" && icon.color !== undefined
-          ? projectIconColorClassNames(icon.color).tint
-          : props.tintColorClassName
-      }
+      tintColorClassName={tintColorClassName}
       type="monochrome"
     />
   );

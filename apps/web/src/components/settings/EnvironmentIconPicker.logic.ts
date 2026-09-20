@@ -5,6 +5,7 @@ import {
   MonogramText,
   type EnvironmentCuratedIconId,
   type EnvironmentIcon,
+  type EnvironmentLucideIconId,
   type EnvironmentMachineKind,
   type IconColor,
   type ServerConfig,
@@ -87,13 +88,25 @@ function normalizeMonogram(value: string): string {
 export function resolveEnvironmentIconDialogWrite(input: {
   readonly mode: EnvironmentIconDialogMode;
   readonly iconId: EnvironmentCuratedIconId;
+  /** A pick from the shared Lucide list, which takes precedence over `iconId`. */
+  readonly lucideId?: EnvironmentLucideIconId | null;
   readonly color: IconColor | null;
   readonly emoji: string;
   readonly monogram: string;
   readonly detected: EnvironmentMachineKind;
 }): EnvironmentIconDialogWrite {
   switch (input.mode) {
-    case "icon":
+    case "icon": {
+      const lucideId = input.lucideId ?? null;
+      if (lucideId !== null) {
+        return {
+          kind: "write",
+          icon:
+            input.color === null
+              ? { kind: "icon", name: lucideId }
+              : { kind: "icon", name: lucideId, color: input.color },
+        };
+      }
       return {
         kind: "write",
         icon:
@@ -101,6 +114,7 @@ export function resolveEnvironmentIconDialogWrite(input: {
             ? resolveNamedIconWrite({ next: input.iconId, detected: input.detected })
             : { kind: "icon", name: input.iconId, color: input.color },
       };
+    }
     case "emoji":
       return firstEmoji(input.emoji) === input.emoji
         ? { kind: "write", icon: { kind: "emoji", emoji: input.emoji } }
