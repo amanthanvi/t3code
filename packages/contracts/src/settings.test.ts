@@ -962,21 +962,75 @@ describe("ServerSettings environment icon", () => {
     expect(decodeServerSettings({}).environmentIcon).toBeNull();
   });
 
-  it("keeps a kind this build knows", () => {
-    expect(decodeServerSettings({ environmentIcon: "mac-mini" }).environmentIcon).toBe("mac-mini");
-    expect(decodeServerSettings({ environmentIcon: "linux" }).environmentIcon).toBe("linux");
+  it("lifts the bare machine kind an older server stored into the icon variant", () => {
+    expect(decodeServerSettings({ environmentIcon: "mac-mini" }).environmentIcon).toEqual({
+      kind: "icon",
+      name: "mac-mini",
+    });
   });
 
-  it("decodes a kind from a newer server as null instead of failing the snapshot", () => {
+  it("round-trips every variant", () => {
+    for (const environmentIcon of [
+      { kind: "icon", name: "cpu", color: "violet" },
+      { kind: "emoji", emoji: "🚀" },
+      { kind: "monogram", text: "K8", color: "teal" },
+      { kind: "image", dataUrl: "data:image/png;base64,iVBORw==" },
+    ] as const) {
+      const settings = decodeServerSettings({ environmentIcon });
+      expect(settings.environmentIcon).toEqual(environmentIcon);
+      expect(encodeServerSettings(settings).environmentIcon).toEqual(environmentIcon);
+    }
+  });
+
+  it("encodes a plain pick of a legacy kind as the string older peers accept", () => {
+    const plain = decodeServerSettings({ environmentIcon: { kind: "icon", name: "laptop" } });
+    expect(encodeServerSettings(plain).environmentIcon).toBe("laptop");
+
+    // A color is more than the string form can carry, so it stays an object.
+    const colored = decodeServerSettings({
+      environmentIcon: { kind: "icon", name: "laptop", color: "red" },
+    });
+    expect(encodeServerSettings(colored).environmentIcon).toEqual({
+      kind: "icon",
+      name: "laptop",
+      color: "red",
+    });
+  });
+
+  it("decodes an icon from a newer server as null instead of failing the snapshot", () => {
     expect(decodeServerSettings({ environmentIcon: "toaster" }).environmentIcon).toBeNull();
+    expect(
+      decodeServerSettings({ environmentIcon: { kind: "hologram", frames: 3 } }).environmentIcon,
+    ).toBeNull();
+
+    // One bad field drops the whole icon; every other setting survives.
+    const settings = decodeServerSettings({
+      environmentIcon: { kind: "image", dataUrl: "data:image/svg+xml;base64,PHN2Zz4=" },
+      addProjectBaseDirectory: "~/Development",
+    });
+    expect(settings.environmentIcon).toBeNull();
+    expect(settings.addProjectBaseDirectory).toBe("~/Development");
   });
 
-  it("round-trips through encode", () => {
-    const settings = decodeServerSettings({ environmentIcon: "laptop" });
-    expect(encodeServerSettings(settings).environmentIcon).toBe("laptop");
+  it("holds a monogram to two characters at the write boundary", () => {
+    expect(() =>
+      decodeServerSettingsPatch({ environmentIcon: { kind: "monogram", text: "ABC" } }),
+    ).toThrow();
+    expect(
+      decodeServerSettingsPatch({ environmentIcon: { kind: "monogram", text: "e\u0301K" } })
+        .environmentIcon,
+    ).toEqual({ kind: "monogram", text: "e\u0301K" });
+  });
 
-    const linuxSettings = decodeServerSettings({ environmentIcon: "linux" });
-    expect(encodeServerSettings(linuxSettings).environmentIcon).toBe("linux");
+  it("rejects a patch carrying a variant this build does not know", () => {
+    expect(() =>
+      decodeServerSettingsPatch({ environmentIcon: { kind: "hologram", frames: 3 } }),
+    ).toThrow();
+    expect(decodeServerSettingsPatch({ environmentIcon: null }).environmentIcon).toBeNull();
+    expect(decodeServerSettingsPatch({ environmentIcon: "linux" }).environmentIcon).toEqual({
+      kind: "icon",
+      name: "linux",
+    });
   });
 });
 
