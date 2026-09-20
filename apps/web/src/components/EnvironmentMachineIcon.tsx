@@ -18,7 +18,10 @@ import {
   type LucideProps,
 } from "lucide-react";
 import type { FunctionComponent, SVGProps } from "react";
+import { cn } from "~/lib/utils";
+import { projectIconColorClassName } from "../projectIconColors";
 import { LinuxIcon } from "./Icons";
+import { ProjectMonogram } from "./ProjectMonogram";
 
 // Lucide has no Apple desktops, so these two are drawn to its grammar (24
 // unit grid, 2 unit stroke, round joins) and share its prop surface so callers
@@ -86,14 +89,87 @@ function curatedIconId(icon: EnvironmentIcon): EnvironmentCuratedIconId {
   return icon.kind === "icon" && isEnvironmentCuratedIconId(icon.name) ? icon.name : "server";
 }
 
-export function environmentMachineIcon(icon: EnvironmentIcon): FunctionComponent<LucideProps> {
-  return ICON_BY_ID[curatedIconId(icon)];
+export interface EnvironmentMachineIconProps {
+  readonly className?: string | undefined;
+  readonly "aria-hidden"?: boolean | "true" | "false" | undefined;
 }
 
+/**
+ * The glyph an environment wears. `className` sizes it and carries the
+ * caller's resting tint, and a chosen color is merged after that tint so it
+ * wins. Rows draw connection state beside the glyph (a dot, the subtitle, or
+ * dimming the whole row), never on it, so a red icon never reads as a failed
+ * one. Emoji and monograms carry a plain `size-4` so a caller's size always
+ * wins; a responsive base like the menu's `size-4.5 sm:size-4` would survive
+ * the merge as a separate variant and re-grow the icon at the breakpoint.
+ * Text-bearing variants are hidden from assistive technology like the svg
+ * ones are; the row's label already names the machine.
+ */
 export function EnvironmentMachineIcon({
   icon,
+  className,
   ...props
-}: LucideProps & { readonly icon: EnvironmentIcon }) {
+}: EnvironmentMachineIconProps & { readonly icon: EnvironmentIcon }) {
+  if (icon.kind === "emoji") {
+    return (
+      <span
+        aria-hidden="true"
+        {...props}
+        className={cn(
+          "inline-flex size-4 shrink-0 items-center justify-center leading-none [container-type:size]",
+          className,
+        )}
+      >
+        <span className="text-[length:80cqh] leading-none">{icon.emoji}</span>
+      </span>
+    );
+  }
+  if (icon.kind === "monogram") {
+    return <ProjectMonogram text={icon.text} color={icon.color ?? "gray"} className={className} />;
+  }
   const Icon = ICON_BY_ID[curatedIconId(icon)];
-  return <Icon {...props} />;
+  const color = icon.kind === "icon" && icon.color !== undefined ? icon.color : undefined;
+  return (
+    <Icon
+      {...props}
+      className={color === undefined ? className : cn(className, projectIconColorClassName(color))}
+    />
+  );
+}
+
+const COMPONENT_BY_KEY = new Map<string, FunctionComponent<EnvironmentMachineIconProps>>();
+
+/** A cache key for the variants that need a wrapper component; null for a plain curated glyph. */
+function iconComponentKey(icon: EnvironmentIcon): string | null {
+  switch (icon.kind) {
+    case "icon":
+      return icon.color === undefined ? null : `icon:${icon.name}:${icon.color}`;
+    case "emoji":
+      return `emoji:${icon.emoji}`;
+    case "monogram":
+      return `monogram:${icon.text}:${icon.color ?? ""}`;
+    case "image":
+      return null;
+  }
+}
+
+/**
+ * A component for slots that take one, such as filter menu options. Plain
+ * named icons are the Lucide component itself; anything richer is a wrapper
+ * cached by value, so an option list rebuilt each render keeps the same
+ * component identity and its subtree does not remount on every keystroke.
+ */
+export function environmentMachineIcon(
+  icon: EnvironmentIcon,
+): FunctionComponent<EnvironmentMachineIconProps> {
+  const key = iconComponentKey(icon);
+  if (key === null) return ICON_BY_ID[curatedIconId(icon)];
+  const cached = COMPONENT_BY_KEY.get(key);
+  if (cached !== undefined) return cached;
+  const Component: FunctionComponent<EnvironmentMachineIconProps> = (props) => (
+    <EnvironmentMachineIcon icon={icon} {...props} />
+  );
+  Component.displayName = `EnvironmentMachineIcon(${key})`;
+  COMPONENT_BY_KEY.set(key, Component);
+  return Component;
 }

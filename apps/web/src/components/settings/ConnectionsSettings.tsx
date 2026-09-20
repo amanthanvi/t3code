@@ -69,7 +69,7 @@ import {
 } from "./settingsLayout";
 import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
 import { searchableSetting } from "./settingsSearch";
-import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
+import { EnvironmentIconMenuItem, EnvironmentIconPickerHost } from "./EnvironmentIconPicker";
 import {
   EnvironmentRow,
   environmentTransportLabel,
@@ -1486,6 +1486,7 @@ function SavedBackendListRow({
   const isConnected = environment.connection.phase === "connected";
   const isRemoving = removingEnvironmentId === environmentId;
   const errorTraceId = environment.connection.traceId;
+  const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const { copyToClipboard: copyTraceIdToClipboard } = useCopyToClipboard<{ traceId: string }>({
     target: "trace ID",
     onCopy: ({ traceId }) => {
@@ -1632,9 +1633,10 @@ function SavedBackendListRow({
           <EllipsisIcon className="size-3.5" />
         </MenuTrigger>
         <MenuPopup align="end">
-          <EnvironmentIconMenu
+          <EnvironmentIconMenuItem
             environmentId={environmentId}
             serverConfig={environment.serverConfig}
+            onOpen={() => setIconPickerOpen(true)}
           />
           {errorTraceId ? (
             <MenuItem onClick={() => copyTraceId(errorTraceId)}>Copy trace ID</MenuItem>
@@ -1645,6 +1647,13 @@ function SavedBackendListRow({
           </MenuItem>
         </MenuPopup>
       </Menu>
+      <EnvironmentIconPickerHost
+        environmentId={environmentId}
+        environmentLabel={environment.label}
+        serverConfig={environment.serverConfig}
+        open={iconPickerOpen}
+        onOpenChange={setIconPickerOpen}
+      />
     </EnvironmentRow>
   );
 }
@@ -1950,6 +1959,7 @@ export function ConnectionsSettings() {
   >(null);
   const [isRevokingOtherDesktopClients, setIsRevokingOtherDesktopClients] = useState(false);
   const [addBackendDialogOpen, setAddBackendDialogOpen] = useState(false);
+  const [primaryIconPickerOpen, setPrimaryIconPickerOpen] = useState(false);
   const [savedBackendMode, setSavedBackendMode] = useState<"remote" | "ssh">("remote");
   const [savedBackendHost, setSavedBackendHost] = useState("");
   const [savedBackendPairingCode, setSavedBackendPairingCode] = useState("");
@@ -3296,9 +3306,10 @@ export function ConnectionsSettings() {
                     <EllipsisIcon className="size-3.5" />
                   </MenuTrigger>
                   <MenuPopup align="end">
-                    <EnvironmentIconMenu
+                    <EnvironmentIconMenuItem
                       environmentId={primaryEnvironmentId}
                       serverConfig={primaryServerConfig}
+                      onOpen={() => setPrimaryIconPickerOpen(true)}
                     />
                   </MenuPopup>
                 </Menu>
@@ -3364,6 +3375,15 @@ export function ConnectionsSettings() {
               </>
             ) : null}
           </SettingsSection>
+          {primaryEnvironmentId !== null ? (
+            <EnvironmentIconPickerHost
+              environmentId={primaryEnvironmentId}
+              environmentLabel={primaryEnvironment?.label ?? "this machine"}
+              serverConfig={primaryServerConfig}
+              open={primaryIconPickerOpen}
+              onOpenChange={setPrimaryIconPickerOpen}
+            />
+          ) : null}
 
           {isLocalBackendRemotelyReachable ? (
             <FoldedSettingsSection
