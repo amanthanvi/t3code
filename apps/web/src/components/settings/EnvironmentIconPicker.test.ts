@@ -1,4 +1,8 @@
-import { environmentIconForMachineKind, type ServerConfig } from "@t3tools/contracts";
+import {
+  ENVIRONMENT_LUCIDE_ICON_IDS,
+  environmentIconForMachineKind,
+  type ServerConfig,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -6,6 +10,7 @@ import {
   resolveEnvironmentIconDialogWrite,
   resolveEnvironmentIconPickerLock,
 } from "./EnvironmentIconPicker.logic";
+import { filterEnvironmentLucideIconIds } from "./EnvironmentIconPickerDialog";
 
 const config = (environmentIcon: boolean | undefined, environmentIconOverride?: boolean) =>
   ({
@@ -91,6 +96,16 @@ describe("resolveEnvironmentIconDialogWrite", () => {
     ).toEqual({ kind: "write", icon: { kind: "icon", name: "database" } });
   });
 
+  it("prefers a pick from the shared Lucide list over the curated grid", () => {
+    expect(resolveEnvironmentIconDialogWrite({ ...base, mode: "icon", lucideId: "cpu" })).toEqual({
+      kind: "write",
+      icon: { kind: "icon", name: "cpu" },
+    });
+    expect(
+      resolveEnvironmentIconDialogWrite({ ...base, mode: "icon", lucideId: "cpu", color: "sky" }),
+    ).toEqual({ kind: "write", icon: { kind: "icon", name: "cpu", color: "sky" } });
+  });
+
   it("keeps a colored pick of the detected kind, since the color is the point", () => {
     expect(
       resolveEnvironmentIconDialogWrite({ ...base, mode: "icon", iconId: "server", color: "red" }),
@@ -125,5 +140,18 @@ describe("resolveEnvironmentIconDialogWrite", () => {
     expect(
       resolveEnvironmentIconDialogWrite({ ...base, mode: "monogram", monogram: "" }).kind,
     ).toBe("invalid");
+  });
+});
+
+describe("filterEnvironmentLucideIconIds", () => {
+  it("matches every word of the query against the id and keeps list order", () => {
+    expect(filterEnvironmentLucideIconIds("")).toBe(ENVIRONMENT_LUCIDE_ICON_IDS);
+    expect(filterEnvironmentLucideIconIds("server")).toEqual([
+      "server-cog",
+      "server-crash",
+      "server-off",
+    ]);
+    expect(filterEnvironmentLucideIconIds("  Cloud  down ")).toEqual(["cloud-download"]);
+    expect(filterEnvironmentLucideIconIds("nothing-like-this")).toEqual([]);
   });
 });

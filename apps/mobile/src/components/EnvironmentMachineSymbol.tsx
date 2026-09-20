@@ -1,6 +1,7 @@
 import {
   ENVIRONMENT_ICON_LABELS,
   isEnvironmentCuratedIconId,
+  isEnvironmentLucideIconId,
   type EnvironmentCuratedIconId,
   type EnvironmentIcon,
 } from "@t3tools/contracts";
@@ -9,6 +10,7 @@ import { Platform, Text, View } from "react-native";
 import { cn } from "../lib/cn";
 import { SymbolView, type AppSymbolName } from "./AppSymbol";
 import { ENVIRONMENT_ICON_COLOR_CLASSES } from "./environmentIconColors";
+import { EnvironmentLucideIcon } from "./EnvironmentLucideIcon";
 import { monogramCharacters } from "./environmentMonogram";
 
 // Every SF name here is already a key of the Android fallback map, so a new
@@ -88,11 +90,25 @@ export function EnvironmentMachineSymbol(props: {
       </View>
     );
   }
-  const id = icon.kind === "icon" && isEnvironmentCuratedIconId(icon.name) ? icon.name : "server";
   const tintColorClassName =
     icon.kind === "icon" && icon.color !== undefined
       ? ENVIRONMENT_ICON_COLOR_CLASSES[icon.color].tint
       : props.tintColorClassName;
+  // Curated first, then the shared Lucide list; the generated module holds
+  // path data for exactly those ids, so anything else is the generic server.
+  if (icon.kind === "icon" && !isEnvironmentCuratedIconId(icon.name)) {
+    if (isEnvironmentLucideIconId(icon.name)) {
+      return (
+        <EnvironmentLucideIcon
+          id={icon.name}
+          size={size}
+          colorClassName={tintColorClassName}
+          accessibilityLabel={icon.name.replaceAll("-", " ")}
+        />
+      );
+    }
+  }
+  const id = icon.kind === "icon" && isEnvironmentCuratedIconId(icon.name) ? icon.name : "server";
   return (
     <SymbolView
       accessibilityLabel={ENVIRONMENT_ICON_LABELS[id]}
