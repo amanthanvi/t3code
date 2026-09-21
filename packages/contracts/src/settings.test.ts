@@ -1032,6 +1032,27 @@ describe("ServerSettings environment icon", () => {
     ).toEqual({ kind: "monogram", text: "e\u0301K" });
   });
 
+  it("refuses an inline image whose base64 cannot decode", () => {
+    // A truncated upload is a run of base64 characters that stops mid-quartet.
+    // Nothing downstream decodes it, so this boundary is where it has to die,
+    // or every surface showing that environment draws a broken image instead.
+    for (const dataUrl of [
+      "data:image/png;base64,iVBORw",
+      "data:image/png;base64,iVBORw0KGgo",
+      "data:image/png;base64,",
+    ]) {
+      expect(() =>
+        decodeServerSettingsPatch({ environmentIcon: { kind: "image", dataUrl } }),
+      ).toThrow();
+    }
+
+    const whole = "data:image/png;base64,iVBORw0KGgo=";
+    expect(
+      decodeServerSettingsPatch({ environmentIcon: { kind: "image", dataUrl: whole } })
+        .environmentIcon,
+    ).toEqual({ kind: "image", dataUrl: whole });
+  });
+
   it("rejects a patch carrying a variant this build does not know", () => {
     expect(() =>
       decodeServerSettingsPatch({ environmentIcon: { kind: "hologram", frames: 3 } }),

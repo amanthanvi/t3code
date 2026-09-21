@@ -73,9 +73,15 @@ export const ICON_IMAGE_DATA_URL_MAX_LENGTH = 32_768;
  *
  * The bytes are never validated, so the prefix says nothing about frame count.
  * APNG declares `image/png` and animates.
+ *
+ * The pattern spells out whole base64 quartets rather than a run of characters
+ * and loose padding, so a truncated value is refused here instead of reaching a
+ * decoder and drawing as a broken image on every surface that shows it.
  */
 export const IconImageDataUrl = Schema.String.check(
   Schema.isMaxLength(ICON_IMAGE_DATA_URL_MAX_LENGTH),
-  Schema.isPattern(/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/),
+  Schema.isPattern(
+    /^data:image\/png;base64,(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{4}|[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{2}==)$/,
+  ),
 );
 export type IconImageDataUrl = typeof IconImageDataUrl.Type;
