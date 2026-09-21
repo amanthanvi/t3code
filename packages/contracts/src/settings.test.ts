@@ -1032,10 +1032,33 @@ describe("ServerSettings environment icon", () => {
     ).toEqual({ kind: "monogram", text: "e\u0301K" });
   });
 
+  it("counts a monogram the same way on a runtime without Intl.Segmenter", () => {
+    // Mobile runs Hermes, which may not ship Intl.Segmenter. The fallback
+    // counts code points, so it has to drop the combining marks and joiners
+    // MonogramText admits or it would refuse two-character monograms that
+    // every other client accepts.
+    const segmenter = Object.getOwnPropertyDescriptor(Intl, "Segmenter");
+    // @ts-expect-error removing an Intl member to exercise the fallback path
+    delete Intl.Segmenter;
+    try {
+      for (const text of ["e\u0301K", "A\u200dB", "A\u200cB", "AB"]) {
+        expect(
+          decodeServerSettingsPatch({ environmentIcon: { kind: "monogram", text } })
+            .environmentIcon,
+        ).toEqual({ kind: "monogram", text });
+      }
+      expect(() =>
+        decodeServerSettingsPatch({ environmentIcon: { kind: "monogram", text: "ABC" } }),
+      ).toThrow();
+    } finally {
+      if (segmenter) Object.defineProperty(Intl, "Segmenter", segmenter);
+    }
+  });
+
   it("refuses an inline image that is not whole base64 holding a PNG", () => {
-    // A truncated upload is a run of base64 characters that stops mid-quartet,
-    // and a mislabelled one decodes cleanly to something that is not a PNG.
-    // Neither reaches a decoder that would tell the user, so they die here.
+    // A truncated upload usually stops mid-quartet, and a mislabelled one
+    // decodes cleanly to something that is not a PNG. Neither reaches a
+    // decoder that would tell the user, so they die here.
     for (const dataUrl of [
       "data:image/png;base64,iVBORw0KGgo",
       "data:image/png;base64,iVBORw0KGgoAA",
