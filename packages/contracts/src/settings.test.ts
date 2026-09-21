@@ -976,7 +976,7 @@ describe("ServerSettings environment icon", () => {
       { kind: "icon", name: "cpu", color: "violet" },
       { kind: "emoji", emoji: "🚀" },
       { kind: "monogram", text: "K8", color: "teal" },
-      { kind: "image", dataUrl: "data:image/png;base64,iVBORw==" },
+      { kind: "image", dataUrl: "data:image/png;base64,iVBORw0KGgo=" },
     ] as const) {
       const settings = decodeServerSettings({ environmentIcon });
       expect(settings.environmentIcon).toEqual(environmentIcon);
@@ -1032,21 +1032,25 @@ describe("ServerSettings environment icon", () => {
     ).toEqual({ kind: "monogram", text: "e\u0301K" });
   });
 
-  it("refuses an inline image whose base64 cannot decode", () => {
-    // A truncated upload is a run of base64 characters that stops mid-quartet.
-    // Nothing downstream decodes it, so this boundary is where it has to die,
-    // or every surface showing that environment draws a broken image instead.
+  it("refuses an inline image that is not whole base64 holding a PNG", () => {
+    // A truncated upload is a run of base64 characters that stops mid-quartet,
+    // and a mislabelled one decodes cleanly to something that is not a PNG.
+    // Neither reaches a decoder that would tell the user, so they die here.
     for (const dataUrl of [
-      "data:image/png;base64,iVBORw",
       "data:image/png;base64,iVBORw0KGgo",
+      "data:image/png;base64,iVBORw0KGgoAA",
       "data:image/png;base64,",
+      // Whole base64, right declared type, and the bytes spell "Hello".
+      "data:image/png;base64,SGVsbG8=",
+      // Stops four bytes into the eight byte signature.
+      "data:image/png;base64,iVBORw==",
     ]) {
       expect(() =>
         decodeServerSettingsPatch({ environmentIcon: { kind: "image", dataUrl } }),
       ).toThrow();
     }
 
-    const whole = "data:image/png;base64,iVBORw0KGgo=";
+    const whole = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
     expect(
       decodeServerSettingsPatch({ environmentIcon: { kind: "image", dataUrl: whole } })
         .environmentIcon,
