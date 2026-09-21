@@ -62,7 +62,10 @@ export async function pickEnvironmentIconImage(): Promise<EnvironmentIconImageRe
       .renderAsync();
     try {
       const saved = await squared.saveAsync({ format: SaveFormat.PNG, base64: true });
-      const dataUrl = `data:image/png;base64,${saved.base64 ?? ""}`;
+      // `base64` is optional on the result type, and an empty payload would
+      // otherwise fail the schema and be reported as an image that is too big.
+      if (!saved.base64) return { ok: false, reason: "unreadable" };
+      const dataUrl = `data:image/png;base64,${saved.base64}`;
       // Incompressible noise at this edge encodes to about 22 KB against a 32 KB
       // cap, so the guard is for a future change to either number, not for input.
       return isIconImageDataUrl(dataUrl)
