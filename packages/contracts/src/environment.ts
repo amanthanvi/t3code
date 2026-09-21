@@ -69,11 +69,9 @@ const EnvironmentEmojiIcon = Schema.Struct({
   kind: Schema.Literal("emoji"),
   emoji: IconEmoji,
 });
-// Projects check the two-character bound in the decider; a settings patch has
-// no such boundary, so the environment schema holds it.
 const EnvironmentMonogramIcon = Schema.Struct({
   kind: Schema.Literal("monogram"),
-  text: MonogramText.check(Schema.makeFilter(isMonogramLength)),
+  text: MonogramText,
   color: Schema.optionalKey(IconColor),
 });
 /**
@@ -120,6 +118,21 @@ export const EnvironmentIconOverride = Schema.Union([EnvironmentMachineKind, Env
   ),
 );
 export type EnvironmentIconOverride = typeof EnvironmentIconOverride.Type;
+
+/**
+ * What a client may write. Projects check the two-character monogram bound in
+ * their decider; a settings patch has no such boundary, so it lives here.
+ *
+ * It stays off `EnvironmentIconOverride` because that schema also decodes
+ * snapshots, and grapheme counting differs by runtime: Hermes ships no
+ * `Intl.Segmenter`, so a monogram the server accepted can count longer on
+ * mobile. Checking it during decode would fail there, and
+ * `ForwardCompatibleNullable` would drop the stored icon to null on that
+ * client alone.
+ */
+export const EnvironmentIconOverrideWrite = EnvironmentIconOverride.check(
+  Schema.makeFilter((icon) => icon.kind !== "monogram" || isMonogramLength(icon.text)),
+);
 
 export const ExecutionEnvironmentPlatform = Schema.Struct({
   os: ExecutionEnvironmentPlatformOs,

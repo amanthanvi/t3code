@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
+import { ENVIRONMENT_MACHINE_KINDS } from "./environment.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import {
   ClientSettingsSchema,
@@ -18,6 +19,7 @@ const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
+const encodeServerSettingsPatch = Schema.encodeSync(ServerSettingsPatch);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
 describe("storage cleanup settings", () => {
@@ -1031,6 +1033,56 @@ describe("ServerSettings environment icon", () => {
       kind: "icon",
       name: "linux",
     });
+  });
+
+  it("accepts a stored monogram the write boundary would reject", () => {
+    // Grapheme counting differs by runtime, so a monogram one client wrote can
+    // count longer on another. Only the write boundary counts; a snapshot
+    // decodes as stored, or that client would draw the detected glyph instead.
+    expect(
+      decodeServerSettings({ environmentIcon: { kind: "monogram", text: "ABC" } }).environmentIcon,
+    ).toEqual({ kind: "monogram", text: "ABC" });
+    expect(() =>
+      decodeServerSettingsPatch({ environmentIcon: { kind: "monogram", text: "ABC" } }),
+    ).toThrow();
+  });
+
+  it("writes a plain pick of a legacy kind as the string an older server accepts", () => {
+    // Written out rather than read from `ENVIRONMENT_MACHINE_KINDS`: these are
+    // the kinds an older server accepts, so the list is frozen and must not
+    // follow a later build that detects something new.
+    const legacyKinds = [
+      "server",
+      "cloud",
+      "linux",
+      "desktop",
+      "laptop",
+      "mac-mini",
+      "mac-studio",
+    ] as const;
+    expect(ENVIRONMENT_MACHINE_KINDS).toEqual(expect.arrayContaining([...legacyKinds]));
+
+    for (const kind of legacyKinds) {
+      expect(encodeServerSettingsPatch({ environmentIcon: { kind: "icon", name: kind } })).toEqual({
+        environmentIcon: kind,
+      });
+    }
+
+    // Anything an older server would reject stays an object for the capability to gate.
+    expect(
+      encodeServerSettingsPatch({
+        environmentIcon: { kind: "icon", name: "laptop", color: "red" },
+      }),
+    ).toEqual({ environmentIcon: { kind: "icon", name: "laptop", color: "red" } });
+    expect(encodeServerSettingsPatch({ environmentIcon: { kind: "icon", name: "cpu" } })).toEqual({
+      environmentIcon: { kind: "icon", name: "cpu" },
+    });
+    expect(
+      encodeServerSettingsPatch({ environmentIcon: { kind: "emoji", emoji: "\u{1f680}" } }),
+    ).toEqual({
+      environmentIcon: { kind: "emoji", emoji: "\u{1f680}" },
+    });
+    expect(encodeServerSettingsPatch({ environmentIcon: null })).toEqual({ environmentIcon: null });
   });
 });
 

@@ -12,7 +12,12 @@ import {
   TrimmedString,
 } from "./baseSchemas.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
-import { EnvironmentIconOverride, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
+import {
+  EnvironmentIconOverride,
+  EnvironmentIconOverrideWrite,
+  ThreadEnvMode,
+  WorktreeSubmodules,
+} from "./environment.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
 import {
   CustomModelSetting,
@@ -1508,7 +1513,7 @@ export const ServerSettingsPatch = Schema.Struct({
   automaticGitFetchInterval: Schema.optionalKey(Schema.DurationFromMillis),
   providerHealthRefreshInterval: Schema.optionalKey(Schema.DurationFromMillis),
   backgroundActivityProfile: Schema.optionalKey(BackgroundActivityProfile),
-  environmentIcon: Schema.optionalKey(Schema.NullOr(EnvironmentIconOverride)),
+  environmentIcon: Schema.optionalKey(Schema.NullOr(EnvironmentIconOverrideWrite)),
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),
