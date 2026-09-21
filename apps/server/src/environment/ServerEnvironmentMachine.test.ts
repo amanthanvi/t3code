@@ -169,10 +169,16 @@ describe("isContainerCgroup", () => {
     expect(isContainerCgroup("0::/system.slice/docker-abc123.scope\n")).toBe(true);
     expect(isContainerCgroup("0::/kubepods/besteffort/pod1/abc\n")).toBe(true);
     expect(isContainerCgroup("0::/lxc/web\n")).toBe(true);
-    // cgroup v2 with a private namespace reports only the root; no host PID 1 does.
-    expect(isContainerCgroup("0::/\n")).toBe(true);
     expect(isContainerCgroup("0::/init.scope\n")).toBe(false);
     expect(isContainerCgroup("0::/user.slice/user-1000.slice/session-2.scope\n")).toBe(false);
+  });
+
+  it("does not read a bare root cgroup as a container", () => {
+    // WSL 2 and any non-systemd init leave PID 1 in the root cgroup and read
+    // the same as a container with a private cgroup namespace. Reporting every
+    // Alpine and Void host as a container costs more than the runtimes this
+    // would catch, all of which either drop a marker file or name themselves.
+    expect(isContainerCgroup("0::/\n")).toBe(false);
   });
 });
 
@@ -271,6 +277,43 @@ describe("detectServerEnvironmentMachineKind", () => {
       );
 
       expect(result).toBe("linux");
+    }),
+  );
+
+  it.effect("reads a host whose init leaves PID 1 in the root cgroup", () =>
+    Effect.gen(function* () {
+      // Stock WSL 2 runs Microsoft's own init, not systemd.
+      const onWsl = yield* detectServerEnvironmentMachineKind().pipe(
+        Effect.provide(
+          withPlatform(
+            "linux",
+            dmiFileSystem({
+              osrelease: "5.15.153.1-microsoft-standard-WSL2\n",
+              cgroup: "0::/\n",
+              chassis_type: "3\n",
+              sys_vendor: "Microsoft Corporation\n",
+              product_name: "Virtual Machine\n",
+            }),
+          ),
+        ),
+      );
+      expect(onWsl).toBe("linux");
+
+      // So does any non-systemd distribution on bare metal.
+      const onAlpine = yield* detectServerEnvironmentMachineKind().pipe(
+        Effect.provide(
+          withPlatform(
+            "linux",
+            dmiFileSystem({
+              cgroup: "0::/\n",
+              chassis_type: "3\n",
+              sys_vendor: "Dell Inc.\n",
+              product_name: "OptiPlex 7090\n",
+            }),
+          ),
+        ),
+      );
+      expect(onAlpine).toBe("desktop");
     }),
   );
 

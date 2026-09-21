@@ -78,8 +78,10 @@ export const ICON_IMAGE_DATA_URL_MAX_LENGTH = 32_768;
  * image library sniffs content instead, so there the guarantee is that neither
  * renderer in use has a script engine, not the prefix.
  *
- * Nothing past the signature is read, so this says nothing about frame count.
- * APNG carries the same signature and animates.
+ * Nothing past the signature is read, so this says nothing about frame count:
+ * APNG carries the same eight bytes and animates. Both encoders draw through a
+ * canvas and can only emit one frame, so an animated icon takes a hand-written
+ * patch and cannot come from the picker.
  *
  * The first pattern spells out whole base64 quartets rather than a run of
  * characters and loose padding. That refuses the three in four truncations

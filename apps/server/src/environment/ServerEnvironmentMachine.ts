@@ -163,11 +163,15 @@ export function machineKindFromWindowsComputerSystem(input: {
   return null;
 }
 
-/** A container has no DMI to read; PID 1's cgroup or a runtime marker file says so. */
+/**
+ * A container has no DMI to read; PID 1's cgroup or a runtime marker file says
+ * so. Only a named runtime counts. Under cgroup v2 a container with a private
+ * namespace reads a bare `0::/`, but so does any host whose init leaves PID 1
+ * in the root cgroup, which covers WSL 2 and every non-systemd distribution,
+ * so that value says nothing on its own.
+ */
 export function isContainerCgroup(cgroup: string): boolean {
-  const trimmed = cgroup.trim();
-  if (trimmed === "0::/") return true;
-  const lowered = trimmed.toLowerCase();
+  const lowered = cgroup.trim().toLowerCase();
   return CGROUP_CONTAINER_MARKERS.some((marker) => lowered.includes(marker));
 }
 

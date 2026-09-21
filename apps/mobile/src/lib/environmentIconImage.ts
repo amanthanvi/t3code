@@ -63,15 +63,10 @@ export async function pickEnvironmentIconImage(): Promise<EnvironmentIconImageRe
     try {
       const saved = await squared.saveAsync({ format: SaveFormat.PNG, base64: true });
       const dataUrl = `data:image/png;base64,${saved.base64 ?? ""}`;
-      if (isIconImageDataUrl(dataUrl)) return { ok: true, dataUrl };
-      const webp = await squared.saveAsync({
-        format: SaveFormat.WEBP,
-        compress: 0.9,
-        base64: true,
-      });
-      const webpUrl = `data:image/webp;base64,${webp.base64 ?? ""}`;
-      return isIconImageDataUrl(webpUrl)
-        ? { ok: true, dataUrl: webpUrl }
+      // Incompressible noise at this edge encodes to about 22 KB against a 32 KB
+      // cap, so the guard is for a future change to either number, not for input.
+      return isIconImageDataUrl(dataUrl)
+        ? { ok: true, dataUrl }
         : { ok: false, reason: "too-large" };
     } finally {
       squared.release();

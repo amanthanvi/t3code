@@ -129,6 +129,7 @@ export function EnvironmentIconPickerDialog({
   const [monogram, setMonogram] = useState(initial.monogram);
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(initial.imageDataUrl);
   const [imageError, setImageError] = useState<string | null>(null);
+  const imagePickRef = useRef(0);
   const [customEmoji, setCustomEmoji] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previousOpenRef = useRef(false);
@@ -166,7 +167,10 @@ export function EnvironmentIconPickerDialog({
     const file = event.currentTarget.files?.[0];
     event.currentTarget.value = "";
     if (!file) return;
+    // Encoding is async, so a second pick can resolve before the first.
+    const pick = ++imagePickRef.current;
     const result = await encodeEnvironmentIconImage(file);
+    if (pick !== imagePickRef.current) return;
     if (result.ok) {
       setImageDataUrl(result.dataUrl);
       setImageError(null);

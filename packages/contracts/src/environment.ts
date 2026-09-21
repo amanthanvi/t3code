@@ -344,8 +344,8 @@ export const ExecutionEnvironmentPlatform = Schema.Struct({
   os: ExecutionEnvironmentPlatformOs,
   arch: ExecutionEnvironmentPlatformArch,
   /** Hardware shape detected at startup. Absent when the host gives no usable
-      signal (containers, Windows, unknown DMI), on servers that predate it, or
-      when a newer server names a kind this build cannot draw. */
+      signal (a board without DMI, a probe that timed out), on servers that
+      predate it, or when a newer server names a kind this build cannot draw. */
   machine: ForwardCompatibleOptional(EnvironmentMachineKind),
 });
 
