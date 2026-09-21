@@ -47,13 +47,22 @@ export const MonogramText = TrimmedNonEmptyString.check(
 );
 export type MonogramText = typeof MonogramText.Type;
 
-/** Whether `text` reads as at most two characters, the bound a monogram tile can hold. */
+/**
+ * Whether `text` reads as at most two characters, the bound a monogram tile
+ * can hold. `Intl.Segmenter` is exact. Without it the count is code points
+ * after stripping the combining marks and joiners `MonogramText` admits,
+ * which agrees for Latin, digits, and accents either precomposed or
+ * decomposed. It over-counts a Devanagari conjunct or a decomposed Hangul
+ * syllable, so a runtime lacking `Intl.Segmenter` refuses a monogram the
+ * server would take. That direction is the safe one: it never stores text
+ * too wide for the tile.
+ */
 export function isMonogramLength(text: string): boolean {
   const Segmenter = (Intl as { Segmenter?: typeof Intl.Segmenter }).Segmenter;
   const count =
     typeof Segmenter === "function"
       ? Array.from(new Segmenter(undefined, { granularity: "grapheme" }).segment(text)).length
-      : Array.from(text.replace(/\p{M}/gu, "")).length;
+      : Array.from(text.replace(/[\p{M}\u200c\u200d]/gu, "")).length;
   return count <= 2;
 }
 
@@ -75,8 +84,9 @@ export const ICON_IMAGE_DATA_URL_MAX_LENGTH = 32_768;
  * APNG carries the same signature and animates.
  *
  * The first pattern spells out whole base64 quartets rather than a run of
- * characters and loose padding, so a truncated value is refused here instead of
- * reaching a decoder and drawing as a broken image on every surface.
+ * characters and loose padding. That refuses the three in four truncations
+ * that stop mid-quartet. One that stops on a quartet boundary still decodes,
+ * to a PNG carrying a signature and no pixels, and reaches the renderer.
  *
  * The second is the PNG signature, which base64 fixes to `iVBORw0KGg` for any
  * PNG whatever its ninth byte. Checking the encoded prefix costs nothing on a
