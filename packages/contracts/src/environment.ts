@@ -34,11 +34,13 @@ export const ExecutionEnvironmentPlatformArch = Schema.Literals(["arm64", "x64",
 export type ExecutionEnvironmentPlatformArch = typeof ExecutionEnvironmentPlatformArch.Type;
 
 /**
- * The curated set of machine shapes and OS identities an environment can wear as its icon.
- * Servers detect one from the hardware they run on (`platform.machine`), and
- * the `environmentIcon` server setting lets a user pick one instead.
+ * The kinds every server has ever stored as a bare string. Only these have
+ * that wire form: a server without `environmentIconOverride` accepts them and
+ * nothing else, and an older client decodes them from a snapshot. The list is
+ * frozen. A kind detected later travels as the object, because an older peer
+ * decodes a string it does not know as null and loses the icon.
  */
-export const ENVIRONMENT_MACHINE_KINDS = [
+export const LEGACY_ENVIRONMENT_MACHINE_KINDS = [
   "server",
   "cloud",
   "linux",
@@ -47,6 +49,17 @@ export const ENVIRONMENT_MACHINE_KINDS = [
   "mac-mini",
   "mac-studio",
 ] as const;
+export const isLegacyEnvironmentMachineKind = Schema.is(
+  Schema.Literals(LEGACY_ENVIRONMENT_MACHINE_KINDS),
+);
+
+/**
+ * The curated set of machine shapes and OS identities an environment can wear as its icon.
+ * Servers detect one from the hardware they run on (`platform.machine`), and
+ * the `environmentIcon` server setting lets a user pick one instead. This list
+ * grows as detection improves, which is why the wire form above does not.
+ */
+export const ENVIRONMENT_MACHINE_KINDS = [...LEGACY_ENVIRONMENT_MACHINE_KINDS] as const;
 export const EnvironmentMachineKind = Schema.Literals(ENVIRONMENT_MACHINE_KINDS);
 export type EnvironmentMachineKind = typeof EnvironmentMachineKind.Type;
 export const isEnvironmentMachineKind = Schema.is(EnvironmentMachineKind);
@@ -111,7 +124,9 @@ export const EnvironmentIconOverride = Schema.Union([EnvironmentMachineKind, Env
       decode: (icon): EnvironmentIcon =>
         typeof icon === "string" ? { kind: "icon", name: icon } : icon,
       encode: (icon) =>
-        icon.kind === "icon" && icon.color === undefined && isEnvironmentMachineKind(icon.name)
+        icon.kind === "icon" &&
+        icon.color === undefined &&
+        isLegacyEnvironmentMachineKind(icon.name)
           ? icon.name
           : icon,
     }),

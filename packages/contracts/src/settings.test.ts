@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import { ENVIRONMENT_MACHINE_KINDS } from "./environment.ts";
+import { LEGACY_ENVIRONMENT_MACHINE_KINDS } from "./environment.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import {
   ClientSettingsSchema,
@@ -1056,9 +1056,10 @@ describe("ServerSettings environment icon", () => {
   });
 
   it("writes a plain pick of a legacy kind as the string an older server accepts", () => {
-    // Written out rather than read from `ENVIRONMENT_MACHINE_KINDS`: these are
-    // the kinds an older server accepts, so the list is frozen and must not
-    // follow a later build that detects something new.
+    // Written out rather than read from the contract: these are the kinds an
+    // older server accepts, so the list is frozen and must not follow a later
+    // build that detects something new. Asserting it exactly is what fails if
+    // someone grows it alongside the detected kinds.
     const legacyKinds = [
       "server",
       "cloud",
@@ -1068,7 +1069,7 @@ describe("ServerSettings environment icon", () => {
       "mac-mini",
       "mac-studio",
     ] as const;
-    expect(ENVIRONMENT_MACHINE_KINDS).toEqual(expect.arrayContaining([...legacyKinds]));
+    expect(LEGACY_ENVIRONMENT_MACHINE_KINDS).toEqual(legacyKinds);
 
     for (const kind of legacyKinds) {
       expect(encodeServerSettingsPatch({ environmentIcon: { kind: "icon", name: kind } })).toEqual({
