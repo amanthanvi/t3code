@@ -56,7 +56,15 @@ export async function encodeEnvironmentIconImage(file: Blob): Promise<Environmen
       ENVIRONMENT_ICON_IMAGE_EDGE,
       ENVIRONMENT_ICON_IMAGE_EDGE,
     );
-    const png = canvas.toDataURL("image/png");
+    // Failure reaches the caller through the result, and the caller awaits
+    // without a catch. toDataURL is the last call here that reports by
+    // throwing, so it does not get to leave through that hole.
+    let png: string;
+    try {
+      png = canvas.toDataURL("image/png");
+    } catch {
+      return { ok: false, reason: "unreadable" };
+    }
     // Incompressible noise at this edge encodes to about 22 KB against a 32 KB
     // cap, so the guard is for a future change to either number, not for input.
     if (isIconImageDataUrl(png)) return { ok: true, dataUrl: png };
