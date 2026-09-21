@@ -71,17 +71,23 @@ export const ICON_IMAGE_DATA_URL_MAX_LENGTH = 32_768;
  * image library sniffs content instead, so there the guarantee is that neither
  * renderer in use has a script engine, not the prefix.
  *
- * The bytes are never validated, so the prefix says nothing about frame count.
- * APNG declares `image/png` and animates.
+ * Nothing past the signature is read, so this says nothing about frame count.
+ * APNG carries the same signature and animates.
  *
- * The pattern spells out whole base64 quartets rather than a run of characters
- * and loose padding, so a truncated value is refused here instead of reaching a
- * decoder and drawing as a broken image on every surface that shows it.
+ * The first pattern spells out whole base64 quartets rather than a run of
+ * characters and loose padding, so a truncated value is refused here instead of
+ * reaching a decoder and drawing as a broken image on every surface.
+ *
+ * The second is the PNG signature, which base64 fixes to `iVBORw0KGg` for any
+ * PNG whatever its ninth byte. Checking the encoded prefix costs nothing on a
+ * path that decodes settings for every connected client on every change, and it
+ * means the declared type is the writer's claim while this is the evidence.
  */
 export const IconImageDataUrl = Schema.String.check(
   Schema.isMaxLength(ICON_IMAGE_DATA_URL_MAX_LENGTH),
   Schema.isPattern(
     /^data:image\/png;base64,(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{4}|[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{2}==)$/,
   ),
+  Schema.isPattern(/^data:image\/png;base64,iVBORw0KGg/),
 );
 export type IconImageDataUrl = typeof IconImageDataUrl.Type;
