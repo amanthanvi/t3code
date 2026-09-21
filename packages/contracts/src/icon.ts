@@ -65,12 +65,17 @@ export function isMonogramLength(text: string): boolean {
 export const ICON_IMAGE_DATA_URL_MAX_LENGTH = 32_768;
 
 /**
- * A small raster icon carried inline. The prefix is pinned to two known
- * raster types rather than any `data:image/` so an SVG, which can script,
- * never reaches a renderer through this field.
+ * A small raster icon carried inline. The prefix is pinned to PNG rather than
+ * any `data:image/`. On web that is what keeps an SVG, which can script, out
+ * of the `<img>`: Blink picks the decoder from the declared type. Mobile's
+ * image library sniffs content instead, so there the guarantee is that neither
+ * renderer in use has a script engine, not the prefix.
+ *
+ * The bytes are never validated, so the prefix says nothing about frame count.
+ * APNG declares `image/png` and animates.
  */
 export const IconImageDataUrl = Schema.String.check(
   Schema.isMaxLength(ICON_IMAGE_DATA_URL_MAX_LENGTH),
-  Schema.isPattern(/^data:image\/(?:png|webp);base64,[A-Za-z0-9+/]+={0,2}$/),
+  Schema.isPattern(/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/),
 );
 export type IconImageDataUrl = typeof IconImageDataUrl.Type;
