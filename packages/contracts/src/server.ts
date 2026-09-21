@@ -720,9 +720,16 @@ const ICON_BY_MACHINE_KIND = new Map<EnvironmentMachineKind, EnvironmentIcon>();
 
 /**
  * The icon that draws a machine kind, one reference per kind. Rows that show
- * an environment glyph are memoized on the icon, so the resolver must hand
- * back the same object for the same plain kind across renders and across
- * settings snapshots, or every thread row repaints on any settings change.
+ * an environment glyph are memoized on the icon, so the resolver hands back
+ * the same object for the same plain kind across renders and across settings
+ * snapshots. Without it every thread row would repaint on any settings
+ * change, because each snapshot decodes to a fresh object.
+ *
+ * The cache only covers plain kinds, which is every row until a user picks
+ * something richer. An emoji, monogram, or image icon is returned as the
+ * decoded value, so those rows do repaint once per settings change. Settings
+ * change on user action, not on a timer, so a content-keyed cache would save
+ * a repaint nobody sees while keeping image bytes in memory.
  */
 export function environmentIconForMachineKind(kind: EnvironmentMachineKind): EnvironmentIcon {
   const cached = ICON_BY_MACHINE_KIND.get(kind);
