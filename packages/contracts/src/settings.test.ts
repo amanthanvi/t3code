@@ -1012,6 +1012,14 @@ describe("ServerSettings environment icon", () => {
     });
     expect(settings.environmentIcon).toBeNull();
     expect(settings.addProjectBaseDirectory).toBe("~/Development");
+
+    // Any raster type but PNG lands here too, so widening the format later is a
+    // contract change rather than something a client can do on its own.
+    expect(
+      decodeServerSettings({
+        environmentIcon: { kind: "image", dataUrl: "data:image/webp;base64,UklGRg==" },
+      }).environmentIcon,
+    ).toBeNull();
   });
 
   it("holds a monogram to two characters at the write boundary", () => {
