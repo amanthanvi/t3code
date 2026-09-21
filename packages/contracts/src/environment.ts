@@ -34,11 +34,18 @@ export const ExecutionEnvironmentPlatformArch = Schema.Literals(["arm64", "x64",
 export type ExecutionEnvironmentPlatformArch = typeof ExecutionEnvironmentPlatformArch.Type;
 
 /**
- * The kinds every server has ever stored as a bare string. Only these have
- * that wire form: a server without `environmentIconOverride` accepts them and
- * nothing else, and an older client decodes them from a snapshot. The list is
- * frozen. A kind detected later travels as the object, because an older peer
- * decodes a string it does not know as null and loses the icon.
+ * The kinds a released server accepts as a bare string. Only these have that
+ * wire form: a server without `environmentIconOverride` takes them and
+ * nothing else, and an older client decodes them from a snapshot. A kind
+ * added later travels as the object, because an older peer decodes a string
+ * it does not know as null and loses the icon. The list is frozen.
+ *
+ * `linux` has one gap. The `environmentIcon` capability shipped on
+ * 2026-09-02 and `linux` joined the set on 2026-09-06, so 25 nightly builds
+ * in between advertise the capability and reject the string, and picking the
+ * Linux glyph against one of those fails the whole settings patch. No stable
+ * release sits in that window. Dropping `linux` here would instead lock the
+ * glyph on every stable server shipping today, which is the larger loss.
  */
 export const LEGACY_ENVIRONMENT_MACHINE_KINDS = [
   "server",
@@ -139,9 +146,10 @@ export type EnvironmentIconOverride = typeof EnvironmentIconOverride.Type;
  * their decider; a settings patch has no such boundary, so it lives here.
  *
  * It stays off `EnvironmentIconOverride` because that schema also decodes
- * snapshots, and grapheme counting differs by runtime: Hermes ships no
- * `Intl.Segmenter`, so a monogram the server accepted can count longer on
- * mobile. Checking it during decode would fail there, and
+ * snapshots, and grapheme counting differs by runtime. Nothing here proves
+ * this Hermes build ships `Intl.Segmenter`, and `isMonogramLength` counts
+ * code points without it, so a monogram the server accepted can count longer
+ * on mobile. Checking it during decode would fail there, and
  * `ForwardCompatibleNullable` would drop the stored icon to null on that
  * client alone.
  */
