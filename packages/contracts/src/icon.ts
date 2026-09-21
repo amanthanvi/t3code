@@ -115,7 +115,8 @@ function hasIconPngHeader(dataUrl: string): boolean {
  *
  * The header check backs the declared type and bounds the pixels, which the
  * length cap cannot, since a large flat image compresses to almost nothing.
- * It reads nothing past IHDR, so an animated PNG passes.
+ * It reads nothing past IHDR, so an animated PNG passes, though neither
+ * picker can produce one.
  */
 export const IconImageDataUrl = Schema.String.check(
   Schema.isMaxLength(ICON_IMAGE_DATA_URL_MAX_LENGTH),

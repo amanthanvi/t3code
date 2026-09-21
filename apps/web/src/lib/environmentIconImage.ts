@@ -4,11 +4,18 @@ import * as Schema from "effect/Schema";
 /** Rendered edge of an uploaded icon. Rows draw it at 12 to 32 CSS pixels. */
 const ENVIRONMENT_ICON_IMAGE_EDGE = 64;
 
+/**
+ * Source bytes accepted before decoding. `createImageBitmap` decodes at full
+ * resolution, so a 40 megapixel photo allocates hundreds of megabytes to
+ * produce a 64 pixel tile. This turns the common mistake into a message.
+ */
+const ENVIRONMENT_ICON_SOURCE_MAX_BYTES = 16 * 1024 * 1024;
+
 const isIconImageDataUrl = Schema.is(IconImageDataUrl);
 
 export type EnvironmentIconImageResult =
   | { readonly ok: true; readonly dataUrl: string }
-  | { readonly ok: false; readonly reason: "unreadable" | "too-large" };
+  | { readonly ok: false; readonly reason: "unreadable" | "too-large" | "source-too-large" };
 
 /**
  * Downscales `file` to a 64 by 64 PNG data URL that fits the contract's cap.
@@ -18,6 +25,9 @@ export type EnvironmentIconImageResult =
  * the server will accept.
  */
 export async function encodeEnvironmentIconImage(file: Blob): Promise<EnvironmentIconImageResult> {
+  if (file.size > ENVIRONMENT_ICON_SOURCE_MAX_BYTES) {
+    return { ok: false, reason: "source-too-large" };
+  }
   let bitmap: ImageBitmap | undefined;
   try {
     bitmap = await createImageBitmap(file);
@@ -47,13 +57,9 @@ export async function encodeEnvironmentIconImage(file: Blob): Promise<Environmen
       ENVIRONMENT_ICON_IMAGE_EDGE,
     );
     const png = canvas.toDataURL("image/png");
+    // Incompressible noise at this edge encodes to about 22 KB against a 32 KB
+    // cap, so the guard is for a future change to either number, not for input.
     if (isIconImageDataUrl(png)) return { ok: true, dataUrl: png };
-    // A busy image can exceed the cap as PNG; WebP at high quality is smaller
-    // and keeps alpha. Browsers that cannot encode it return a PNG instead.
-    const webp = canvas.toDataURL("image/webp", 0.9);
-    if (webp.startsWith("data:image/webp") && isIconImageDataUrl(webp)) {
-      return { ok: true, dataUrl: webp };
-    }
     return { ok: false, reason: "too-large" };
   } finally {
     bitmap.close();
@@ -63,7 +69,12 @@ export async function encodeEnvironmentIconImage(file: Blob): Promise<Environmen
 export function describeEnvironmentIconImageFailure(
   reason: Extract<EnvironmentIconImageResult, { ok: false }>["reason"],
 ): string {
-  return reason === "too-large"
-    ? `That image does not fit in ${Math.floor(ICON_IMAGE_DATA_URL_MAX_LENGTH / 1024)} KB even at 64 by 64. Try a simpler one.`
-    : "That file could not be read as an image.";
+  switch (reason) {
+    case "too-large":
+      return `That image does not fit in ${Math.floor(ICON_IMAGE_DATA_URL_MAX_LENGTH / 1024)} KB even at 64 by 64. Try a simpler one.`;
+    case "source-too-large":
+      return `That file is over ${Math.floor(ENVIRONMENT_ICON_SOURCE_MAX_BYTES / (1024 * 1024))} MB. Try a smaller one.`;
+    case "unreadable":
+      return "That file could not be read as an image.";
+  }
 }
