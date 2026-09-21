@@ -7,7 +7,9 @@ const ENVIRONMENT_ICON_IMAGE_EDGE = 64;
 /**
  * Source bytes accepted before decoding. `createImageBitmap` decodes at full
  * resolution, so a 40 megapixel photo allocates hundreds of megabytes to
- * produce a 64 pixel tile. This turns the common mistake into a message.
+ * produce a 64 pixel tile. Compressed size only stands in for pixel count, so
+ * this is a coarse bound that turns the common mistake into a message rather
+ * than a guarantee about what the decoder allocates.
  */
 const ENVIRONMENT_ICON_SOURCE_MAX_BYTES = 16 * 1024 * 1024;
 
