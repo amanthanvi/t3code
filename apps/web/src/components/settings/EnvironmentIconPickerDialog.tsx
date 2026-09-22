@@ -1,6 +1,7 @@
 import {
   ENVIRONMENT_CURATED_ICON_IDS,
   ENVIRONMENT_ICON_LABELS,
+  environmentIconForCuratedId,
   environmentIconForMachineKind,
   isEnvironmentCuratedIconId,
   isEnvironmentMachineKind,
@@ -221,9 +222,7 @@ export function EnvironmentIconPickerDialog({
                     <EnvironmentMachineIcon
                       icon={
                         color === null
-                          ? isEnvironmentMachineKind(id)
-                            ? environmentIconForMachineKind(id)
-                            : { kind: "icon", name: id }
+                          ? environmentIconForCuratedId(id)
                           : { kind: "icon", name: id, color }
                       }
                       className="size-4 shrink-0"

@@ -1,5 +1,5 @@
 import {
-  environmentIconForMachineKind,
+  environmentIconForCuratedId,
   isEnvironmentMachineKind,
   isMonogramLength,
   MonogramText,
@@ -58,19 +58,13 @@ export function resolveEnvironmentRichIconLock(serverConfig: ServerConfig | null
 /**
  * What to store for a plain named pick. Picking what the server would draw
  * anyway clears the override instead of pinning it, so detection keeps
- * working if the machine changes; a machine kind gets the shared reference,
- * so renderers memoized on the icon do not repaint for the same pick.
+ * working if the machine changes.
  */
 function resolveNamedIconWrite(input: {
   readonly next: EnvironmentCuratedIconId;
   readonly detected: EnvironmentMachineKind;
 }): EnvironmentIcon | null {
-  if (input.next === input.detected) return null;
-  // A plain machine kind encodes to the bare string on the wire, so a server
-  // that predates the object form accepts it unchanged; a role stays an object.
-  return isEnvironmentMachineKind(input.next)
-    ? environmentIconForMachineKind(input.next)
-    : { kind: "icon", name: input.next };
+  return input.next === input.detected ? null : environmentIconForCuratedId(input.next);
 }
 
 export type EnvironmentIconDialogMode = "icon" | "emoji" | "monogram";
