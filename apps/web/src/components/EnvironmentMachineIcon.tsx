@@ -149,6 +149,10 @@ export function EnvironmentMachineIcon({
         <Suspense fallback={placeholder}>
           <DynamicIcon
             {...props}
+            // `IconName` and `EnvironmentLucideIconId` are declared apart, so
+            // nothing relates them at compile time. The generator test reads
+            // every shared id out of the same lucide-react build this resolves
+            // from, so an id Lucide does not ship fails there instead of here.
             name={icon.name as IconName}
             className={coloredClassName}
             fallback={() => placeholder}
