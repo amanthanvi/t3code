@@ -1,4 +1,5 @@
 import {
+  ENVIRONMENT_ICON_LABELS,
   isEnvironmentCuratedIconId,
   type EnvironmentCuratedIconId,
   type EnvironmentIcon,
@@ -22,23 +23,6 @@ const SYMBOL_BY_ID: Record<EnvironmentCuratedIconId, AppSymbolName> = {
   home: "house",
   gpu: "brain",
   network: "point.3.connected.trianglepath.dotted",
-};
-
-export const ENVIRONMENT_ICON_LABELS: Record<EnvironmentCuratedIconId, string> = {
-  server: "Server",
-  cloud: "Cloud VM",
-  linux: "Linux/WSL",
-  desktop: "Desktop",
-  laptop: "Laptop",
-  "mac-mini": "Mini PC",
-  "mac-studio": "Workstation",
-  terminal: "Dev box",
-  database: "Database",
-  container: "Container",
-  globe: "Edge",
-  home: "Home server",
-  gpu: "GPU box",
-  network: "Network",
 };
 
 /**

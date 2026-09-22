@@ -1,5 +1,6 @@
 import {
   ENVIRONMENT_CURATED_ICON_IDS,
+  ENVIRONMENT_ICON_LABELS,
   environmentIconForMachineKind,
   isEnvironmentCuratedIconId,
   isEnvironmentMachineKind,
@@ -18,7 +19,7 @@ import { usePrimarySessionState } from "../../environments/primary";
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentSessionState } from "../../state/session";
-import { ENVIRONMENT_ICON_LABELS, EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
+import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import {
   MenuItem,
   MenuRadioGroup,
