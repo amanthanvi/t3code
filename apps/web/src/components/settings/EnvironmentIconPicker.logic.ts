@@ -87,8 +87,8 @@ function normalizeMonogram(value: string): string {
 /**
  * The value the dialog would save for its current state, or why it cannot.
  * The monogram bound is checked here and not only in the schema, because an
- * environment has no decider to catch what the picker lets through: the
- * schema is the only backstop, and this keeps that error away from the user.
+ * environment has no decider to catch what the picker lets through. The
+ * schema is the last check, and this keeps that error away from the user.
  */
 export function resolveEnvironmentIconDialogWrite(input: {
   readonly mode: EnvironmentIconDialogMode;
