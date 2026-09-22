@@ -1,8 +1,7 @@
 import {
   ENVIRONMENT_CURATED_ICON_IDS,
-  environmentIconForMachineKind,
+  environmentIconForCuratedId,
   isEnvironmentCuratedIconId,
-  isEnvironmentMachineKind,
   isLegacyEnvironmentMachineKind,
   type EnvironmentCuratedIconId,
   type EnvironmentIcon,
@@ -44,9 +43,7 @@ export function listMobileEnvironmentIconChoices(input: {
   const rich = supportsRichEnvironmentIcon(input.serverConfig);
   return ENVIRONMENT_CURATED_ICON_IDS.map((id) => ({
     id,
-    icon: isEnvironmentMachineKind(id)
-      ? environmentIconForMachineKind(id)
-      : { kind: "icon", name: id },
+    icon: environmentIconForCuratedId(id),
     detected: id === input.detected,
     enabled: rich || isLegacyEnvironmentMachineKind(id),
   }));
@@ -54,17 +51,13 @@ export function listMobileEnvironmentIconChoices(input: {
 
 /**
  * What to store for a pick. Picking what the server would draw anyway clears
- * the override, so detection keeps working if the machine changes; a machine
- * kind gets the shared reference renderers are memoized on.
+ * the override, so detection keeps working if the machine changes.
  */
 export function resolveMobileEnvironmentIconWrite(input: {
   readonly next: EnvironmentCuratedIconId;
   readonly detected: EnvironmentMachineKind;
 }): EnvironmentIcon | null {
-  if (input.next === input.detected) return null;
-  return isEnvironmentMachineKind(input.next)
-    ? environmentIconForMachineKind(input.next)
-    : { kind: "icon", name: input.next };
+  return input.next === input.detected ? null : environmentIconForCuratedId(input.next);
 }
 
 /** The curated id a stored override selects in the list, if it is one. */
