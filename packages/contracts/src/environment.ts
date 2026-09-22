@@ -147,12 +147,11 @@ export type EnvironmentIconOverride = typeof EnvironmentIconOverride.Type;
  * their decider; a settings patch has no such boundary, so it lives here.
  *
  * It stays off `EnvironmentIconOverride` because that schema also decodes
- * snapshots, and grapheme counting differs by runtime. Nothing here proves
- * this Hermes build ships `Intl.Segmenter`, and `isMonogramLength` counts
- * code points without it, so a monogram the server accepted can count longer
- * on mobile. Checking it during decode would fail there, and
- * `ForwardCompatibleNullable` would drop the stored icon to null on that
- * client alone.
+ * snapshots. A peer writing outside the picker, or a later build that widens
+ * the bound, can store a longer monogram, and checking it during decode would
+ * send that icon through `ForwardCompatibleNullable` to null. The user would
+ * get the detected glyph with nothing saying why. Only the write boundary
+ * counts, so a snapshot draws what is stored.
  */
 export const EnvironmentIconOverrideWrite = EnvironmentIconOverride.check(
   Schema.makeFilter((icon) => icon.kind !== "monogram" || isMonogramLength(icon.text)),

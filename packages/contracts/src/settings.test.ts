@@ -1023,36 +1023,16 @@ describe("ServerSettings environment icon", () => {
   });
 
   it("holds a monogram to two characters at the write boundary", () => {
+    // The count drops the combining marks and joiners MonogramText admits, so
+    // each of these is two characters rather than three or four.
+    for (const text of ["e\u0301K", "A\u200dB", "A\u200cB", "AB"]) {
+      expect(
+        decodeServerSettingsPatch({ environmentIcon: { kind: "monogram", text } }).environmentIcon,
+      ).toEqual({ kind: "monogram", text });
+    }
     expect(() =>
       decodeServerSettingsPatch({ environmentIcon: { kind: "monogram", text: "ABC" } }),
     ).toThrow();
-    expect(
-      decodeServerSettingsPatch({ environmentIcon: { kind: "monogram", text: "e\u0301K" } })
-        .environmentIcon,
-    ).toEqual({ kind: "monogram", text: "e\u0301K" });
-  });
-
-  it("counts a monogram the same way on a runtime without Intl.Segmenter", () => {
-    // Mobile runs Hermes, which may not ship Intl.Segmenter. The fallback
-    // counts code points, so it has to drop the combining marks and joiners
-    // MonogramText admits or it would refuse two-character monograms that
-    // every other client accepts.
-    const segmenter = Object.getOwnPropertyDescriptor(Intl, "Segmenter");
-    // @ts-expect-error removing an Intl member to exercise the fallback path
-    delete Intl.Segmenter;
-    try {
-      for (const text of ["e\u0301K", "A\u200dB", "A\u200cB", "AB"]) {
-        expect(
-          decodeServerSettingsPatch({ environmentIcon: { kind: "monogram", text } })
-            .environmentIcon,
-        ).toEqual({ kind: "monogram", text });
-      }
-      expect(() =>
-        decodeServerSettingsPatch({ environmentIcon: { kind: "monogram", text: "ABC" } }),
-      ).toThrow();
-    } finally {
-      if (segmenter) Object.defineProperty(Intl, "Segmenter", segmenter);
-    }
   });
 
   it("refuses an inline image that is not whole base64 holding a PNG", () => {
@@ -1092,9 +1072,9 @@ describe("ServerSettings environment icon", () => {
   });
 
   it("accepts a stored monogram the write boundary would reject", () => {
-    // Grapheme counting differs by runtime, so a monogram one client wrote can
-    // count longer on another. Only the write boundary counts; a snapshot
-    // decodes as stored, or that client would draw the detected glyph instead.
+    // A peer writing outside the picker can store a longer monogram. Only the
+    // write boundary counts; a snapshot decodes as stored, or that client
+    // would draw the detected glyph instead.
     expect(
       decodeServerSettings({ environmentIcon: { kind: "monogram", text: "ABC" } }).environmentIcon,
     ).toEqual({ kind: "monogram", text: "ABC" });
