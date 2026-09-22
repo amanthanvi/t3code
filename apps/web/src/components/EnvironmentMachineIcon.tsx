@@ -137,39 +137,29 @@ export function EnvironmentMachineIcon({
   );
 }
 
-const COMPONENT_BY_KEY = new Map<string, FunctionComponent<EnvironmentMachineIconProps>>();
-
-/** A cache key for the variants that need a wrapper component; null for a plain curated glyph. */
-function iconComponentKey(icon: EnvironmentIcon): string | null {
-  switch (icon.kind) {
-    case "icon":
-      return icon.color === undefined ? null : `icon:${icon.name}:${icon.color}`;
-    case "emoji":
-      return `emoji:${icon.emoji}`;
-    case "monogram":
-      return `monogram:${icon.text}:${icon.color ?? ""}`;
-    case "image":
-      return null;
-  }
-}
+const COMPONENT_BY_ICON = new WeakMap<
+  EnvironmentIcon,
+  FunctionComponent<EnvironmentMachineIconProps>
+>();
 
 /**
- * A component for slots that take one, such as filter menu options. Plain
- * named icons are the Lucide component itself; anything richer is a wrapper
- * cached by value, so an option list rebuilt each render keeps the same
- * component identity and its subtree does not remount on every keystroke.
+ * The glyph as a standalone component, for slots that take one such as the
+ * pull request filter menu. Keyed on the icon object, which
+ * `resolveEnvironmentIcon` returns by reference for a stored override and
+ * memoizes per machine kind for a detected one, so every render between two
+ * settings changes hits. A menu that rebuilds its option array on each
+ * keystroke therefore keeps one component identity per environment and its
+ * icon subtree does not remount.
  */
 export function environmentMachineIcon(
   icon: EnvironmentIcon,
 ): FunctionComponent<EnvironmentMachineIconProps> {
-  const key = iconComponentKey(icon);
-  if (key === null) return ICON_BY_ID[curatedIconId(icon)];
-  const cached = COMPONENT_BY_KEY.get(key);
+  const cached = COMPONENT_BY_ICON.get(icon);
   if (cached !== undefined) return cached;
   const Component: FunctionComponent<EnvironmentMachineIconProps> = (props) => (
     <EnvironmentMachineIcon icon={icon} {...props} />
   );
-  Component.displayName = `EnvironmentMachineIcon(${key})`;
-  COMPONENT_BY_KEY.set(key, Component);
+  Component.displayName = `EnvironmentMachineIcon(${icon.kind})`;
+  COMPONENT_BY_ICON.set(icon, Component);
   return Component;
 }
