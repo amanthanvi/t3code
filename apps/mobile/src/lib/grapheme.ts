@@ -5,15 +5,14 @@
  * with the combining marks and joiners that bind to it, which is right for
  * the letters and digits a monogram is made of.
  *
- * The joiners matter because `MonogramText` admits them: without them
+ * The joiners matter because `MonogramText` admits them. Without them
  * "A\u200dB" would split as "A" and "\u200d", and the second tile would
  * draw an invisible joiner while the "B" vanished. The fallback still splits
  * a Devanagari conjunct that `Intl.Segmenter` keeps whole.
  */
 export function firstGrapheme(text: string): string {
-  const Segmenter = (Intl as { Segmenter?: typeof Intl.Segmenter }).Segmenter;
-  if (typeof Segmenter === "function") {
-    const segments = new Segmenter(undefined, { granularity: "grapheme" }).segment(text);
+  if (typeof Intl.Segmenter === "function") {
+    const segments = new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text);
     const first = segments[Symbol.iterator]().next().value;
     if (first) return first.segment;
   }

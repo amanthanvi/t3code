@@ -47,11 +47,11 @@ function useEnvironmentOperateAccess(environmentId: EnvironmentId) {
 
 /**
  * "Change icon" item for an environment's row menu. Locked environments keep
- * the item, disabled, and print the reason beneath it: a disabled menu item
+ * the item, disabled, and print the reason beneath it. A disabled menu item
  * takes no pointer events, so nothing hover-based could carry the text. The
- * dialog itself is `EnvironmentIconPickerHost`, mounted beside the menu: a
- * menu popup unmounts its children when it closes, which is the moment this
- * item is clicked.
+ * dialog itself is `EnvironmentIconPickerHost`, mounted beside the menu
+ * rather than inside it, because a menu popup unmounts its children when it
+ * closes, which is the moment this item is clicked.
  */
 export function EnvironmentIconMenuItem({
   environmentId,
