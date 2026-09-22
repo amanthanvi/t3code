@@ -6,11 +6,23 @@ import { beginForegroundHandoff } from "./foreground-handoff";
 /** Rendered edge of an uploaded icon. Rows draw it at 10 to 24 points. */
 const ENVIRONMENT_ICON_IMAGE_EDGE = 64;
 
+/**
+ * Source pixels accepted before decoding. `renderAsync` decodes at full
+ * resolution, so a 200 megapixel sensor shot allocates hundreds of megabytes
+ * to produce a 64 pixel tile. The picker reports the dimensions before any
+ * decode runs, so this bounds the allocation instead of estimating it the way
+ * a compressed byte count would.
+ */
+const ENVIRONMENT_ICON_SOURCE_MAX_PIXELS = 64 * 1_000_000;
+
 const isIconImageDataUrl = Schema.is(IconImageDataUrl);
 
 export type EnvironmentIconImageResult =
   | { readonly ok: true; readonly dataUrl: string }
-  | { readonly ok: false; readonly reason: "cancelled" | "unreadable" | "too-large" };
+  | {
+      readonly ok: false;
+      readonly reason: "cancelled" | "unreadable" | "too-large" | "source-too-large";
+    };
 
 /**
  * Lets the user pick a photo and renders it to a 64 by 64 PNG data URL that
@@ -40,6 +52,11 @@ export async function pickEnvironmentIconImage(): Promise<EnvironmentIconImageRe
   }
   const asset = picked.canceled ? null : (picked.assets[0] ?? null);
   if (asset === null) return { ok: false, reason: "cancelled" };
+  // Either dimension is 0 when the system did not report it, which multiplies
+  // to 0 and lets the decode run unbounded. That is rare enough to allow.
+  if (asset.width * asset.height > ENVIRONMENT_ICON_SOURCE_MAX_PIXELS) {
+    return { ok: false, reason: "source-too-large" };
+  }
 
   const { ImageManipulator, SaveFormat } = await import("expo-image-manipulator");
   let image: Awaited<ReturnType<ReturnType<typeof ImageManipulator.manipulate>["renderAsync"]>>;
@@ -84,7 +101,12 @@ export async function pickEnvironmentIconImage(): Promise<EnvironmentIconImageRe
 export function describeEnvironmentIconImageFailure(
   reason: Exclude<Extract<EnvironmentIconImageResult, { ok: false }>["reason"], "cancelled">,
 ): string {
-  return reason === "too-large"
-    ? `That image does not fit in ${Math.floor(ICON_IMAGE_DATA_URL_MAX_LENGTH / 1024)} KB even at 64 by 64. Try a simpler one.`
-    : "That photo could not be read.";
+  switch (reason) {
+    case "too-large":
+      return `That image does not fit in ${Math.floor(ICON_IMAGE_DATA_URL_MAX_LENGTH / 1024)} KB even at 64 by 64. Try a simpler one.`;
+    case "source-too-large":
+      return `That photo is over ${Math.floor(ENVIRONMENT_ICON_SOURCE_MAX_PIXELS / 1_000_000)} megapixels. Try a smaller one.`;
+    case "unreadable":
+      return "That photo could not be read.";
+  }
 }
