@@ -68,6 +68,7 @@ export function EnvironmentMachineSymbol(props: {
     const characters = monogramCharacters(icon.text);
     return (
       <View
+        accessible
         accessibilityLabel={icon.text}
         className={cn("items-center justify-center", color.tile)}
         style={{ width: size, height: size, borderRadius: size * 0.25 }}
