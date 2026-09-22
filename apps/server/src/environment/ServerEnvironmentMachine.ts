@@ -252,7 +252,7 @@ const detectLinuxMachineKind = Effect.fn("detectLinuxMachineKind")(function* () 
       ...CONTAINER_MARKER_PATHS.map(fileExists),
     ]);
   // A container shares its host's kernel and inherits its DMI when it can
-  // read it at all, so the runtime marker is checked first: a Docker Desktop
+  // read it at all, so the runtime marker is checked first. A Docker Desktop
   // container runs on a WSL 2 kernel and would otherwise read as WSL.
   if (markers.some(Boolean) || (initCgroup !== null && isContainerCgroup(initCgroup))) {
     return "container";

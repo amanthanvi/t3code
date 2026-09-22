@@ -138,7 +138,7 @@ export function EnvironmentMachineIcon({
   }
   if (icon.kind === "image") {
     // Self-contained, so there is no network state to show. The bytes can
-    // still fail to decode: the schema checks the PNG signature, not the
+    // still fail to decode. The schema checks the PNG signature and not the
     // pixels, so a value a peer wrote by hand can draw as an empty box. An
     // onError fallback would put state in a component that renders once per
     // row at 12 pixels, which costs more than the case is worth.

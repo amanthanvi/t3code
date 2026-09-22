@@ -313,10 +313,11 @@ export function CloudEnvironmentConnectRows({
     // A connected machine's own config (with the user's icon pick) wins. Before
     // that, the relay's health probe already carries the server's descriptor, so
     // a machine can wear its detected glyph before this device ever connects.
-    // There is no icon control on an unconnected row on purpose: the only place
-    // an icon is stored is that machine's own settings, so a pick made before
-    // connecting would have to live on this device and would not follow the
-    // user to their other devices, which is the one property the icon exists for.
+    // There is no icon control on an unconnected row on purpose. The only
+    // place an icon is stored is that machine's own settings, so a pick made
+    // before connecting would have to live on this device and would not follow
+    // the user to their other devices, which is the one property the icon
+    // exists for.
     const descriptor = status === undefined ? undefined : Option.getOrNull(status)?.descriptor;
     const machineKind = resolveEnvironmentIcon(
       savedEnvironment?.serverConfig ??
