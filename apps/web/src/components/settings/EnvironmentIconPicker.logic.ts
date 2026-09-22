@@ -1,6 +1,7 @@
 import {
   environmentIconForMachineKind,
   isEnvironmentMachineKind,
+  isMonogramLength,
   MonogramText,
   type EnvironmentCuratedIconId,
   type EnvironmentIcon,
@@ -13,7 +14,6 @@ import * as Schema from "effect/Schema";
 import { firstEmoji } from "../../iconEmoji";
 
 const isMonogramText = Schema.is(MonogramText);
-const monogramSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 /**
  * Why the picker is inert, in the order the user can do something about it.
@@ -113,7 +113,7 @@ export function resolveEnvironmentIconDialogWrite(input: {
         : { kind: "invalid", reason: "Pick an emoji." };
     case "monogram": {
       const text = normalizeMonogram(input.monogram);
-      if (!isMonogramText(text) || Array.from(monogramSegmenter.segment(text)).length > 2) {
+      if (!isMonogramText(text) || !isMonogramLength(text)) {
         return { kind: "invalid", reason: "One or two letters or numbers." };
       }
       return {
