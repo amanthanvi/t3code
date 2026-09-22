@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
-import {
-  filterProjectIconNames,
-  firstEmoji,
-  projectIconColorClassName,
-} from "./projectIconOptions";
+import { firstEmoji } from "./iconEmoji";
+import { filterProjectIconNames, projectIconColorClassName } from "./projectIconOptions";
 
 describe("projectIconOptions", () => {
   it("searches across the full Lucide set", () => {

@@ -1,6 +1,5 @@
 import { iconNames, type IconName } from "lucide-react/dynamic";
 export { PROJECT_ICON_COLORS, projectIconColorClassName } from "./projectIconColors";
-export { PROJECT_EMOJIS, firstEmoji } from "./iconEmoji";
 
 const POPULAR_PROJECT_ICONS = [
   "folder-code",
