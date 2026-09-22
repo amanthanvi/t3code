@@ -313,7 +313,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         const serverConfig = yield* ServerConfig.ServerConfig;
         const fileSystem = yield* FileSystem.FileSystem;
         const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-        // Inspect the raw file: a partial object or a stale key from the
+        // Inspect the raw file. A partial object or a stale key from the
         // previous variant would only be visible before schema decoding.
         const readPersistedIcon = fileSystem.readFileString(serverConfig.settingsPath).pipe(
           Effect.flatMap(decodeRawSettingsJson),

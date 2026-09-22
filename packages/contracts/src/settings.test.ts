@@ -1104,9 +1104,9 @@ describe("ServerSettings environment icon", () => {
   });
 
   it("writes a plain pick of a legacy kind as the string an older server accepts", () => {
-    // Written out rather than read from the contract: these are the kinds an
-    // older server accepts, so the list is frozen and must not follow a later
-    // build that detects something new. Asserting it exactly is what fails if
+    // The list is written out rather than read from the contract. These are
+    // the kinds an older server accepts, so it is frozen and must not follow a
+    // later build that detects something new. Asserting it exactly is what fails if
     // someone grows it alongside the detected kinds.
     const legacyKinds = [
       "server",

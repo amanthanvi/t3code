@@ -54,14 +54,13 @@ export type MonogramText = typeof MonogramText.Type;
  * which agrees for Latin, digits, and accents either precomposed or
  * decomposed. It over-counts a Devanagari conjunct or a decomposed Hangul
  * syllable, so a runtime lacking `Intl.Segmenter` refuses a monogram the
- * server would take. That direction is the safe one: it never stores text
- * too wide for the tile.
+ * server would take. That direction is the safe one, because it never
+ * stores text too wide for the tile.
  */
 export function isMonogramLength(text: string): boolean {
-  const Segmenter = (Intl as { Segmenter?: typeof Intl.Segmenter }).Segmenter;
   const count =
-    typeof Segmenter === "function"
-      ? Array.from(new Segmenter(undefined, { granularity: "grapheme" }).segment(text)).length
+    typeof Intl.Segmenter === "function"
+      ? Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text)).length
       : Array.from(text.replace(/[\p{M}\u200c\u200d]/gu, "")).length;
   return count <= 2;
 }
@@ -76,7 +75,7 @@ export const ICON_IMAGE_DATA_URL_MAX_LENGTH = 32_768;
 /**
  * A small raster icon carried inline. The prefix is pinned to PNG rather than
  * any `data:image/`. On web that is what keeps an SVG, which can script, out
- * of the `<img>`: Blink picks the decoder from the declared type. Mobile's
+ * of the `<img>`, because Blink picks the decoder from the declared type. Mobile's
  * image library sniffs content instead, so there the guarantee is that neither
  * renderer in use has a script engine, not the prefix.
  *

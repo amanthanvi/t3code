@@ -35,7 +35,7 @@ export type ExecutionEnvironmentPlatformArch = typeof ExecutionEnvironmentPlatfo
 
 /**
  * The kinds a released server accepts as a bare string. Only these have that
- * wire form: a server without `environmentIconOverride` takes them and
+ * wire form. A server without `environmentIconOverride` takes them and
  * nothing else, and an older client decodes them from a snapshot. A kind
  * added later travels as the object, because an older peer decodes a string
  * it does not know as null and loses the icon. The list is frozen.
@@ -116,9 +116,10 @@ export type EnvironmentIcon = typeof EnvironmentIcon.Type;
 /**
  * What a user picked for an environment's icon. Servers that predate the
  * override stored a bare machine kind, and that string form stays on the
- * wire and on disk for a plain pick of one of the seven kinds: it is what an
- * older server accepts in a patch and what an older client can decode from a
- * snapshot, so the picks that always existed keep working across versions.
+ * wire and on disk for a plain pick of one of the seven kinds. That string is
+ * what an older server accepts in a patch and what an older client can decode
+ * from a snapshot, so the picks that always existed keep working across
+ * versions.
  * Anything richer (a color, a name outside the seven, another variant)
  * encodes as the object, which older peers drop to null through
  * `ForwardCompatibleNullable`; the `environmentIconOverride` capability keeps
