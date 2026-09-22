@@ -77,23 +77,6 @@ const ICON_BY_ID: Record<EnvironmentCuratedIconId, FunctionComponent<LucideProps
   network: NetworkIcon,
 };
 
-export const ENVIRONMENT_ICON_LABELS: Record<EnvironmentCuratedIconId, string> = {
-  server: "Server",
-  cloud: "Cloud VM",
-  linux: "Linux/WSL",
-  desktop: "Desktop",
-  laptop: "Laptop",
-  "mac-mini": "Mini PC",
-  "mac-studio": "Workstation",
-  terminal: "Dev box",
-  database: "Database",
-  container: "Container",
-  globe: "Edge",
-  home: "Home server",
-  gpu: "GPU box",
-  network: "Network",
-};
-
 /**
  * Which curated glyph draws a named icon. A name this build cannot draw
  * (picked on a newer client) gets the generic server so the row still reads

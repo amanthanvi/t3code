@@ -1,6 +1,7 @@
 import {
   AuthSettingsWriteScope,
   ENVIRONMENT_CURATED_ICON_IDS,
+  ENVIRONMENT_ICON_LABELS,
   environmentIconForMachineKind,
   isEnvironmentCuratedIconId,
   isEnvironmentMachineKind,
@@ -16,7 +17,7 @@ import { Fragment } from "react";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { useEnvironmentScope } from "../../state/session";
-import { ENVIRONMENT_ICON_LABELS, EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
+import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import {
   MenuItem,
   MenuRadioGroup,
