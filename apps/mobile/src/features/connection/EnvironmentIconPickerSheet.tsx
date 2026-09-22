@@ -1,4 +1,5 @@
 import {
+  ENVIRONMENT_ICON_LABELS,
   resolveEnvironmentIcon,
   type EnvironmentIcon,
   type EnvironmentId,
@@ -11,10 +12,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
-import {
-  ENVIRONMENT_ICON_LABELS,
-  EnvironmentMachineSymbol,
-} from "../../components/EnvironmentMachineSymbol";
+import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { cn } from "../../lib/cn";
 import {
   describeEnvironmentIconImageFailure,
@@ -57,26 +55,37 @@ export function EnvironmentIconPickerSheet(props: {
   const rich = supportsRichEnvironmentIcon(props.serverConfig);
   const choices = listMobileEnvironmentIconChoices({ serverConfig: props.serverConfig, detected });
 
+  const applyIcon = async (environmentIcon: EnvironmentIcon | null) => {
+    const result = await updateSettings({
+      environmentId: props.environmentId,
+      input: { patch: { environmentIcon } },
+    });
+    if (AsyncResult.isSuccess(result)) props.onClose();
+  };
   const write = async (environmentIcon: EnvironmentIcon | null) => {
     if (pending) return;
     setPending(true);
     try {
-      const result = await updateSettings({
-        environmentId: props.environmentId,
-        input: { patch: { environmentIcon } },
-      });
-      if (AsyncResult.isSuccess(result)) props.onClose();
+      await applyIcon(environmentIcon);
     } finally {
       setPending(false);
     }
   };
+  // The native picker, the decode, and the encode all run before the write, so
+  // the pending window has to open here rather than inside `write`.
   const pickImage = async () => {
+    if (pending) return;
     setImageError(null);
-    const result = await pickEnvironmentIconImage();
-    if (result.ok) {
-      await write({ kind: "image", dataUrl: result.dataUrl });
-    } else if (result.reason !== "cancelled") {
-      setImageError(describeEnvironmentIconImageFailure(result.reason));
+    setPending(true);
+    try {
+      const result = await pickEnvironmentIconImage();
+      if (result.ok) {
+        await applyIcon({ kind: "image", dataUrl: result.dataUrl });
+      } else if (result.reason !== "cancelled") {
+        setImageError(describeEnvironmentIconImageFailure(result.reason));
+      }
+    } finally {
+      setPending(false);
     }
   };
 
@@ -202,7 +211,11 @@ export function EnvironmentIconPickerSheet(props: {
                 <Text className="text-base text-foreground" numberOfLines={1}>
                   {current.kind === "image" ? "Replace photo" : "Choose a photo"}
                 </Text>
-                <Text className="text-xs text-foreground-muted" numberOfLines={2}>
+                <Text
+                  accessibilityLiveRegion={imageError === null ? "none" : "polite"}
+                  className="text-xs text-foreground-muted"
+                  numberOfLines={2}
+                >
                   {imageError ??
                     (rich
                       ? "Cropped to a square and stored at 64 by 64."

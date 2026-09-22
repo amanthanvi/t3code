@@ -15,11 +15,12 @@ import * as ProcessRunner from "../processRunner.ts";
 
 const DMI_ROOT = "/sys/class/dmi/id";
 const KERNEL_RELEASE_PATH = "/proc/sys/kernel/osrelease";
-// Docker and Podman each leave a marker file at the root of a container.
-// Runtimes on a cgroup v1 host still name themselves in PID 1's cgroup path;
-// on cgroup v2 with a private cgroup namespace (the default for containerd,
-// Kubernetes, LXC, and nspawn) that file is exactly `0::/`, which no host
-// PID 1 ever reports, so the bare root is itself the signal.
+// Docker and Podman each leave a marker file at the root of a container, and a
+// runtime sharing the host's cgroup namespace names itself in PID 1's cgroup
+// path. Those two are the whole signal. A private cgroup namespace, which is
+// the default for containerd, Kubernetes, LXC, and nspawn, reports a bare
+// `0::/`, and so does a host whose init leaves PID 1 in the root cgroup, so a
+// container with neither a marker file nor a named cgroup reads as a host.
 const CONTAINER_MARKER_PATHS = ["/.dockerenv", "/run/.containerenv"];
 const INIT_CGROUP_PATH = "/proc/1/cgroup";
 const CGROUP_CONTAINER_MARKERS = ["docker", "containerd", "podman", "lxc", "kubepods", "libpod"];
