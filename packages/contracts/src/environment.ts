@@ -119,7 +119,7 @@ export const ENVIRONMENT_ICON_LABELS: Record<EnvironmentCuratedIconId, string> =
 /**
  * Lucide icons the picker offers beyond the curated set. Web could draw any
  * of the ~1,900 Lucide names for free, but mobile pays bundle weight per name
- * it can draw, so the offered set is one shared list: an icon picked on
+ * it can draw, so the offered set is one shared list. An icon picked on
  * desktop that the phone cannot show is worse than a shorter list. Mobile
  * generates path data for exactly these ids; a name outside the list falls
  * back to the generic server on every client.
