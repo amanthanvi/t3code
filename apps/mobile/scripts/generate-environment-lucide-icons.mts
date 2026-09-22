@@ -83,18 +83,5 @@ export function renderEnvironmentLucideIconsModule(): string {
 }
 
 if (import.meta.main) {
-  const contents = renderEnvironmentLucideIconsModule();
-  if (process.argv.includes("--check")) {
-    const current = NodeFS.existsSync(GENERATED_MODULE_PATH)
-      ? NodeFS.readFileSync(GENERATED_MODULE_PATH, "utf8")
-      : null;
-    if (current !== contents) {
-      console.error(
-        `${NodePath.relative(process.cwd(), GENERATED_MODULE_PATH)} is stale. Run vp run --filter @t3tools/mobile generate:lucide-icons.`,
-      );
-      process.exitCode = 1;
-    }
-  } else {
-    NodeFS.writeFileSync(GENERATED_MODULE_PATH, contents);
-  }
+  NodeFS.writeFileSync(GENERATED_MODULE_PATH, renderEnvironmentLucideIconsModule());
 }
