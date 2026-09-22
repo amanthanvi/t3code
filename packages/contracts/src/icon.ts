@@ -49,20 +49,19 @@ export type MonogramText = typeof MonogramText.Type;
 
 /**
  * Whether `text` reads as at most two characters, the bound a monogram tile
- * can hold. `Intl.Segmenter` is exact. Without it the count is code points
- * after stripping the combining marks and joiners `MonogramText` admits,
- * which agrees for Latin, digits, and accents either precomposed or
- * decomposed. It over-counts a Devanagari conjunct or a decomposed Hangul
- * syllable, so a runtime lacking `Intl.Segmenter` refuses a monogram the
- * server would take. That direction is the safe one, because it never
- * stores text too wide for the tile.
+ * can hold. The count is code points after stripping the combining marks and
+ * joiners `MonogramText` admits, which matches grapheme counting for Latin,
+ * digits, and accents either precomposed or decomposed. A Devanagari conjunct
+ * or a decomposed Hangul syllable counts high, so those scripts get one
+ * cluster rather than two.
+ *
+ * `Intl.Segmenter` would be exact, and Hermes does not ship it. Reaching for
+ * it where it exists would accept on the server and on web what mobile
+ * refuses, and one bound every client computes the same way is worth more
+ * than the extra scripts.
  */
 export function isMonogramLength(text: string): boolean {
-  const count =
-    typeof Intl.Segmenter === "function"
-      ? Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text)).length
-      : Array.from(text.replace(/[\p{M}\u200c\u200d]/gu, "")).length;
-  return count <= 2;
+  return Array.from(text.replace(/[\p{M}\u200c\u200d]/gu, "")).length <= 2;
 }
 
 /**
