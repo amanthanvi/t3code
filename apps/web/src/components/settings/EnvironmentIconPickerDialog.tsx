@@ -129,6 +129,7 @@ export function EnvironmentIconPickerDialog({
   const [monogram, setMonogram] = useState(initial.monogram);
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(initial.imageDataUrl);
   const [imageError, setImageError] = useState<string | null>(null);
+  const [imageEncoding, setImageEncoding] = useState(false);
   const imagePickRef = useRef(0);
   const [customEmoji, setCustomEmoji] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -146,6 +147,10 @@ export function EnvironmentIconPickerDialog({
       setMonogram(next.monogram);
       setImageDataUrl(next.imageDataUrl);
       setImageError(null);
+      // An encode still running from the last time the dialog was open must
+      // not land in this one.
+      imagePickRef.current += 1;
+      setImageEncoding(false);
       setCustomEmoji("");
     }
     previousOpenRef.current = open;
@@ -169,8 +174,10 @@ export function EnvironmentIconPickerDialog({
     if (!file) return;
     // Encoding is async, so a second pick can resolve before the first.
     const pick = ++imagePickRef.current;
+    setImageEncoding(true);
     const result = await encodeEnvironmentIconImage(file);
     if (pick !== imagePickRef.current) return;
+    setImageEncoding(false);
     if (result.ok) {
       setImageDataUrl(result.dataUrl);
       setImageError(null);
@@ -186,9 +193,11 @@ export function EnvironmentIconPickerDialog({
       color !== null ||
       lucideId !== null ||
       !isLegacyEnvironmentMachineKind(iconId));
-  const canSave = write.kind === "write" && !writeLocked;
+  // Saving mid-encode would write the previous image and drop the new pick.
+  const imagePending = mode === "image" && imageEncoding;
+  const canSave = write.kind === "write" && !writeLocked && !imagePending;
   const save = () => {
-    if (write.kind !== "write" || writeLocked) return;
+    if (write.kind !== "write" || writeLocked || imagePending) return;
     onSelect(write.icon);
     onOpenChange(false);
   };
@@ -385,7 +394,9 @@ export function EnvironmentIconPickerDialog({
                   {imageDataUrl === null ? "Choose image" : "Replace image"}
                 </Button>
                 <p className="text-xs text-muted-foreground">
-                  {imageError ?? "Cropped to a square and stored at 64 by 64."}
+                  {imageEncoding
+                    ? "Preparing image…"
+                    : (imageError ?? "Cropped to a square and stored at 64 by 64.")}
                 </p>
               </div>
             </div>
