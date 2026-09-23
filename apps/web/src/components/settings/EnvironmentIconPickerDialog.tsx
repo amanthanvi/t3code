@@ -114,6 +114,7 @@ export function EnvironmentIconPickerDialog({
   const [monogram, setMonogram] = useState(initial.monogram);
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(initial.imageDataUrl);
   const [imageError, setImageError] = useState<string | null>(null);
+  const [imageEncoding, setImageEncoding] = useState(false);
   const imagePickRef = useRef(0);
   const [customEmoji, setCustomEmoji] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -136,8 +137,10 @@ export function EnvironmentIconPickerDialog({
     if (!file) return;
     // Encoding is async, so a second pick can resolve before the first.
     const pick = ++imagePickRef.current;
+    setImageEncoding(true);
     const result = await encodeEnvironmentIconImage(file);
     if (pick !== imagePickRef.current) return;
+    setImageEncoding(false);
     if (result.ok) {
       setImageDataUrl(result.dataUrl);
       setImageError(null);
@@ -147,8 +150,11 @@ export function EnvironmentIconPickerDialog({
   };
   // Anything beyond a plain machine kind travels as the object form, which
   // only a server with the override capability stores.
+  // Saving mid-encode would write the previous image and drop the new pick.
+  const imagePending = mode === "image" && imageEncoding;
   const canSave =
     write.kind === "write" &&
+    !imagePending &&
     (richLock === null || write.icon === null || hasLegacyEnvironmentIconForm(write.icon));
   const save = () => {
     if (!canSave || write.kind !== "write") return;
@@ -348,7 +354,9 @@ export function EnvironmentIconPickerDialog({
                   {imageDataUrl === null ? "Choose image" : "Replace image"}
                 </Button>
                 <p className="text-xs text-muted-foreground">
-                  {imageError ?? "Cropped to a square and stored at 64 by 64."}
+                  {imageEncoding
+                    ? "Preparing image…"
+                    : (imageError ?? "Cropped to a square and stored at 64 by 64.")}
                 </p>
               </div>
             </div>
