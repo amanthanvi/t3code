@@ -1953,6 +1953,50 @@ function toRequestError(threadId: ThreadId, method: string, cause: unknown): Pro
   });
 }
 
+const decodeClaudeSettingsObject = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
+
+const readClaudeLaunchSettings = Effect.fnUntraced(function* (
+  value: string | null | undefined,
+  fileSystem: FileSystem.FileSystem,
+  path: Path.Path,
+  cwd: string | undefined,
+) {
+  if (value === undefined) return {};
+  if (!value) {
+    return yield* new ProviderAdapterValidationError({
+      provider: PROVIDER,
+      operation: "session/start",
+      issue: "Claude launch argument --settings requires a file path or JSON object.",
+    });
+  }
+  const inline = value.trimStart().startsWith("{") || value.trimStart().startsWith("[");
+  const filePath = inline ? undefined : path.resolve(cwd ?? process.cwd(), value);
+  const source = inline
+    ? value
+    : yield* fileSystem.readFileString(filePath!).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "session/start",
+              issue: `Cannot read Claude --settings file ${filePath}: ${cause.message}`,
+              cause,
+            }),
+        ),
+      );
+  return yield* Effect.try({
+    try: () => decodeClaudeSettingsObject(source),
+    catch: () =>
+      new ProviderAdapterValidationError({
+        provider: PROVIDER,
+        operation: "session/start",
+        issue: `Claude --settings ${inline ? "JSON" : `file ${filePath}`} must contain a valid JSON object.`,
+      }),
+  });
+});
+
 function sdkMessageType(value: unknown): string | undefined {
   if (!value || typeof value !== "object") {
     return undefined;
@@ -4834,8 +4878,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const {
         "permission-mode": launchArgPermissionMode,
         "dangerously-skip-permissions": launchArgSkipPermissions,
+        settings: launchArgSettings,
         ...extraArgs
       } = parseCliArgs(claudeSettings.launchArgs).flags;
+      const configuredSettings = yield* readClaudeLaunchSettings(
+        launchArgSettings,
+        fileSystem,
+        path,
+        input.cwd,
+      );
       const selectedModel =
         input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
       const modelSelection = selectedModel
@@ -4847,7 +4898,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const caps = getClaudeCatalogModelCapabilities(modelCatalog, modelSelection?.model);
       const descriptors = getProviderOptionDescriptors({ caps });
       const apiModelId = modelSelection
-        ? resolveClaudeCatalogApiModelId(modelCatalog, modelSelection)
+        ? resolveClaudeCatalogApiModelId(modelCatalog, modelSelection, claudeSettings.modelIdPrefix)
         : undefined;
       const initialContextWindow = selectedClaudeContextWindow(modelCatalog, modelSelection);
       const rawEffort = getModelSelectionStringOptionValue(modelSelection, "effort");
@@ -4859,9 +4910,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const thinkingSupported = descriptors.some(
         (descriptor) => descriptor.type === "boolean" && descriptor.id === "thinking",
       );
-      const fastMode =
-        getModelSelectionBooleanOptionValue(modelSelection, "fastMode") === true &&
-        fastModeSupported;
+      const selectedFastMode = getModelSelectionBooleanOptionValue(modelSelection, "fastMode");
       const thinking = thinkingSupported
         ? getModelSelectionBooleanOptionValue(modelSelection, "thinking")
         : undefined;
@@ -4890,9 +4939,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ? "bypassPermissions"
           : runtimeModeToPermission[input.runtimeMode]);
       const settings = {
+        ...configuredSettings,
         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
         ...(requestThinkingSummaries ? { showThinkingSummaries: true } : {}),
-        ...(fastMode ? { fastMode: true } : {}),
+        ...(fastModeSupported && typeof selectedFastMode === "boolean"
+          ? { fastMode: selectedFastMode }
+          : {}),
         ...(ultracode ? { ultracode: true } : {}),
         ...(claudeSettings.autoCompactWindow
           ? { autoCompactWindow: Number(claudeSettings.autoCompactWindow) }
@@ -4940,7 +4992,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(permissionMode === "bypassPermissions"
           ? { allowDangerouslySkipPermissions: true }
           : {}),
-        ...(Object.keys(settings).length > 0 ? { settings } : {}),
+        ...(Object.keys(settings).length > 0
+          ? { settings: settings as NonNullable<ClaudeQueryOptions["settings"]> }
+          : {}),
         ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
@@ -4985,8 +5039,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "claude.query.include_partial_messages": true,
         "claude.query.additional_directories": additionalDirectories,
         "claude.query.setting_sources": [...CLAUDE_SETTING_SOURCES],
-        "claude.query.settings_json": encodeJsonStringForDiagnostics(settings) ?? "",
-        "claude.query.extra_args_json": encodeJsonStringForDiagnostics(extraArgs) ?? "",
         "claude.query.path_to_executable": claudeBinaryPath,
       });
 
@@ -5086,7 +5138,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             ...(input.cwd ? { cwd: input.cwd } : {}),
             ...(effectiveEffort ? { effort: effectiveEffort } : {}),
             ...(permissionMode ? { permissionMode } : {}),
-            ...(fastMode ? { fastMode: true } : {}),
+            ...(settings.fastMode === true ? { fastMode: true } : {}),
           },
         },
         providerRefs: {},
@@ -5162,7 +5214,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     if (modelSelection?.model) {
-      const apiModelId = resolveClaudeCatalogApiModelId(modelCatalog, modelSelection);
+      const apiModelId = resolveClaudeCatalogApiModelId(
+        modelCatalog,
+        modelSelection,
+        claudeSettings.modelIdPrefix,
+      );
       if (context.currentApiModelId !== apiModelId) {
         yield* Effect.tryPromise({
           try: () => context.query.setModel(apiModelId),

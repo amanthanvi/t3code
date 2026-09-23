@@ -40,7 +40,10 @@ const manifest = (): ModelManifestData => ({
                 id: "contextWindow",
                 label: "Context Window",
                 type: "select",
-                options: [{ id: "large", label: "Large", isDefault: true }],
+                options: [
+                  { id: "standard", label: "200k" },
+                  { id: "large", label: "Large", isDefault: true },
+                ],
               },
             ],
           },
@@ -113,6 +116,56 @@ describe("Claude model catalog", () => {
         model: "synthetic",
       }),
       "claude-synthetic-next[large]",
+    );
+  });
+
+  it("qualifies built-in Opus IDs before context suffixes without changing custom IDs", () => {
+    const base = manifest();
+    const catalog = scopeClaudeModelCatalog(
+      resolveClaudeModelCatalog({
+        ...base,
+        providers: {
+          ...base.providers,
+          claudeAgent: {
+            ...base.providers!.claudeAgent!,
+            models: [
+              {
+                slug: "claude-opus-5-5",
+                name: "Claude Opus 5.5",
+                aliases: ["opus"],
+                status: "current",
+                profile: "synthetic",
+              },
+            ],
+          },
+        },
+      }),
+      ["claude/claude-opus-5-5"],
+    );
+    const selection = (model: string, options?: Array<{ id: string; value: string }>) => ({
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model,
+      options,
+    });
+    assert.strictEqual(
+      resolveClaudeCatalogApiModelId(catalog, selection("opus"), "claude/"),
+      "claude/claude-opus-5-5[large]",
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogApiModelId(
+        catalog,
+        selection("claude-opus-5-5", [{ id: "contextWindow", value: "standard" }]),
+        "claude/",
+      ),
+      "claude/claude-opus-5-5",
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogApiModelId(catalog, selection("opus")),
+      "claude-opus-5-5[large]",
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogApiModelId(catalog, selection("claude/claude-opus-5-5"), "claude/"),
+      "claude/claude-opus-5-5",
     );
   });
 

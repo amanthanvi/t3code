@@ -627,6 +627,7 @@ export type CodexSettings = typeof CodexSettings.Type;
 // Claude settings schema and its patch so an out-of-range value fails at
 // the update that introduced it.
 const CLAUDE_AUTO_COMPACT_WINDOW_PATTERN = /^(?:|[1-9]\d{5}|1000000)$/;
+const CLAUDE_MODEL_ID_PREFIX_PATTERN = /^(?:|[A-Za-z0-9][A-Za-z0-9._-]*\/)$/;
 
 export const ClaudeSettings = makeProviderSettingsSchema(
   {
@@ -653,6 +654,14 @@ export const ClaudeSettings = makeProviderSettingsSchema(
     customModels: Schema.Array(CustomModelSetting).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    modelIdPrefix: TrimmedString.check(Schema.isPattern(CLAUDE_MODEL_ID_PREFIX_PATTERN)).pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Model ID prefix",
+        description: "Provider prefix for built-in Claude model IDs, such as claude/.",
+        providerSettingsForm: { placeholder: "e.g. claude/", clearWhenEmpty: "omit" },
+      }),
     ),
     launchArgs: Schema.String.pipe(
       Schema.withDecodingDefault(Effect.succeed("")),
@@ -681,7 +690,7 @@ export const ClaudeSettings = makeProviderSettingsSchema(
     ),
   },
   {
-    order: ["binaryPath", "homePath", "autoCompactWindow", "launchArgs"],
+    order: ["binaryPath", "homePath", "modelIdPrefix", "autoCompactWindow", "launchArgs"],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
@@ -1398,6 +1407,9 @@ const ClaudeSettingsPatch = Schema.Struct({
   binaryPath: Schema.optionalKey(TrimmedString),
   homePath: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
+  modelIdPrefix: Schema.optionalKey(
+    TrimmedString.check(Schema.isPattern(CLAUDE_MODEL_ID_PREFIX_PATTERN)),
+  ),
   launchArgs: Schema.optionalKey(TrimmedString),
   // Validated at the patch boundary so a typo fails the one update with a
   // schema error instead of a generic whole-settings failure.

@@ -233,9 +233,13 @@ function resolveClaudeCatalogContextWindow(
 export function resolveClaudeCatalogApiModelId(
   catalog: ClaudeModelCatalog,
   modelSelection: ModelSelection,
+  modelIdPrefix = "",
 ): string {
   const entry = resolveClaudeCatalogModel(catalog, modelSelection.model);
-  const slug = entry?.model.slug ?? modelSelection.model;
+  const canonicalSlug = entry?.model.slug ?? modelSelection.model;
+  const slug = entry && !entry.model.isCustom && !canonicalSlug.includes("/")
+    ? `${modelIdPrefix}${canonicalSlug}`
+    : canonicalSlug;
   const descriptors = getProviderOptionDescriptors({
     caps: entry?.model.capabilities ?? EMPTY_CAPABILITIES,
     selections: modelSelection.options,

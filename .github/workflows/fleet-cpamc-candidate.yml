@@ -1,0 +1,206 @@
+name: CPAMC desktop candidate artifacts
+
+on:
+  push:
+    branches:
+      - fix/t3-cpamc-adapter-short-20260923
+
+concurrency:
+  group: cpamc-candidate-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: none
+
+jobs:
+  bundle:
+    if: github.repository == 'amanthanvi/t3code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.candidate.outputs.version }}
+      clerk_publishable_key: ${{ steps.public_config.outputs.clerk_publishable_key }}
+      clerk_jwt_template: ${{ steps.public_config.outputs.clerk_jwt_template }}
+      clerk_cli_oauth_client_id: ${{ steps.public_config.outputs.clerk_cli_oauth_client_id }}
+      relay_url: ${{ steps.public_config.outputs.relay_url }}
+    steps:
+      - name: Check out exact candidate commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Set candidate version
+        id: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_RUN_ATTEMPT" -lt 100
+          sequence=$((GITHUB_RUN_NUMBER * 100 + GITHUB_RUN_ATTEMPT))
+          version="0.0.43-nightly.$(date -u +%Y%m%d).${sequence}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Load public Connect build values
+        id: public_config
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          set -a
+          source .env.example
+          set +a
+          test -n "$T3CODE_CLERK_PUBLISHABLE_KEY"
+          test -n "$T3CODE_CLERK_JWT_TEMPLATE"
+          test -n "$T3CODE_CLERK_CLI_OAUTH_CLIENT_ID"
+          test -n "$T3CODE_RELAY_URL"
+          {
+            echo "clerk_publishable_key=$T3CODE_CLERK_PUBLISHABLE_KEY"
+            echo "clerk_jwt_template=$T3CODE_CLERK_JWT_TEMPLATE"
+            echo "clerk_cli_oauth_client_id=$T3CODE_CLERK_CLI_OAUTH_CLIENT_ID"
+            echo "relay_url=$T3CODE_RELAY_URL"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Install build dependencies
+        run: vp install --frozen-lockfile --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+
+      - name: Align package versions
+        run: node scripts/update-release-package-versions.ts "${{ steps.candidate.outputs.version }}"
+
+      - name: Test Claude model routing and settings
+        run: |
+          vp test run \
+            packages/contracts/src/settings.test.ts \
+            apps/server/src/provider/ClaudeModelCatalog.test.ts \
+            apps/server/src/provider/Layers/ClaudeAdapter.test.ts \
+            apps/server/src/provider/Layers/ProviderInstanceRegistryLive.test.ts \
+            apps/server/src/serverSettings.test.ts \
+            apps/web/src/components/settings/ProviderSettingsForm.test.ts
+
+      - name: Typecheck changed surfaces
+        run: |
+          vp run --filter @t3tools/contracts typecheck
+          vp run --filter t3 typecheck
+          vp run --filter @t3tools/web typecheck
+
+      - name: Install Linux desktop build libraries
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
+
+      - name: Build JS bundle
+        run: vp run build:desktop
+
+      - name: Upload JS bundle
+        id: js_bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: js-bundle
+          path: |
+            apps/server/dist
+            apps/desktop/dist-electron
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Record candidate provenance
+        env:
+          CANDIDATE_VERSION: ${{ steps.candidate.outputs.version }}
+          JS_BUNDLE_DIGEST: ${{ steps.js_bundle.outputs.artifact-digest }}
+        run: |
+          node --input-type=module -e '
+            import { writeFileSync } from "node:fs";
+            const value = {
+              repository: process.env.GITHUB_REPOSITORY,
+              sourceSha: process.env.GITHUB_SHA,
+              version: process.env.CANDIDATE_VERSION,
+              workflow: process.env.GITHUB_WORKFLOW,
+              runId: process.env.GITHUB_RUN_ID,
+              runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+              jsBundleArtifactDigest: process.env.JS_BUNDLE_DIGEST,
+            };
+            writeFileSync("candidate-provenance.json", JSON.stringify(value, null, 2) + "\n");
+          '
+
+      - name: Upload candidate provenance
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: candidate-provenance
+          path: candidate-provenance.json
+          if-no-files-found: error
+          retention-days: 3
+
+  linux_x64:
+    needs: bundle
+    if: github.repository == 'amanthanvi/t3code' && needs.bundle.result == 'success'
+    uses: ./.github/workflows/release-desktop.yml
+    with:
+      label: CPAMC Linux x64 candidate
+      runner: ubuntu-24.04
+      platform: linux
+      target: AppImage
+      arch: x64
+      rust_target: x86_64-unknown-linux-gnu
+      resource_key: linux-x64
+      cli_archive: true
+      version: ${{ needs.bundle.outputs.version }}
+      ref: ${{ github.sha }}
+      release_channel: preview
+      relay_client_tracing: false
+      clerk_publishable_key: ${{ needs.bundle.outputs.clerk_publishable_key }}
+      clerk_jwt_template: ${{ needs.bundle.outputs.clerk_jwt_template }}
+      clerk_cli_oauth_client_id: ${{ needs.bundle.outputs.clerk_cli_oauth_client_id }}
+      relay_url: ${{ needs.bundle.outputs.relay_url }}
+
+  windows_x64:
+    needs: [bundle, linux_x64]
+    if: github.repository == 'amanthanvi/t3code' && needs.bundle.result == 'success' && needs.linux_x64.result == 'success'
+    uses: ./.github/workflows/release-desktop.yml
+    with:
+      label: CPAMC Windows x64 candidate
+      runner: windows-2025
+      platform: win
+      target: nsis
+      arch: x64
+      rust_target: x86_64-pc-windows-msvc
+      resource_key: win-x64
+      cli_archive: false
+      version: ${{ needs.bundle.outputs.version }}
+      ref: ${{ github.sha }}
+      release_channel: preview
+      relay_client_tracing: false
+      clerk_publishable_key: ${{ needs.bundle.outputs.clerk_publishable_key }}
+      clerk_jwt_template: ${{ needs.bundle.outputs.clerk_jwt_template }}
+      clerk_cli_oauth_client_id: ${{ needs.bundle.outputs.clerk_cli_oauth_client_id }}
+      relay_url: ${{ needs.bundle.outputs.relay_url }}
+
+  mac_arm64:
+    needs: bundle
+    if: github.repository == 'amanthanvi/t3code' && needs.bundle.result == 'success'
+    uses: ./.github/workflows/release-desktop.yml
+    with:
+      label: CPAMC macOS arm64 candidate
+      runner: macos-15
+      platform: mac
+      target: dmg
+      arch: arm64
+      rust_target: aarch64-apple-darwin
+      resource_key: darwin-arm64
+      cli_archive: false
+      version: ${{ needs.bundle.outputs.version }}
+      ref: ${{ github.sha }}
+      release_channel: preview
+      relay_client_tracing: false
+      clerk_publishable_key: ${{ needs.bundle.outputs.clerk_publishable_key }}
+      clerk_jwt_template: ${{ needs.bundle.outputs.clerk_jwt_template }}
+      clerk_cli_oauth_client_id: ${{ needs.bundle.outputs.clerk_cli_oauth_client_id }}
+      relay_url: ${{ needs.bundle.outputs.relay_url }}

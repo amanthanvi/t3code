@@ -221,6 +221,27 @@ describe("ClaudeSettings auto-compaction", () => {
   });
 });
 
+describe("ClaudeSettings model ID prefix", () => {
+  it("defaults to native IDs and accepts a provider prefix in full and patch settings", () => {
+    expect(decodeClaudeSettings({}).modelIdPrefix).toBe("");
+    expect(decodeClaudeSettings({ modelIdPrefix: "claude/" }).modelIdPrefix).toBe("claude/");
+    expect(
+      decodeServerSettingsPatch({ providers: { claudeAgent: { modelIdPrefix: "claude/" } } })
+        .providers?.claudeAgent?.modelIdPrefix,
+    ).toBe("claude/");
+  });
+
+  it.each(["claude", "/", "claude//", "../", "claude/op/", "claude /"])(
+    "rejects an invalid prefix: %s",
+    (modelIdPrefix) => {
+      expect(() => decodeClaudeSettings({ modelIdPrefix })).toThrow();
+      expect(() =>
+        decodeServerSettingsPatch({ providers: { claudeAgent: { modelIdPrefix } } }),
+      ).toThrow();
+    },
+  );
+});
+
 describe("ClientSettings notifications", () => {
   it("requires opt-in when existing settings omit notification preferences", () => {
     expect(decodeClientSettings({}).notificationMode).toBe("off");

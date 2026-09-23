@@ -615,6 +615,238 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("qualifies built-in model IDs for the opted-in instance on start and setModel", () => {
+    const harness = makeHarness({
+      claudeConfig: {
+        modelIdPrefix: "claude/",
+        customModels: ["claude/claude-opus-5-5"],
+      },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+          [{ id: "contextWindow", value: "expanded" }],
+        ),
+        runtimeMode: "full-access",
+      });
+      assert.equal(
+        harness.getLastCreateQueryInput()?.options.model,
+        `claude/${SYNTHETIC_CLAUDE_CAPABLE_MODEL}[expanded]`,
+      );
+      assert.equal(harness.getLastCreateQueryInput()?.options.fallbackModel, undefined);
+
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "use standard context",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+          [{ id: "contextWindow", value: "standard" }],
+        ),
+        attachments: [],
+      });
+      yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput()));
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "use qualified custom model",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude/claude-opus-5-5",
+        ),
+        attachments: [],
+      });
+      assert.deepEqual(harness.query.setModelCalls, [
+        `claude/${SYNTHETIC_CLAUDE_CAPABLE_MODEL}`,
+        "claude/claude-opus-5-5",
+      ]);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("merges inline Claude settings with T3 turn overrides", () => {
+    const harness = makeHarness({
+      claudeConfig: {
+        launchArgs: `--settings '{"fallbackModel":[],"env":{"CPAMC_TEST":"1"},"fastMode":false}'`,
+        autoCompactWindow: "300000",
+      },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+          [{ id: "fastMode", value: true }],
+        ),
+        runtimeMode: "full-access",
+      });
+      const options = harness.getLastCreateQueryInput()?.options;
+      assert.deepEqual(options?.settings, {
+        fallbackModel: [],
+        env: { CPAMC_TEST: "1" },
+        fastMode: true,
+        showThinkingSummaries: true,
+        autoCompactWindow: 300000,
+      });
+      assert.equal(options?.extraArgs?.settings, undefined);
+      assert.equal(options?.fallbackModel, undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("lets an explicit fast-mode-off selection override file settings", () => {
+    const harness = makeHarness({
+      claudeConfig: { launchArgs: `--settings '{"fallbackModel":[],"fastMode":true}'` },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+          [{ id: "fastMode", value: false }],
+        ),
+        runtimeMode: "full-access",
+      });
+      assert.deepEqual(harness.getLastCreateQueryInput()?.options.settings, {
+        fallbackModel: [],
+        fastMode: false,
+        showThinkingSummaries: true,
+      });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("reads absolute and child-cwd-relative Claude settings files", () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-settings-"));
+    const settingsPath = NodePath.join(dir, "settings.json");
+    NodeFS.writeFileSync(settingsPath, '{"fallbackModel":[],"permissions":{"allow":["Read"]}}');
+    const harness = makeHarness({
+      claudeConfig: {
+        launchArgs: `--settings "${settingsPath}"`,
+        autoCompactWindow: "300000",
+      },
+    });
+    return Effect.gen(function* () {
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(dir, { recursive: true, force: true })),
+      );
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      assert.deepEqual(harness.getLastCreateQueryInput()?.options.settings, {
+        fallbackModel: [],
+        permissions: { allow: ["Read"] },
+        autoCompactWindow: 300000,
+      });
+      for (const [launchArgs, cwd] of [
+        ["--settings settings.json", dir],
+        [`--settings "${NodePath.relative(process.cwd(), settingsPath)}"`, undefined],
+      ] as const) {
+        const relativeHarness = makeHarness({ claudeConfig: { launchArgs } });
+        yield* Effect.gen(function* () {
+          const relativeAdapter = yield* ClaudeAdapter;
+          yield* relativeAdapter.startSession({
+            threadId: THREAD_ID,
+            provider: ProviderDriverKind.make("claudeAgent"),
+            ...(cwd ? { cwd } : {}),
+            runtimeMode: "full-access",
+          });
+        }).pipe(Effect.provide(relativeHarness.layer));
+        assert.deepEqual(relativeHarness.getLastCreateQueryInput()?.options.settings, {
+          fallbackModel: [],
+          permissions: { allow: ["Read"] },
+        });
+      }
+      NodeFS.writeFileSync(settingsPath, "[");
+      const invalidHarness = makeHarness({
+        claudeConfig: { launchArgs: `--settings "${settingsPath}"` },
+      });
+      const result = yield* Effect.gen(function* () {
+        const invalidAdapter = yield* ClaudeAdapter;
+        return yield* invalidAdapter
+          .startSession({
+            threadId: THREAD_ID,
+            provider: ProviderDriverKind.make("claudeAgent"),
+            runtimeMode: "full-access",
+          })
+          .pipe(Effect.result);
+      }).pipe(Effect.provide(invalidHarness.layer));
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.equal(result.failure._tag, "ProviderAdapterValidationError");
+        assert.match(result.failure.message, /valid JSON object/);
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("rejects missing and malformed Claude settings", () =>
+    Effect.gen(function* () {
+      for (const [launchArgs, expectedIssue] of [
+        ["--settings", /requires a file path or JSON object/],
+        [`--settings "${NodePath.join(NodeOS.tmpdir(), "nonexistent-claude-settings.json")}"`, /Cannot read Claude --settings file/],
+        [`--settings '{"fallbackModel":'`, /must contain a valid JSON object/],
+      ] as const) {
+        const harness = makeHarness({ claudeConfig: { launchArgs } });
+        const result = yield* Effect.gen(function* () {
+          const adapter = yield* ClaudeAdapter;
+          return yield* adapter
+            .startSession({
+              threadId: THREAD_ID,
+              provider: ProviderDriverKind.make("claudeAgent"),
+              runtimeMode: "full-access",
+            })
+            .pipe(Effect.result);
+        }).pipe(Effect.provide(harness.layer));
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure") {
+          assert.equal(result.failure._tag, "ProviderAdapterValidationError");
+          assert.match(result.failure.message, expectedIssue);
+          assert.notMatch(result.failure.message, /fallbackModel/);
+        }
+      }
+    }).pipe(Effect.provideService(Random.Random, makeDeterministicRandomService())),
+  );
+
+  it.effect("leaves inherited Claude defaults untouched for empty inline settings", () => {
+    const harness = makeHarness({ claudeConfig: { launchArgs: "--settings '{}'" } });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      assert.equal(harness.getLastCreateQueryInput()?.options.settings, undefined);
+      assert.equal(harness.getLastCreateQueryInput()?.options.extraArgs?.settings, undefined);
+      assert.equal(harness.getLastCreateQueryInput()?.options.fallbackModel, undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("forwards Claude thinking toggle for models that support it", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
