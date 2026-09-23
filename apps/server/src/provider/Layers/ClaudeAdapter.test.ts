@@ -756,6 +756,7 @@ describe("ClaudeAdapterLive", () => {
         fallbackModel: [],
         permissions: { allow: ["Read"] },
         autoCompactWindow: 300000,
+        showThinkingSummaries: true,
       });
       for (const [launchArgs, cwd] of [
         ["--settings settings.json", dir],
@@ -774,6 +775,7 @@ describe("ClaudeAdapterLive", () => {
         assert.deepEqual(relativeHarness.getLastCreateQueryInput()?.options.settings, {
           fallbackModel: [],
           permissions: { allow: ["Read"] },
+          showThinkingSummaries: true,
         });
       }
       NodeFS.writeFileSync(settingsPath, "[");
@@ -838,7 +840,9 @@ describe("ClaudeAdapterLive", () => {
         provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
-      assert.equal(harness.getLastCreateQueryInput()?.options.settings, undefined);
+      assert.deepEqual(harness.getLastCreateQueryInput()?.options.settings, {
+        showThinkingSummaries: true,
+      });
       assert.equal(harness.getLastCreateQueryInput()?.options.extraArgs?.settings, undefined);
       assert.equal(harness.getLastCreateQueryInput()?.options.fallbackModel, undefined);
     }).pipe(
