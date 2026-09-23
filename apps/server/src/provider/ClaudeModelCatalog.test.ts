@@ -145,7 +145,7 @@ describe("Claude model catalog", () => {
     const selection = (model: string, options?: Array<{ id: string; value: string }>) => ({
       instanceId: ProviderInstanceId.make("claudeAgent"),
       model,
-      options,
+      ...(options ? { options } : {}),
     });
     assert.strictEqual(
       resolveClaudeCatalogApiModelId(catalog, selection("opus"), "claude/"),
