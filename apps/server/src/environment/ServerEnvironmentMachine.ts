@@ -1,5 +1,6 @@
 import type { EnvironmentMachineKind } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -205,15 +206,14 @@ const readOptionalFile = Effect.fn("readOptionalFile")(function* (path: string) 
 const runProbe = Effect.fn("runMachineProbe")(function* (input: {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
+  readonly timeout: Duration.Input;
 }) {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   return yield* processRunner
     .run({
       command: input.command,
       args: input.args,
-      // Boot waits on this. The PowerShell probe on Windows is the slow one;
-      // the terminal's CIM probe budgets the same, and a miss draws a server.
-      timeout: "1500 millis",
+      timeout: input.timeout,
       timeoutBehavior: "timedOutResult",
     })
     .pipe(
@@ -226,14 +226,22 @@ const runProbe = Effect.fn("runMachineProbe")(function* (input: {
 // Apple silicon; Intel Macs lack it, so `hw.model` ("Macmini8,1") is the
 // fallback. Both are single-digit-millisecond calls.
 const detectDarwinMachineKind = Effect.fn("detectDarwinMachineKind")(function* () {
-  const ioreg = yield* runProbe({ command: "ioreg", args: ["-rd1", "-n", "product"] });
+  const ioreg = yield* runProbe({
+    command: "ioreg",
+    args: ["-rd1", "-n", "product"],
+    timeout: "5 seconds",
+  });
   const productName = ioreg?.match(/"product-name"\s*=\s*<"([^"]+)">/)?.[1] ?? null;
   const fromProductName =
     productName === null ? null : machineKindFromAppleProductName(productName);
   if (fromProductName !== null) {
     return fromProductName;
   }
-  const model = yield* runProbe({ command: "sysctl", args: ["-n", "hw.model"] });
+  const model = yield* runProbe({
+    command: "sysctl",
+    args: ["-n", "hw.model"],
+    timeout: "5 seconds",
+  });
   return model === null ? null : machineKindFromAppleProductName(model);
 });
 
@@ -278,6 +286,9 @@ const detectWindowsMachineKind = Effect.fn("detectWindowsMachineKind")(function*
   const output = yield* runProbe({
     command: "powershell.exe",
     args: ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_PROBE_SCRIPT],
+    // Boot waits on this, and PowerShell is the slow probe. The terminal's CIM
+    // probe budgets the same, and a miss draws a server.
+    timeout: "1500 millis",
   });
   if (output === null) return null;
   const decoded = decodeWindowsProbe(output);
