@@ -118,6 +118,18 @@ function useEnvironmentOperateAccess(environmentId: EnvironmentId) {
 }
 
 /**
+ * Why a pick is unavailable, shown as a disabled row so the list still reads.
+ * Both the whole-submenu lock and the role-section lock render one of these.
+ */
+function IconLockNotice({ reason }: { readonly reason: string }) {
+  return (
+    <MenuItem disabled className="whitespace-normal">
+      {reason}
+    </MenuItem>
+  );
+}
+
+/**
  * "Icon" submenu for an environment's row menu. Lists the curated icons with
  * the server's own detection marked, so the user can tell whether detection
  * got it right before overriding. Picking the detected kind clears the
@@ -152,9 +164,7 @@ export function EnvironmentIconMenu({
       <MenuSubPopup>
         {lock !== null ? (
           <>
-            <MenuItem disabled className="whitespace-normal">
-              {lock}
-            </MenuItem>
+            <IconLockNotice reason={lock} />
             <MenuSeparator />
           </>
         ) : null}
@@ -172,11 +182,7 @@ export function EnvironmentIconMenu({
               {index === ENVIRONMENT_MACHINE_KINDS_COUNT ? (
                 <>
                   <MenuSeparator />
-                  {lock === null && roleLock !== null ? (
-                    <MenuItem disabled className="whitespace-normal text-xs">
-                      {roleLock}
-                    </MenuItem>
-                  ) : null}
+                  {lock === null && roleLock !== null ? <IconLockNotice reason={roleLock} /> : null}
                 </>
               ) : null}
               <MenuRadioItem
