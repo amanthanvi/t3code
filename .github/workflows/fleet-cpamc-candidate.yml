@@ -43,7 +43,7 @@ jobs:
           set -euo pipefail
           test "$GITHUB_RUN_ATTEMPT" -lt 100
           sequence=$((GITHUB_RUN_NUMBER * 100 + GITHUB_RUN_ATTEMPT))
-          version="0.0.43-nightly.$(date -u +%Y%m%d).${sequence}"
+          version="0.0.43-preview.$(date -u +%Y%m%d).${sequence}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Load public Connect build values
