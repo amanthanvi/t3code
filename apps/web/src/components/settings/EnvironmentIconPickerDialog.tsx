@@ -6,7 +6,6 @@ import {
   environmentIconForMachineKind,
   isEnvironmentCuratedIconId,
   isEnvironmentLucideIconId,
-  isEnvironmentMachineKind,
   isLegacyEnvironmentMachineKind,
   type EnvironmentCuratedIconId,
   type EnvironmentIcon,
