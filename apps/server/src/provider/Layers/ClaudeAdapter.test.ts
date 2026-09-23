@@ -807,7 +807,10 @@ describe("ClaudeAdapterLive", () => {
     Effect.gen(function* () {
       for (const [launchArgs, expectedIssue] of [
         ["--settings", /requires a file path or JSON object/],
-        [`--settings "${NodePath.join(NodeOS.tmpdir(), "nonexistent-claude-settings.json")}"`, /Cannot read Claude --settings file/],
+        [
+          `--settings "${NodePath.join(NodeOS.tmpdir(), "nonexistent-claude-settings.json")}"`,
+          /Cannot read Claude --settings file/,
+        ],
         [`--settings '{"fallbackModel":'`, /must contain a valid JSON object/],
       ] as const) {
         const harness = makeHarness({ claudeConfig: { launchArgs } });
