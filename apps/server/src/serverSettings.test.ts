@@ -30,6 +30,7 @@ import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.t
 
 const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
+const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const makeServerSettingsLayer = () =>
   ServerSettingsModule.layer.pipe(
@@ -620,12 +621,10 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         hiddenModels: ["claude/legacy-opus"],
         allowedModelPrefixes: ["cpamc/"],
       };
-      yield* fileSystem.writeFileString(
-        serverConfig.settingsPath,
-        Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))({
-          providerModelPolicies: { "opencode-cpamc": policy },
-        }),
-      );
+      const encoded = yield* encodeUnknownJson({
+        providerModelPolicies: { "opencode-cpamc": policy },
+      });
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, encoded);
 
       const loaded = yield* serverSettings.getSettings;
       assert.deepEqual(

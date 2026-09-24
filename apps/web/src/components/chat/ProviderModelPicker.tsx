@@ -26,6 +26,7 @@ import {
 } from "./ComposerControl";
 import { useComposerMenuProps } from "./composerEventScope";
 import { shortcutLabelForCommand } from "../../keybindings";
+import { toAppModelOption } from "../../modelSelection";
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   /**
@@ -76,13 +77,14 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const activeInstanceId = props.activeInstanceId;
   const selectedInstanceOptions = props.modelOptionsByInstance.get(activeInstanceId) ?? [];
   // Account-specific catalogs must keep the selected model label while unavailable.
+  const selectedServerModel = activeEntry?.models.find((model) => model.slug === props.model);
   const selectedModel =
     resolveModelPickerSelectedModel({
       driverKind: activeEntry?.driverKind,
       model: props.model,
       options: selectedInstanceOptions,
     }) ??
-    activeEntry?.models.find((model) => model.slug === props.model) ??
+    (selectedServerModel ? toAppModelOption(selectedServerModel) : undefined) ??
     (activeEntry?.driverKind === "opencode" || activeEntry?.driverKind === "antigravity"
       ? undefined
       : selectedInstanceOptions[0]);
@@ -165,12 +167,13 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     const entry = props.instanceEntries.find(
       (candidate) => candidate.instanceId === selection.instanceId,
     );
+    const serverModel = entry?.models.find((candidate) => candidate.slug === selection.model);
     const model =
       resolveModelPickerSelectedModel({
         driverKind: entry?.driverKind,
         model: selection.model,
         options: props.modelOptionsByInstance.get(selection.instanceId) ?? [],
-      }) ?? entry?.models.find((candidate) => candidate.slug === selection.model);
+      }) ?? (serverModel ? toAppModelOption(serverModel) : undefined);
     return {
       ...selection,
       entry,
