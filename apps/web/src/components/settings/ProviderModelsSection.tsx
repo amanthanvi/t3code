@@ -32,6 +32,7 @@ const CUSTOM_MODEL_PLACEHOLDER_BY_KIND: Partial<Record<ProviderDriverKind, strin
 
 /** Above this many models the list gets a filter input. */
 const FILTER_THRESHOLD = 8;
+const EMPTY_MODEL_PREFIXES: ReadonlyArray<string> = [];
 
 /**
  * Short capability words shown after a model's slug. Claude and Cursor report
@@ -167,7 +168,7 @@ export function ProviderModelsSection({
   hiddenModels,
   favoriteModels,
   modelOrder,
-  allowedModelPrefixes = [],
+  allowedModelPrefixes = EMPTY_MODEL_PREFIXES,
   onChange,
   onHiddenModelsChange,
   onFavoriteModelsChange,

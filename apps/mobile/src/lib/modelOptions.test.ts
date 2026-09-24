@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ProviderInstanceId, type ModelSelection, type ServerConfig } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProviderInstanceId,
+  type ModelSelection,
+  type ServerConfig,
+} from "@t3tools/contracts";
 
 import {
   buildModelOptions,
@@ -26,6 +31,7 @@ describe("mobile model options", () => {
     };
     const config = {
       settings: {
+        ...DEFAULT_SERVER_SETTINGS,
         providerModelPolicies: {
           [instanceId]: { hiddenModels: [alias], allowedModelPrefixes: [] },
         },
@@ -86,6 +92,7 @@ describe("mobile model options", () => {
     };
     const config = {
       settings: {
+        ...DEFAULT_SERVER_SETTINGS,
         providerModelPolicies: {
           [instanceId]: { hiddenModels: [], allowedModelPrefixes: ["cpamc/"] },
         },

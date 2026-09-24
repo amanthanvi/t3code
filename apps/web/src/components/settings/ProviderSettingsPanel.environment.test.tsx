@@ -267,9 +267,10 @@ describe("EnvironmentProviderSettings routing", () => {
       panel,
       (element) => element.props.instanceId === codexId && element.props.mode === "editor",
     );
-    expect(editor?.props.allowedModelPrefixes).toEqual(["cpamc/"]);
-    expect(editor?.props.policyHiddenModels).toEqual(["legacy"]);
-    (editor?.props.onHiddenModelsChange as (models: string[]) => void)(["cpamc/old"]);
+    if (!editor) throw new Error("Provider editor was not rendered");
+    expect(editor.props.allowedModelPrefixes).toEqual(["cpamc/"]);
+    expect(editor.props.policyHiddenModels).toEqual(["legacy"]);
+    (editor.props.onHiddenModelsChange as (models: string[]) => void)(["cpamc/old"]);
     expect(settingsState.updateClientSettings).toHaveBeenCalledExactlyOnceWith({
       providerModelPreferences: {
         [codexId]: {

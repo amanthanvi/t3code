@@ -58,6 +58,7 @@ import {
 } from "./providerStatus";
 
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+const EMPTY_MODEL_LIST: ReadonlyArray<string> = [];
 
 function ProviderStatusDiagnostic({
   detail,
@@ -443,8 +444,8 @@ export function ProviderInstanceCard({
   hiddenModels,
   favoriteModels,
   modelOrder,
-  allowedModelPrefixes = [],
-  policyHiddenModels = [],
+  allowedModelPrefixes = EMPTY_MODEL_LIST,
+  policyHiddenModels = EMPTY_MODEL_LIST,
   onHiddenModelsChange,
   onFavoriteModelsChange,
   onModelOrderChange,
