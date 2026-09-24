@@ -75,7 +75,7 @@ jobs:
           run-install: false
 
       - name: Install build dependencies
-        run: vp install --frozen-lockfile --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+        run: vp install --frozen-lockfile --filter=t3... --filter=@t3tools/web... --filter=@t3tools/mobile... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
 
       - name: Align package versions
         run: node scripts/update-release-package-versions.ts "${{ steps.candidate.outputs.version }}"
@@ -104,6 +104,7 @@ jobs:
           vp run --filter @t3tools/contracts typecheck
           vp run --filter t3 typecheck
           vp run --filter @t3tools/web typecheck
+          vp run --filter @t3tools/mobile typecheck
 
       - name: Install Linux desktop build libraries
         run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
