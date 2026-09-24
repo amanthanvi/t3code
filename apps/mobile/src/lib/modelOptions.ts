@@ -114,6 +114,23 @@ export function resolveSelectableModelSelection(
     : null;
 }
 
+export function resolveNewTaskSelectableModelSelection(
+  config: T3ServerConfig | null | undefined,
+  selection: ModelSelection | null,
+): ModelSelection | null {
+  const usable = resolveSelectableModelSelection(config, selection);
+  if (!usable) return null;
+  const policy = config?.settings?.providerModelPolicies?.[usable.instanceId];
+  if (
+    policy?.hiddenModels.includes(usable.model) ||
+    (policy?.allowedModelPrefixes.length &&
+      !policy.allowedModelPrefixes.some((prefix) => usable.model.startsWith(prefix)))
+  ) {
+    return null;
+  }
+  return usable;
+}
+
 /**
  * Reject legacy models for implicit defaults, except Antigravity selections,
  * which must not silently change after a catalog update. Explicit picks in
@@ -123,7 +140,7 @@ export function resolveDefaultableModelSelection(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection | null,
 ): ModelSelection | null {
-  const usable = resolveSelectableModelSelection(config, selection);
+  const usable = resolveNewTaskSelectableModelSelection(config, selection);
   if (!usable || !config) {
     return usable;
   }
@@ -138,10 +155,20 @@ export function resolveNewTaskModelSelection(input: {
   readonly stickySelection: ModelSelection | null;
   readonly modelOptions: ReadonlyArray<ModelOption>;
 }): ModelSelection | null {
+  const visible = (selection: ModelSelection | null) => {
+    if (!selection) return null;
+    return input.modelOptions.find(
+      (option) =>
+        option.selection.instanceId === selection.instanceId &&
+        option.selection.model === selection.model,
+    )?.isHiddenFromPicker
+      ? null
+      : selection;
+  };
   return (
-    input.draftSelection ??
-    input.projectDefaultSelection ??
-    input.stickySelection ??
+    visible(input.draftSelection) ??
+    visible(input.projectDefaultSelection) ??
+    visible(input.stickySelection) ??
     input.modelOptions.find(
       (option) => option.isDefault && !option.isUnavailable && !option.isHiddenFromPicker,
     )?.selection ??

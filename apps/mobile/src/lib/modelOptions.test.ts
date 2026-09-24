@@ -13,6 +13,7 @@ import {
   isModelSelectionUnavailable,
   resolveDefaultableModelSelection,
   resolveNewTaskModelSelection,
+  resolveNewTaskSelectableModelSelection,
   resolveSelectableModelSelection,
   type ModelOption,
 } from "./modelOptions";
@@ -71,8 +72,8 @@ describe("mobile model options", () => {
         projectDefaultSelection: null,
         stickySelection: null,
         modelOptions: options,
-      }),
-    ).toEqual(selection);
+      })?.model,
+    ).toBe("claude-opus-5-5");
     expect(
       resolveNewTaskModelSelection({
         draftSelection: null,
@@ -125,6 +126,9 @@ describe("mobile model options", () => {
     expect(groupByProvider(options)[0]?.models.map((option) => option.selection.model)).toEqual([
       "cpamc/opus",
     ]);
+    expect(resolveSelectableModelSelection(config, saved)).toBe(saved);
+    expect(resolveNewTaskSelectableModelSelection(config, saved)).toBeNull();
+    expect(resolveDefaultableModelSelection(config, saved)).toBeNull();
     expect(
       resolveNewTaskModelSelection({
         draftSelection: null,
@@ -133,14 +137,21 @@ describe("mobile model options", () => {
         modelOptions: options,
       })?.model,
     ).toBe("cpamc/opus");
-    expect(
-      resolveNewTaskModelSelection({
-        draftSelection: saved,
-        projectDefaultSelection: null,
-        stickySelection: null,
-        modelOptions: options,
-      }),
-    ).toEqual(saved);
+    for (const source of [
+      "draftSelection",
+      "projectDefaultSelection",
+      "stickySelection",
+    ] as const) {
+      expect(
+        resolveNewTaskModelSelection({
+          draftSelection: null,
+          projectDefaultSelection: null,
+          stickySelection: null,
+          [source]: saved,
+          modelOptions: options,
+        })?.model,
+      ).toBe("cpamc/opus");
+    }
 
     const emptyConfig = {
       ...config,
@@ -148,11 +159,12 @@ describe("mobile model options", () => {
     } as unknown as ServerConfig;
     const emptyOptions = buildModelOptions(emptyConfig, null);
     expect(groupByProvider(emptyOptions)).toEqual([]);
+    expect(resolveNewTaskSelectableModelSelection(emptyConfig, saved)).toBeNull();
     expect(
       resolveNewTaskModelSelection({
-        draftSelection: null,
-        projectDefaultSelection: null,
-        stickySelection: null,
+        draftSelection: saved,
+        projectDefaultSelection: saved,
+        stickySelection: saved,
         modelOptions: emptyOptions,
       }),
     ).toBeNull();
@@ -165,6 +177,12 @@ describe("mobile model options", () => {
       savedWhenUnavailable.find((option) => option.selection.model === "opencode/old-route")
         ?.selection.options,
     ).toEqual(saved.options);
+    expect(
+      resolveNewTaskSelectableModelSelection(emptyConfig, {
+        ...saved,
+        model: "opencode/old-route",
+      }),
+    ).toBeNull();
   });
 
   it("groups models by provider and flags legacy entries", () => {

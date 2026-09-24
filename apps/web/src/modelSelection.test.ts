@@ -283,10 +283,17 @@ describe("instance-scoped model selection", () => {
         .get(instanceId)
         ?.map((model) => model.slug),
     ).toEqual(["claude-opus-5-5"]);
-    expect(resolveAppModelSelectionForInstance(instanceId, settings, providers, alias)).toBe(alias);
+    expect(resolveAppModelSelectionForInstance(instanceId, settings, providers, alias)).toBe(
+      "claude-opus-5-5",
+    );
     expect(
       resolveAppModelSelectionForInstance(instanceId, settings, providers, alias, {
         preserveUnavailableSelection: true,
+      }),
+    ).toBe("claude-opus-5-5");
+    expect(
+      resolveAppModelSelectionForInstance(instanceId, settings, providers, alias, {
+        preservePolicyFilteredSelection: true,
       }),
     ).toBe(alias);
     expect(
@@ -378,14 +385,25 @@ describe("instance-scoped model selection", () => {
       "cpamc/opus",
     );
     expect(resolveAppModelSelectionForInstance(instanceId, settings, providers, saved.model)).toBe(
-      saved.model,
+      "cpamc/opus",
     );
+    expect(
+      resolveAppModelSelectionForInstance(instanceId, settings, providers, saved.model, {
+        preservePolicyFilteredSelection: true,
+      }),
+    ).toBe(saved.model);
     expect(
       resolveAppModelSelectionForInstance(instanceId, settings, providers, "unknown/removed"),
     ).toBe("cpamc/opus");
     expect(
       resolveAppModelSelectionForInstance(instanceId, settings, providers, "unknown/removed", {
         preserveUnavailableSelection: true,
+      }),
+    ).toBe("cpamc/opus");
+    expect(
+      resolveAppModelSelectionForInstance(instanceId, settings, providers, "unknown/removed", {
+        preserveUnavailableSelection: true,
+        preservePolicyFilteredSelection: true,
       }),
     ).toBe("unknown/removed");
     const state = deriveEffectiveComposerModelState({
@@ -399,6 +417,32 @@ describe("instance-scoped model selection", () => {
     });
     expect(state.selectedModel).toBe(saved.model);
     expect(state.modelOptions?.[instanceId]).toEqual(saved.options);
+
+    for (const draft of [
+      null,
+      { activeProvider: instanceId, modelSelectionByProvider: { [instanceId]: saved } },
+    ]) {
+      const newTask = deriveEffectiveComposerModelState({
+        draft,
+        providers,
+        selectedProvider: driver,
+        selectedInstanceId: instanceId,
+        threadModelSelection: null,
+        projectModelSelection: saved,
+        settings,
+      });
+      expect(newTask.selectedModel).toBe("cpamc/opus");
+    }
+    const stickyOnly = deriveEffectiveComposerModelState({
+      draft: { activeProvider: instanceId, modelSelectionByProvider: { [instanceId]: saved } },
+      providers,
+      selectedProvider: driver,
+      selectedInstanceId: instanceId,
+      threadModelSelection: null,
+      projectModelSelection: null,
+      settings,
+    });
+    expect(stickyOnly.selectedModel).toBe("cpamc/opus");
 
     const foreignSelection = createModelSelection(ProviderInstanceId.make("opencode"), saved.model);
     const switched = deriveEffectiveComposerModelState({
@@ -436,10 +480,16 @@ describe("instance-scoped model selection", () => {
         providers,
         "opencode/x-preview-f-free",
       ),
-    ).toBe("opencode/x-preview-f-free");
+    ).toBe("");
     expect(
       resolveAppModelSelectionForInstance(instanceId, settings, providers, "opencode/old-route", {
         preserveUnavailableSelection: true,
+      }),
+    ).toBe("");
+    expect(
+      resolveAppModelSelectionForInstance(instanceId, settings, providers, "opencode/old-route", {
+        preserveUnavailableSelection: true,
+        preservePolicyFilteredSelection: true,
       }),
     ).toBe("opencode/old-route");
     const state = deriveEffectiveComposerModelState({
@@ -452,6 +502,34 @@ describe("instance-scoped model selection", () => {
       settings,
     });
     expect(state.selectedModel).toBe("");
+    const newDraft = deriveEffectiveComposerModelState({
+      draft: {
+        activeProvider: instanceId,
+        modelSelectionByProvider: {
+          [instanceId]: createModelSelection(instanceId, "opencode/x-preview-f-free"),
+        },
+      },
+      providers,
+      selectedProvider: driver,
+      selectedInstanceId: instanceId,
+      threadModelSelection: null,
+      projectModelSelection: null,
+      settings,
+    });
+    expect(newDraft.selectedModel).toBe("");
+  });
+
+  it("does not restore a policy-hidden default model when no choices remain", () => {
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    const driver = ProviderDriverKind.make("claudeAgent");
+    const providers = [provider({ provider: driver, instanceId, models: ["claude-legacy"] })];
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      providerModelPolicies: {
+        [instanceId]: { hiddenModels: ["claude-legacy"], allowedModelPrefixes: [] },
+      },
+    };
+    expect(resolveAppModelSelection(driver, settings, providers, "claude-legacy")).toBe("");
   });
 
   it("drops server-reported custom rows that are no longer in settings", () => {

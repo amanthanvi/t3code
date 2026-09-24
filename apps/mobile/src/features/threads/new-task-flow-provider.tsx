@@ -32,7 +32,7 @@ import {
   groupByProvider,
   resolveDefaultableModelSelection,
   resolveNewTaskModelSelection,
-  resolveSelectableModelSelection,
+  resolveNewTaskSelectableModelSelection,
 } from "../../lib/modelOptions";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -473,7 +473,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   // Antigravity keeps unavailable selections so sign-out or a catalog change
   // cannot switch the user's model. Other providers retain their fallback
   // rules. Implicit defaults also exclude legacy models for those providers.
-  const draftModelSelection = resolveSelectableModelSelection(
+  const draftModelSelection = resolveNewTaskSelectableModelSelection(
     selectedEnvironmentServerConfig,
     selectedProjectDraft.modelSelection ?? null,
   );
@@ -965,7 +965,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       // Use the displayed selection rules without substituting an unavailable
       // Antigravity model while the task is queued.
       const draftModelSelection =
-        resolveSelectableModelSelection(
+        resolveNewTaskSelectableModelSelection(
           selectedEnvironmentServerConfig,
           draft.modelSelection ?? null,
         ) ?? selectedModel;

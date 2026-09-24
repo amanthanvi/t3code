@@ -110,7 +110,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { ProjectCloneBanner } from "../../components/ProjectCloneBanner";
 import {
   isModelSelectionUnavailable,
-  resolveSelectableModelSelection,
+  resolveNewTaskSelectableModelSelection,
 } from "../../lib/modelOptions";
 import { deriveThreadTitleFromPrompt } from "../../lib/projectThreadStartTurn";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
@@ -1181,7 +1181,7 @@ export function NewTaskDraftScreen(props: {
     // Read the latest explicit pick. Antigravity selections stay unchanged
     // when setup or a catalog change makes them unavailable.
     const modelSelection =
-      resolveSelectableModelSelection(
+      resolveNewTaskSelectableModelSelection(
         selectedEnvironmentServerConfig,
         draft.modelSelection ?? null,
       ) ?? flow.selectedModel;

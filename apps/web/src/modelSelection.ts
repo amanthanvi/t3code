@@ -176,6 +176,7 @@ function resolveFilteredKnownModelSelection(
   driverKind: ProviderDriverKind,
   rawModels: ReadonlyArray<ServerProvider["models"][number]>,
   selectedModel: string | null | undefined,
+  preservePolicyFilteredSelection = false,
 ): string | null {
   const slug = normalizeCustomModelSlug(selectedModel);
   if (!slug) return null;
@@ -184,7 +185,9 @@ function resolveFilteredKnownModelSelection(
   const excludedByPrefix =
     prefixes.length > 0 && !prefixes.some((prefix) => slug.startsWith(prefix));
   const hidden = preferences.hiddenModels.includes(slug);
-  if (!excludedByPrefix && !hidden) return null;
+  const policyHidden = settings.providerModelPolicies?.[instanceId]?.hiddenModels.includes(slug);
+  if (excludedByPrefix || policyHidden) return preservePolicyFilteredSelection ? slug : null;
+  if (!hidden) return null;
   const builtInSlugs = new Set(
     rawModels.filter((model) => !model.isCustom).map((model) => model.slug),
   );
@@ -192,9 +195,7 @@ function resolveFilteredKnownModelSelection(
     readInstanceCustomModels(settings, instanceId, driverKind),
     builtInSlugs,
   ).some((model) => model.slug === slug);
-  return isConfiguredCustom || (excludedByPrefix && rawModels.some((model) => model.slug === slug))
-    ? slug
-    : null;
+  return isConfiguredCustom ? slug : null;
 }
 
 function normalizeCustomModelEntries(
@@ -334,13 +335,13 @@ export function resolveAppModelSelection(
     selectedModel,
   );
   if (preserved) return preserved;
-  const hasPrefixFilter =
-    (readInstanceModelPreferences(settings, defaultInstanceIdForDriver(resolvedProvider))
-      .allowedModelPrefixes?.length ?? 0) > 0;
-  if (options.length === 0 && hasPrefixFilter) return "";
+  const policy = settings.providerModelPolicies?.[defaultInstanceIdForDriver(resolvedProvider)];
+  const hasPolicyFilter =
+    (policy?.allowedModelPrefixes.length ?? 0) > 0 || (policy?.hiddenModels.length ?? 0) > 0;
+  if (options.length === 0 && hasPolicyFilter) return "";
   return (
     resolveSelectableModel(resolvedProvider, selectedModel, options) ??
-    (hasPrefixFilter
+    (hasPolicyFilter
       ? (options.find((option) => option.isDefault)?.slug ?? options[0]?.slug ?? "")
       : getDefaultServerModel(providers, resolvedProvider))
   );
@@ -351,7 +352,10 @@ export function resolveAppModelSelectionForInstance(
   settings: UnifiedSettings,
   providers: ReadonlyArray<ServerProvider>,
   selectedModel: string | null | undefined,
-  resolutionOptions?: { readonly preserveUnavailableSelection?: boolean },
+  resolutionOptions?: {
+    readonly preserveUnavailableSelection?: boolean;
+    readonly preservePolicyFilteredSelection?: boolean;
+  },
 ): string | null {
   const entry = deriveProviderInstanceEntries(providers).find(
     (candidate) => candidate.instanceId === instanceId,
@@ -368,6 +372,7 @@ export function resolveAppModelSelectionForInstance(
     entry.driverKind,
     entry.models,
     selectedModel,
+    resolutionOptions?.preservePolicyFilteredSelection,
   );
   if (hiddenCustomSelection) return hiddenCustomSelection;
   const resolvedSelection = resolveSelectableModel(entry.driverKind, selectedModel, options);
@@ -378,9 +383,14 @@ export function resolveAppModelSelectionForInstance(
   ) {
     const unavailableSelection = normalizeCustomModelSlug(selectedModel);
     const preferences = readInstanceModelPreferences(settings, entry.instanceId);
+    const excludedByPrefix =
+      (preferences.allowedModelPrefixes?.length ?? 0) > 0 &&
+      !preferences.allowedModelPrefixes?.some((prefix) => unavailableSelection?.startsWith(prefix));
     if (
       unavailableSelection &&
-      !preferences.hiddenModels.includes(unavailableSelection) &&
+      (!preferences.hiddenModels.includes(unavailableSelection) ||
+        resolutionOptions.preservePolicyFilteredSelection) &&
+      (!excludedByPrefix || resolutionOptions.preservePolicyFilteredSelection) &&
       resolveSelectableModel(entry.driverKind, selectedModel, entry.models) === null &&
       (entry.driverKind !== "antigravity" || unavailableSelection !== ANTIGRAVITY_DEFAULT_MODEL)
     ) {
