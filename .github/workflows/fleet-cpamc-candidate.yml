@@ -101,10 +101,13 @@ jobs:
 
       - name: Typecheck changed surfaces
         run: |
-          vp run --filter @t3tools/contracts typecheck
-          vp run --filter t3 typecheck
-          vp run --filter @t3tools/web typecheck
-          vp run --filter @t3tools/mobile typecheck
+          status=0
+          for package in @t3tools/contracts t3 @t3tools/web @t3tools/mobile; do
+            if ! vp run --filter "$package" typecheck; then
+              status=1
+            fi
+          done
+          exit "$status"
 
       - name: Install Linux desktop build libraries
         run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config

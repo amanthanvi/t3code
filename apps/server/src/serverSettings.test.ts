@@ -622,7 +622,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       };
       yield* fileSystem.writeFileString(
         serverConfig.settingsPath,
-        JSON.stringify({ providerModelPolicies: { "opencode-cpamc": policy } }),
+        Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))({
+          providerModelPolicies: { "opencode-cpamc": policy },
+        }),
       );
 
       const loaded = yield* serverSettings.getSettings;
