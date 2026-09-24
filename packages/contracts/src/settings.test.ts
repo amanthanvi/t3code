@@ -33,7 +33,7 @@ describe("provider model policies", () => {
       allowedModelPrefixes: ["cpamc/"],
     });
     expect(
-      encodeServerSettings(decoded).providerModelPolicies[instanceId]?.allowedModelPrefixes,
+      encodeServerSettings(decoded).providerModelPolicies?.[instanceId]?.allowedModelPrefixes,
     ).toEqual(["cpamc/"]);
     expect(
       decodeServerSettings({ providerModelPolicies: { [instanceId]: {} } }).providerModelPolicies[
