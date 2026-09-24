@@ -1186,8 +1186,11 @@ export function deriveEffectiveComposerModelState(input: {
   projectModelSelection: ModelSelection | null | undefined;
   settings: UnifiedSettings;
 }): EffectiveComposerModelState {
-  const baseModelCandidate =
-    input.threadModelSelection?.model ?? input.projectModelSelection?.model ?? null;
+  const baseModelCandidate = input.selectedInstanceId
+    ? ([input.threadModelSelection, input.projectModelSelection].find(
+        (selection) => selection?.instanceId === input.selectedInstanceId,
+      )?.model ?? null)
+    : (input.threadModelSelection?.model ?? input.projectModelSelection?.model ?? null);
   const preserveThreadModel =
     input.selectedInstanceId !== null &&
     input.selectedInstanceId !== undefined &&
@@ -1219,8 +1222,14 @@ export function deriveEffectiveComposerModelState(input: {
   const instanceSelection = input.selectedInstanceId
     ? input.draft?.modelSelectionByProvider?.[input.selectedInstanceId]
     : undefined;
+  const restrictLegacySelectionToDefault =
+    input.selectedProvider === "antigravity" ||
+    (input.selectedInstanceId !== null &&
+      input.selectedInstanceId !== undefined &&
+      (input.settings.providerModelPolicies?.[input.selectedInstanceId]?.allowedModelPrefixes
+        ?.length ?? 0) > 0);
   const legacySelection =
-    input.selectedProvider === "antigravity" &&
+    restrictLegacySelectionToDefault &&
     input.selectedInstanceId &&
     input.selectedInstanceId !== defaultInstanceIdForDriver(input.selectedProvider)
       ? undefined

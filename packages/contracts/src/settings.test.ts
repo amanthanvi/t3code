@@ -20,6 +20,33 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("provider model policies", () => {
+  it("round-trips server-scoped policy and leaves legacy settings unrestricted", () => {
+    const instanceId = ProviderInstanceId.make("opencode-cpamc");
+    const decoded = decodeServerSettings({
+      providerModelPolicies: {
+        [instanceId]: { allowedModelPrefixes: ["cpamc/"] },
+      },
+    });
+    expect(decoded.providerModelPolicies[instanceId]).toEqual({
+      hiddenModels: [],
+      allowedModelPrefixes: ["cpamc/"],
+    });
+    expect(
+      encodeServerSettings(decoded).providerModelPolicies[instanceId]?.allowedModelPrefixes,
+    ).toEqual(["cpamc/"]);
+    expect(
+      decodeServerSettings({ providerModelPolicies: { [instanceId]: {} } }).providerModelPolicies[
+        instanceId
+      ],
+    ).toEqual({
+      hiddenModels: [],
+      allowedModelPrefixes: [],
+    });
+    expect(decodeServerSettings({}).providerModelPolicies).toEqual({});
+  });
+});
+
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();

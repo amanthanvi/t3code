@@ -11,6 +11,33 @@ import {
 import { deriveProviderModelsForDisplay, ProviderInstanceCard } from "./ProviderInstanceCard";
 
 describe("deriveProviderModelsForDisplay", () => {
+  it("shows only prefix-eligible rows in the Settings model list", () => {
+    expect(
+      deriveProviderModelsForDisplay({
+        liveModels: [
+          {
+            slug: "opencode/x-preview-f-free",
+            name: "Preview",
+            isCustom: false,
+            capabilities: null,
+          },
+          { slug: "cpamc/opus", name: "Opus", isCustom: false, capabilities: null },
+        ],
+        customModels: [{ slug: "other/custom", name: "Other", capabilities: null }],
+        allowedModelPrefixes: ["cpamc/"],
+      }).map((model) => model.slug),
+    ).toEqual(["cpamc/opus"]);
+    expect(
+      deriveProviderModelsForDisplay({
+        liveModels: [
+          { slug: "claude-opus-5-5", name: "Opus", isCustom: false, capabilities: null },
+        ],
+        customModels: [{ slug: "legacy/opus", name: "Legacy Opus", capabilities: null }],
+        policyHiddenModels: ["legacy/opus"],
+      }).map((model) => model.slug),
+    ).toEqual(["claude-opus-5-5"]);
+  });
+
   it("uses current config custom models instead of stale live custom rows", () => {
     const liveModels: ReadonlyArray<ServerProviderModel> = [
       {

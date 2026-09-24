@@ -82,6 +82,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       model: props.model,
       options: selectedInstanceOptions,
     }) ??
+    activeEntry?.models.find((model) => model.slug === props.model) ??
     (activeEntry?.driverKind === "opencode" || activeEntry?.driverKind === "antigravity"
       ? undefined
       : selectedInstanceOptions[0]);
@@ -164,11 +165,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     const entry = props.instanceEntries.find(
       (candidate) => candidate.instanceId === selection.instanceId,
     );
-    const model = resolveModelPickerSelectedModel({
-      driverKind: entry?.driverKind,
-      model: selection.model,
-      options: props.modelOptionsByInstance.get(selection.instanceId) ?? [],
-    });
+    const model =
+      resolveModelPickerSelectedModel({
+        driverKind: entry?.driverKind,
+        model: selection.model,
+        options: props.modelOptionsByInstance.get(selection.instanceId) ?? [],
+      }) ?? entry?.models.find((candidate) => candidate.slug === selection.model);
     return {
       ...selection,
       entry,

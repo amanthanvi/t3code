@@ -88,7 +88,7 @@ export function groupModelsForDisplay<
     groupFavorites: true,
     modelOrder: options.modelOrder,
   });
-  const isHidden = (model: T) => !model.isCustom && options.hiddenModels.has(model.slug);
+  const isHidden = (model: T) => options.hiddenModels.has(model.slug);
   return [
     ...ordered.filter((model) => options.favoriteModels.has(model.slug)),
     ...ordered.filter((model) => !options.favoriteModels.has(model.slug) && !isHidden(model)),
@@ -100,15 +100,15 @@ export function nextHiddenModelsForBulkToggle(
   models: ReadonlyArray<Pick<ServerProviderModel, "slug" | "isCustom">>,
   hiddenModels: ReadonlyArray<string>,
 ): string[] {
-  const builtInSlugs = models.filter((model) => !model.isCustom).map((model) => model.slug);
-  const builtInSlugSet = new Set(builtInSlugs);
-  const allBuiltInModelsHidden = builtInSlugs.every((slug) => hiddenModels.includes(slug));
+  const modelSlugs = models.map((model) => model.slug);
+  const modelSlugSet = new Set(modelSlugs);
+  const allModelsHidden = modelSlugs.every((slug) => hiddenModels.includes(slug));
 
-  if (allBuiltInModelsHidden) {
-    return hiddenModels.filter((slug) => !builtInSlugSet.has(slug));
+  if (allModelsHidden) {
+    return hiddenModels.filter((slug) => !modelSlugSet.has(slug));
   }
 
-  return [...new Set([...hiddenModels, ...builtInSlugs])];
+  return [...new Set([...hiddenModels, ...modelSlugs])];
 }
 
 interface ProviderModelsSectionProps {
@@ -136,6 +136,7 @@ interface ProviderModelsSectionProps {
   readonly favoriteModels: ReadonlyArray<string>;
   /** Explicit user-authored model ordering for this provider instance. */
   readonly modelOrder: ReadonlyArray<string>;
+  readonly allowedModelPrefixes?: ReadonlyArray<string>;
   /**
    * Commit the new custom-model list. Caller is responsible for routing the
    * write to the correct storage (legacy `settings.providers[kind]` vs.
@@ -166,6 +167,7 @@ export function ProviderModelsSection({
   hiddenModels,
   favoriteModels,
   modelOrder,
+  allowedModelPrefixes = [],
   onChange,
   onHiddenModelsChange,
   onFavoriteModelsChange,
@@ -192,12 +194,10 @@ export function ProviderModelsSection({
     [favoriteModelSet, hiddenModelSet, modelOrder, models],
   );
   const favoriteCount = displayModels.filter((model) => favoriteModelSet.has(model.slug)).length;
-  const hiddenCount = displayModels.filter(
-    (model) => !model.isCustom && hiddenModelSet.has(model.slug),
-  ).length;
+  const hiddenCount = displayModels.filter((model) => hiddenModelSet.has(model.slug)).length;
   const builtInModels = useMemo(() => models.filter((model) => !model.isCustom), [models]);
-  const allBuiltInModelsHidden =
-    builtInModels.length > 0 && builtInModels.every((model) => hiddenModelSet.has(model.slug));
+  const allModelsHidden =
+    models.length > 0 && models.every((model) => hiddenModelSet.has(model.slug));
   const showFilter = models.length > FILTER_THRESHOLD;
   const normalizedFilter = filter.trim().toLowerCase();
   const isFiltering = showFilter && normalizedFilter.length > 0;
@@ -227,6 +227,13 @@ export function ProviderModelsSection({
     const normalized = normalizeCustomModelSlug(input);
     if (!normalized) {
       setError("Enter a model slug.");
+      return;
+    }
+    if (
+      allowedModelPrefixes.length > 0 &&
+      !allowedModelPrefixes.some((prefix) => normalized.startsWith(prefix))
+    ) {
+      setError(`Model must start with ${allowedModelPrefixes.join(" or ")}.`);
       return;
     }
     if (models.some((model) => !model.isCustom && model.slug === normalized)) {
@@ -291,7 +298,7 @@ export function ProviderModelsSection({
   const groupOf = (model: (typeof displayModels)[number]) =>
     favoriteModelSet.has(model.slug)
       ? "favorite"
-      : !model.isCustom && hiddenModelSet.has(model.slug)
+      : hiddenModelSet.has(model.slug)
         ? "hidden"
         : "visible";
   const handleMove = (slug: string, direction: -1 | 1) => {
@@ -414,12 +421,8 @@ export function ProviderModelsSection({
     </span>
   );
 
-  const pickerTooltip = (model: DisplayModel, isHidden: boolean) =>
-    model.isCustom
-      ? "Custom models are always shown in the picker"
-      : isHidden
-        ? "Hidden from picker"
-        : "Shown in picker";
+  const pickerTooltip = (_model: DisplayModel, isHidden: boolean) =>
+    isHidden ? "Hidden from picker" : "Shown in picker";
 
   // The trigger is a wrapper span: a disabled switch gets no pointer events,
   // so it could not open the tooltip itself.
@@ -429,7 +432,6 @@ export function ProviderModelsSection({
         <Switch
           size="sm"
           checked={!isHidden}
-          disabled={model.isCustom}
           onCheckedChange={(checked) => setHidden(model.slug, !checked)}
           aria-label={`Show ${model.name} in the model picker`}
         />
@@ -443,7 +445,7 @@ export function ProviderModelsSection({
     const group = groupOf(model);
     // Hidden is read from the preference itself: a favorited model can still be
     // hidden, and its switch must say so even though it sits in the favorites group.
-    const isHidden = !model.isCustom && hiddenModelSet.has(model.slug);
+    const isHidden = hiddenModelSet.has(model.slug);
     const isFavorite = group === "favorite";
     const index = displayModels.indexOf(model);
     const previousModel = displayModels[index - 1];
@@ -514,7 +516,7 @@ export function ProviderModelsSection({
           />
         ) : null}
         <div className="flex items-center gap-2">
-          {builtInModels.length > 0 ? (
+          {models.length > 0 ? (
             <Button
               type="button"
               size="xs"
@@ -523,7 +525,7 @@ export function ProviderModelsSection({
                 onHiddenModelsChange(nextHiddenModelsForBulkToggle(models, hiddenModels))
               }
             >
-              {allBuiltInModelsHidden ? "Enable all" : "Disable all"}
+              {allModelsHidden ? "Enable all" : "Disable all"}
             </Button>
           ) : null}
           <span className="text-xs text-muted-foreground">

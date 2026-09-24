@@ -11,7 +11,7 @@ import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import type { ModelEsque } from "./providerIconUtils";
 
-function providerEntry(instanceId: string, driver: string) {
+function providerEntry(instanceId: string, driver: string, models: ServerProvider["models"] = []) {
   const provider: ServerProvider = {
     instanceId: ProviderInstanceId.make(instanceId),
     driver: ProviderDriverKind.make(driver),
@@ -21,7 +21,7 @@ function providerEntry(instanceId: string, driver: string) {
     status: "ready",
     auth: { status: "authenticated" },
     checkedAt: "2026-08-28T00:00:00.000Z",
-    models: [],
+    models,
     slashCommands: [],
     skills: [],
   };
@@ -33,11 +33,12 @@ function renderPicker(input: {
   driver: string;
   model: string;
   options: ReadonlyArray<ModelEsque>;
+  catalogModels?: ServerProvider["models"];
   includeEntry?: boolean;
   triggerLabel?: string;
 }) {
   const instanceId = ProviderInstanceId.make(input.instanceId);
-  const entry = providerEntry(input.instanceId, input.driver);
+  const entry = providerEntry(input.instanceId, input.driver, input.catalogModels);
   return renderToStaticMarkup(
     <ProviderModelPicker
       activeInstanceId={instanceId}
@@ -52,6 +53,21 @@ function renderPicker(input: {
 }
 
 describe("ProviderModelPicker", () => {
+  it("shows the catalog label for a selected custom alias hidden from the picker", () => {
+    const alias = "gateway/claude-opus-5-5[1m]";
+    const markup = renderPicker({
+      instanceId: "claude-cpamc",
+      driver: "claudeAgent",
+      model: alias,
+      options: [{ slug: "claude-opus-5-5", name: "Claude Opus 5.5" }],
+      catalogModels: [{ slug: alias, name: "Opus 5.5 1M", isCustom: true, capabilities: null }],
+    });
+
+    expect(markup).toContain("Opus 5.5 1M");
+    expect(markup).not.toContain(">gateway/claude-opus-5-5[1m]<");
+    expect(markup).not.toContain("Claude Opus 5.5");
+  });
+
   it("shows a neutral aggregate value without a representative model or availability badge", () => {
     const markup = renderPicker({
       instanceId: "codex_personal",

@@ -18,6 +18,7 @@ export type ModelOption = {
   readonly isDefault: boolean;
   readonly isLegacy: boolean;
   readonly isUnavailable?: boolean;
+  readonly isHiddenFromPicker?: boolean;
   readonly capabilities: ModelCapabilities | null;
   readonly selection: ModelSelection;
 };
@@ -141,8 +142,11 @@ export function resolveNewTaskModelSelection(input: {
     input.draftSelection ??
     input.projectDefaultSelection ??
     input.stickySelection ??
-    input.modelOptions.find((option) => option.isDefault && !option.isUnavailable)?.selection ??
-    input.modelOptions.find((option) => !option.isUnavailable)?.selection ??
+    input.modelOptions.find(
+      (option) => option.isDefault && !option.isUnavailable && !option.isHiddenFromPicker,
+    )?.selection ??
+    input.modelOptions.find((option) => !option.isUnavailable && !option.isHiddenFromPicker)
+      ?.selection ??
     null
   );
 }
@@ -164,6 +168,11 @@ export function buildModelOptions(
     }
 
     const providerLabel = providerDisplayLabel(provider);
+    const hiddenModels = new Set(
+      config?.settings?.providerModelPolicies?.[provider.instanceId]?.hiddenModels ?? [],
+    );
+    const allowedModelPrefixes =
+      config?.settings?.providerModelPolicies?.[provider.instanceId]?.allowedModelPrefixes ?? [];
     for (const model of provider.models) {
       const key = `${provider.instanceId}:${model.slug}`;
       options.set(key, {
@@ -175,6 +184,11 @@ export function buildModelOptions(
         providerDriver: provider.driver,
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
+        ...(hiddenModels.has(model.slug) ||
+        (allowedModelPrefixes.length > 0 &&
+          !allowedModelPrefixes.some((prefix) => model.slug.startsWith(prefix)))
+          ? { isHiddenFromPicker: true }
+          : {}),
         capabilities: model.capabilities,
         selection: normalizeSelectionOptions(
           {
@@ -213,6 +227,9 @@ export function buildModelOptions(
         displayName: provider?.displayName ?? instanceConfig?.displayName,
         instanceId: fallbackModelSelection.instanceId,
       });
+      const preferences =
+        config?.settings?.providerModelPolicies?.[fallbackModelSelection.instanceId];
+      const prefixes = preferences?.allowedModelPrefixes ?? [];
       options.set(key, {
         key,
         label: model?.name ?? fallbackModelSelection.model,
@@ -222,6 +239,11 @@ export function buildModelOptions(
         providerDriver,
         isDefault: false,
         isLegacy: model?.isLegacy === true,
+        ...(preferences?.hiddenModels?.includes(fallbackModelSelection.model) ||
+        (prefixes.length > 0 &&
+          !prefixes.some((prefix) => fallbackModelSelection.model.startsWith(prefix)))
+          ? { isHiddenFromPicker: true }
+          : {}),
         ...(isModelSelectionUnavailable(config, fallbackModelSelection)
           ? { isUnavailable: true }
           : {}),
@@ -237,6 +259,7 @@ export function buildModelOptions(
 export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyArray<ProviderGroup> {
   const groups = new Map<string, { providerLabel: string; models: ModelOption[] }>();
   for (const option of options) {
+    if (option.isHiddenFromPicker) continue;
     const existing = groups.get(option.providerKey);
     if (existing) {
       existing.models.push(option);

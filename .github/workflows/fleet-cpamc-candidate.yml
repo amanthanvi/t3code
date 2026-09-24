@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - fix/t3-cpamc-adapter-short-20260923
+      - fix/t3-model-list-20260923
 
 concurrency:
   group: cpamc-candidate-${{ github.ref }}
@@ -87,7 +88,16 @@ jobs:
             apps/server/src/provider/Layers/ClaudeAdapter.test.ts \
             apps/server/src/provider/Layers/ProviderInstanceRegistryLive.test.ts \
             apps/server/src/serverSettings.test.ts \
-            apps/web/src/components/settings/ProviderSettingsForm.test.ts
+            apps/web/src/components/settings/ProviderSettingsForm.test.ts \
+            apps/web/src/modelSelection.test.ts \
+            apps/web/src/composerDraftStore.test.ts \
+            apps/web/src/components/settings/ProviderModelsSection.test.ts \
+            apps/web/src/components/settings/ProviderInstanceCard.test.ts \
+            apps/web/src/components/settings/ProviderSettingsPanel.logic.test.ts \
+            apps/web/src/components/settings/ProviderSettingsPanel.environment.test.tsx \
+            apps/web/src/components/chat/ProviderModelPicker.test.tsx \
+            apps/web/src/components/chat/ModelPickerContent.test.ts \
+            apps/mobile/src/lib/modelOptions.test.ts
 
       - name: Typecheck changed surfaces
         run: |

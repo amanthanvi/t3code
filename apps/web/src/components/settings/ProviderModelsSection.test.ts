@@ -17,24 +17,22 @@ describe("groupModelsForDisplay", () => {
       modelOrder: ["d", "b"],
     });
 
-    // A custom model is never hidden, even if its slug is in the hidden set.
-    expect(display.map((entry) => entry.slug)).toEqual(["c", "d", "b", "custom", "a"]);
+    expect(display.map((entry) => entry.slug)).toEqual(["c", "d", "b", "a", "custom"]);
   });
 });
 
 describe("nextHiddenModelsForBulkToggle", () => {
-  it("hides every built-in model without hiding custom models", () => {
+  it("hides every model, including custom models", () => {
     const models = [model("a"), model("b"), model("custom", true)];
 
-    expect(nextHiddenModelsForBulkToggle(models, ["a"])).toEqual(["a", "b"]);
+    expect(nextHiddenModelsForBulkToggle(models, ["a"])).toEqual(["a", "b", "custom"]);
   });
 
-  it("shows every built-in model while preserving unrelated hidden entries", () => {
+  it("shows every model while preserving unrelated hidden entries", () => {
     const models = [model("a"), model("b"), model("custom", true)];
 
     expect(nextHiddenModelsForBulkToggle(models, ["a", "b", "legacy", "custom"])).toEqual([
       "legacy",
-      "custom",
     ]);
   });
 });

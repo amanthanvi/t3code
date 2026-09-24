@@ -611,6 +611,38 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("reads and retains provider model policies through an unrelated settings update", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const policy = {
+        hiddenModels: ["claude/legacy-opus"],
+        allowedModelPrefixes: ["cpamc/"],
+      };
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        JSON.stringify({ providerModelPolicies: { "opencode-cpamc": policy } }),
+      );
+
+      const loaded = yield* serverSettings.getSettings;
+      assert.deepEqual(
+        loaded.providerModelPolicies[ProviderInstanceId.make("opencode-cpamc")],
+        policy,
+      );
+
+      const updated = yield* serverSettings.updateSettings({ sidebarAutoSettleOnMerge: false });
+      assert.deepEqual(
+        updated.providerModelPolicies[ProviderInstanceId.make("opencode-cpamc")],
+        policy,
+      );
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const persisted = JSON.parse(raw) as { providerModelPolicies?: Record<string, unknown> };
+      assert.deepEqual(persisted.providerModelPolicies?.["opencode-cpamc"], policy);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("preserves existing provider instances without explicit enabled flags", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;

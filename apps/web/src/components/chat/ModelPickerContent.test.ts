@@ -9,10 +9,48 @@ import { describe, expect, it } from "vite-plus/test";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
   adjacentModelPickerProvider,
+  getHiddenSelectedModelPickerOptions,
   resolveModelPickerSelectedModel,
   shouldIncludeModelPickerOption,
   shouldOfferModelPickerSetup,
 } from "./ModelPickerContent";
+
+describe("hidden selected models", () => {
+  it("keeps a removable selection with its catalog name outside the normal options", () => {
+    const instanceId = ProviderInstanceId.make("claude-cpamc");
+    const hidden = "gateway/claude-opus-5-5[1m]";
+    const providerEntry = {
+      ...entry("ready", "claudeAgent"),
+      instanceId,
+      models: [{ slug: hidden, name: "Opus 5.5 1M", isCustom: true, capabilities: null }],
+    };
+    expect(
+      getHiddenSelectedModelPickerOptions({
+        selectedModels: [{ instanceId, model: hidden }],
+        instanceEntries: [providerEntry],
+        modelOptionsByInstance: new Map([
+          [instanceId, [{ slug: "claude-opus-5-5", name: "Opus 5.5" }]],
+        ]),
+      }),
+    ).toEqual([{ instanceId, model: hidden, name: "Opus 5.5 1M" }]);
+
+    const antigravityEntry = entry("ready", "antigravity");
+    expect(
+      getHiddenSelectedModelPickerOptions({
+        selectedModels: [
+          { instanceId: antigravityEntry.instanceId, model: ANTIGRAVITY_DEFAULT_MODEL },
+        ],
+        instanceEntries: [antigravityEntry],
+        modelOptionsByInstance: new Map([
+          [
+            antigravityEntry.instanceId,
+            [{ slug: "gemini-pro", name: "Gemini Pro", aliases: [ANTIGRAVITY_DEFAULT_MODEL] }],
+          ],
+        ]),
+      }),
+    ).toEqual([]);
+  });
+});
 
 function entry(status: ServerProvider["status"], driver = "opencode") {
   return deriveProviderInstanceEntries([

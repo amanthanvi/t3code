@@ -8,7 +8,7 @@ import { resolveSelectableModel } from "@t3tools/shared/model";
 import { useAtomValue } from "@effect/atom-react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
-import { ChevronRightIcon, SearchIcon } from "lucide-react";
+import { ChevronRightIcon, SearchIcon, XIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
 import { getProviderStatusMessage, hasProviderSetup } from "./ProviderStatusBanner";
@@ -77,6 +77,29 @@ export function resolveModelPickerSelectedModel(input: {
     );
   }
   return input.options.find((option) => option.slug === input.model);
+}
+
+export function getHiddenSelectedModelPickerOptions(input: {
+  selectedModels: ReadonlyArray<{ instanceId: ProviderInstanceId; model: string }>;
+  instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
+  modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>;
+}) {
+  return input.selectedModels.flatMap((selection) => {
+    const entry = input.instanceEntries.find(
+      (candidate) => candidate.instanceId === selection.instanceId,
+    );
+    if (
+      resolveModelPickerSelectedModel({
+        driverKind: entry?.driverKind,
+        model: selection.model,
+        options: input.modelOptionsByInstance.get(selection.instanceId) ?? [],
+      })
+    ) {
+      return [];
+    }
+    const model = entry?.models.find((candidate) => candidate.slug === selection.model);
+    return [{ ...selection, name: model?.name ?? selection.model }];
+  });
 }
 
 export function shouldIncludeModelPickerOption(input: {
@@ -227,6 +250,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     () => new Set(selectedModelKeys ?? (activeModelKey ? [activeModelKey] : [])),
     [selectedModelKeys, activeModelKey],
   );
+  const hiddenSelectedModels =
+    props.selectedModels && onToggleModel
+      ? getHiddenSelectedModelPickerOptions({
+          selectedModels: props.selectedModels,
+          instanceEntries,
+          modelOptionsByInstance,
+        })
+      : [];
   const activeInstanceHasSelectableUnavailableModel =
     activeEntry !== undefined &&
     (modelOptionsByInstance.get(props.activeInstanceId) ?? []).some((option) =>
@@ -953,6 +984,24 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 />
               </div>
             </div>
+
+            {hiddenSelectedModels.length > 0 ? (
+              <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border/70 px-2 py-1.5">
+                {hiddenSelectedModels.map((selection) => (
+                  <span key={`${selection.instanceId}:${selection.model}`} className="shrink-0">
+                    <Button
+                      size="xs"
+                      variant="ghost-muted"
+                      aria-label={`Remove ${selection.name} from selected models`}
+                      onClick={() => onToggleModel?.(selection.instanceId, selection.model)}
+                    >
+                      <span className="max-w-48 truncate">{selection.name}</span>
+                      <XIcon className="size-3 shrink-0" />
+                    </Button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
 
             {/* Model list */}
             <div className="relative min-h-0 flex-1 overflow-hidden pr-px">

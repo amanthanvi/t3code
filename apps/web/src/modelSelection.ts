@@ -97,10 +97,16 @@ function appendUnavailableDynamicModelSelection(
   provider: ProviderDriverKind,
   selectedModel: string | null | undefined,
   hiddenModels: ReadonlyArray<string>,
+  allowedModelPrefixes: ReadonlyArray<string>,
 ): AppModelOption[] {
   if (provider !== "opencode" && provider !== "antigravity") return options;
   const slug = normalizeCustomModelSlug(selectedModel);
   if (!slug) return options;
+  if (
+    allowedModelPrefixes.length > 0 &&
+    !allowedModelPrefixes.some((prefix) => slug.startsWith(prefix))
+  )
+    return options;
   if (provider === "antigravity" && slug === ANTIGRAVITY_DEFAULT_MODEL) return options;
 
   // A model that exists in the raw catalog can be absent from `options`
@@ -130,13 +136,18 @@ function toAppModelOption(model: ServerProvider["models"][number]): AppModelOpti
 function readInstanceModelPreferences(
   settings: UnifiedSettings,
   instanceId: ProviderInstanceId,
-): { readonly hiddenModels: ReadonlyArray<string>; readonly modelOrder: ReadonlyArray<string> } {
-  return (
-    settings.providerModelPreferences?.[instanceId] ?? {
-      hiddenModels: [],
-      modelOrder: [],
-    }
-  );
+): {
+  readonly hiddenModels: ReadonlyArray<string>;
+  readonly modelOrder: ReadonlyArray<string>;
+  readonly allowedModelPrefixes: ReadonlyArray<string>;
+} {
+  const local = settings.providerModelPreferences?.[instanceId];
+  const policy = settings.providerModelPolicies?.[instanceId];
+  return {
+    hiddenModels: [...new Set([...(local?.hiddenModels ?? []), ...(policy?.hiddenModels ?? [])])],
+    modelOrder: local?.modelOrder ?? [],
+    allowedModelPrefixes: policy?.allowedModelPrefixes ?? [],
+  };
 }
 
 function applyInstanceModelPreferences(
@@ -144,13 +155,46 @@ function applyInstanceModelPreferences(
   preferences: {
     readonly hiddenModels: ReadonlyArray<string>;
     readonly modelOrder: ReadonlyArray<string>;
+    readonly allowedModelPrefixes?: ReadonlyArray<string>;
   },
 ): AppModelOption[] {
   const hiddenModels = new Set(preferences.hiddenModels);
+  const prefixes = preferences.allowedModelPrefixes ?? [];
   return sortModelsForProviderInstance(
-    options.filter((option) => option.isCustom || !hiddenModels.has(option.slug)),
+    options.filter(
+      (option) =>
+        !hiddenModels.has(option.slug) &&
+        (prefixes.length === 0 || prefixes.some((prefix) => option.slug.startsWith(prefix))),
+    ),
     { modelOrder: preferences.modelOrder },
   );
+}
+
+function resolveFilteredKnownModelSelection(
+  settings: UnifiedSettings,
+  instanceId: ProviderInstanceId,
+  driverKind: ProviderDriverKind,
+  rawModels: ReadonlyArray<ServerProvider["models"][number]>,
+  selectedModel: string | null | undefined,
+): string | null {
+  const slug = normalizeCustomModelSlug(selectedModel);
+  if (!slug) return null;
+  const preferences = readInstanceModelPreferences(settings, instanceId);
+  const prefixes = preferences.allowedModelPrefixes ?? [];
+  const excludedByPrefix =
+    prefixes.length > 0 && !prefixes.some((prefix) => slug.startsWith(prefix));
+  const hidden = preferences.hiddenModels.includes(slug);
+  if (!excludedByPrefix && !hidden) return null;
+  const builtInSlugs = new Set(
+    rawModels.filter((model) => !model.isCustom).map((model) => model.slug),
+  );
+  const isConfiguredCustom = normalizeCustomModelEntries(
+    readInstanceCustomModels(settings, instanceId, driverKind),
+    builtInSlugs,
+  ).some((model) => model.slug === slug);
+  return isConfiguredCustom || (excludedByPrefix && rawModels.some((model) => model.slug === slug))
+    ? slug
+    : null;
 }
 
 function normalizeCustomModelEntries(
@@ -221,6 +265,7 @@ function getAppModelOptions(
     provider,
     selectedModel,
     preferences.hiddenModels,
+    preferences.allowedModelPrefixes ?? [],
   );
 }
 
@@ -269,6 +314,7 @@ export function getAppModelOptionsForInstance(
     entry.driverKind,
     selectedModel,
     preferences.hiddenModels,
+    preferences.allowedModelPrefixes ?? [],
   );
 }
 
@@ -280,9 +326,23 @@ export function resolveAppModelSelection(
 ): string {
   const resolvedProvider = resolveSelectableProvider(providers, provider);
   const options = getAppModelOptions(settings, providers, resolvedProvider, selectedModel);
+  const preserved = resolveFilteredKnownModelSelection(
+    settings,
+    defaultInstanceIdForDriver(resolvedProvider),
+    resolvedProvider,
+    getProviderModels(providers, resolvedProvider),
+    selectedModel,
+  );
+  if (preserved) return preserved;
+  const hasPrefixFilter =
+    (readInstanceModelPreferences(settings, defaultInstanceIdForDriver(resolvedProvider))
+      .allowedModelPrefixes?.length ?? 0) > 0;
+  if (options.length === 0 && hasPrefixFilter) return "";
   return (
     resolveSelectableModel(resolvedProvider, selectedModel, options) ??
-    getDefaultServerModel(providers, resolvedProvider)
+    (hasPrefixFilter
+      ? (options.find((option) => option.isDefault)?.slug ?? options[0]?.slug ?? "")
+      : getDefaultServerModel(providers, resolvedProvider))
   );
 }
 
@@ -302,25 +362,36 @@ export function resolveAppModelSelectionForInstance(
     entry,
     resolutionOptions?.preserveUnavailableSelection ? selectedModel : null,
   );
+  const hiddenCustomSelection = resolveFilteredKnownModelSelection(
+    settings,
+    entry.instanceId,
+    entry.driverKind,
+    entry.models,
+    selectedModel,
+  );
+  if (hiddenCustomSelection) return hiddenCustomSelection;
   const resolvedSelection = resolveSelectableModel(entry.driverKind, selectedModel, options);
-  if (resolvedSelection) {
-    return resolvedSelection;
-  }
+  if (resolvedSelection) return resolvedSelection;
   if (
     resolutionOptions?.preserveUnavailableSelection &&
     (entry.driverKind === "opencode" || entry.driverKind === "antigravity")
   ) {
     const unavailableSelection = normalizeCustomModelSlug(selectedModel);
-    const hiddenModels = readInstanceModelPreferences(settings, entry.instanceId).hiddenModels;
+    const preferences = readInstanceModelPreferences(settings, entry.instanceId);
     if (
       unavailableSelection &&
-      !hiddenModels.includes(unavailableSelection) &&
+      !preferences.hiddenModels.includes(unavailableSelection) &&
       resolveSelectableModel(entry.driverKind, selectedModel, entry.models) === null &&
       (entry.driverKind !== "antigravity" || unavailableSelection !== ANTIGRAVITY_DEFAULT_MODEL)
     ) {
       return unavailableSelection;
     }
   }
+  if (
+    options.length === 0 &&
+    (readInstanceModelPreferences(settings, entry.instanceId).allowedModelPrefixes?.length ?? 0) > 0
+  )
+    return "";
   return options.find((option) => option.isDefault)?.slug ?? options[0]?.slug ?? null;
 }
 

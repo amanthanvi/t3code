@@ -13,6 +13,7 @@ import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "./pr
 import {
   getCustomModelOptionsByInstance,
   getAppModelOptionsForInstance,
+  resolveAppModelSelection,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
   resolvePlanAgentHealPatch,
@@ -161,6 +162,27 @@ describe("instance-scoped model selection", () => {
         "opus",
       ),
     ).toBe("opus");
+
+    const hiddenSettings: UnifiedSettings = {
+      ...settings,
+      providerModelPreferences: {
+        [ProviderInstanceId.make("claude_openrouter")]: {
+          hiddenModels: ["opus"],
+          modelOrder: [],
+        },
+      },
+    };
+    expect(
+      getAppModelOptionsForInstance(hiddenSettings, openrouter).map((model) => model.slug),
+    ).toEqual(["claude-opus-4-8"]);
+    expect(
+      resolveAppModelSelectionForInstance(
+        ProviderInstanceId.make("claude_openrouter"),
+        hiddenSettings,
+        providers,
+        "opus",
+      ),
+    ).toBe("opus");
   });
 
   it("includes Grok custom models from the selected provider instance", () => {
@@ -229,6 +251,207 @@ describe("instance-scoped model selection", () => {
     expect(getAppModelOptionsForInstance(settings, stock).map((option) => option.slug)).toEqual([
       "claude-sonnet-4-6",
     ]);
+  });
+
+  it("hides a configured custom alias without replacing saved selections or options", () => {
+    const instanceId = ProviderInstanceId.make("claude_openrouter");
+    const alias = "openai/gpt-5.5";
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId,
+        models: ["claude-opus-5-5"],
+      }),
+    ];
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      providerModelPolicies: {
+        [instanceId]: { hiddenModels: [alias], allowedModelPrefixes: [] },
+      },
+    };
+    const entry = deriveProviderInstanceEntries(providers)[0]!;
+    const selected = createModelSelection(instanceId, alias, [
+      { id: "effort", value: "high" },
+      { id: "contextWindow", value: "1m" },
+    ]);
+
+    expect(
+      getAppModelOptionsForInstance(settings, entry, alias).map((model) => model.slug),
+    ).toEqual(["claude-opus-5-5"]);
+    expect(
+      getCustomModelOptionsByInstance(settings, providers, instanceId, alias)
+        .get(instanceId)
+        ?.map((model) => model.slug),
+    ).toEqual(["claude-opus-5-5"]);
+    expect(resolveAppModelSelectionForInstance(instanceId, settings, providers, alias)).toBe(alias);
+    expect(
+      resolveAppModelSelectionForInstance(instanceId, settings, providers, alias, {
+        preserveUnavailableSelection: true,
+      }),
+    ).toBe(alias);
+    expect(
+      resolveAppModelSelectionForInstance(instanceId, settings, providers, "unknown-hidden", {
+        preserveUnavailableSelection: true,
+      }),
+    ).toBe("claude-opus-5-5");
+
+    for (const draft of [
+      null,
+      { activeProvider: instanceId, modelSelectionByProvider: { [instanceId]: selected } },
+    ]) {
+      const state = deriveEffectiveComposerModelState({
+        draft,
+        providers,
+        selectedProvider: ProviderDriverKind.make("claudeAgent"),
+        selectedInstanceId: instanceId,
+        threadModelSelection: selected,
+        projectModelSelection: selected,
+        settings,
+      });
+      expect(state.selectedModel).toBe(alias);
+      expect(state.modelOptions?.[instanceId]).toEqual(selected.options);
+    }
+  });
+
+  it("preserves a hidden custom selection on the default provider only", () => {
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    const alias = "legacy/opus";
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      providerInstances: {
+        ...settingsWithProviderInstances().providerInstances,
+        [instanceId]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          config: { customModels: [alias] },
+        },
+      },
+      providerModelPreferences: {
+        [instanceId]: { hiddenModels: [alias], modelOrder: [] },
+      },
+    };
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId,
+        models: ["claude-opus-5-5"],
+      }),
+    ];
+
+    expect(
+      resolveAppModelSelection(ProviderDriverKind.make("claudeAgent"), settings, providers, alias),
+    ).toBe(alias);
+    expect(
+      resolveAppModelSelection(
+        ProviderDriverKind.make("claudeAgent"),
+        settings,
+        providers,
+        "unknown-hidden",
+      ),
+    ).toBe("claude-opus-5-5");
+  });
+
+  it("limits new choices by instance prefix without changing an existing OpenCode selection", () => {
+    const instanceId = ProviderInstanceId.make("opencode-cpamc");
+    const driver = ProviderDriverKind.make("opencode");
+    const providers = [
+      provider({
+        provider: driver,
+        instanceId,
+        models: ["opencode/x-preview-f-free", "cpamc/opus", "cpamc/fable"],
+      }),
+    ];
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      providerModelPolicies: {
+        [instanceId]: { hiddenModels: [], allowedModelPrefixes: ["cpamc/"] },
+      },
+    };
+    const saved = createModelSelection(instanceId, "opencode/x-preview-f-free", [
+      { id: "variant", value: "max" },
+    ]);
+    const entry = deriveProviderInstanceEntries(providers)[0]!;
+
+    expect(
+      getAppModelOptionsForInstance(settings, entry, saved.model).map((model) => model.slug),
+    ).toEqual(["cpamc/opus", "cpamc/fable"]);
+    expect(resolveAppModelSelectionForInstance(instanceId, settings, providers, null)).toBe(
+      "cpamc/opus",
+    );
+    expect(resolveAppModelSelectionForInstance(instanceId, settings, providers, saved.model)).toBe(
+      saved.model,
+    );
+    expect(
+      resolveAppModelSelectionForInstance(instanceId, settings, providers, "unknown/removed"),
+    ).toBe("cpamc/opus");
+    expect(
+      resolveAppModelSelectionForInstance(instanceId, settings, providers, "unknown/removed", {
+        preserveUnavailableSelection: true,
+      }),
+    ).toBe("unknown/removed");
+    const state = deriveEffectiveComposerModelState({
+      draft: { activeProvider: instanceId, modelSelectionByProvider: { [instanceId]: saved } },
+      providers,
+      selectedProvider: driver,
+      selectedInstanceId: instanceId,
+      threadModelSelection: saved,
+      projectModelSelection: null,
+      settings,
+    });
+    expect(state.selectedModel).toBe(saved.model);
+    expect(state.modelOptions?.[instanceId]).toEqual(saved.options);
+
+    const foreignSelection = createModelSelection(ProviderInstanceId.make("opencode"), saved.model);
+    const switched = deriveEffectiveComposerModelState({
+      draft: {
+        activeProvider: instanceId,
+        modelSelectionByProvider: { [foreignSelection.instanceId]: foreignSelection },
+      },
+      providers,
+      selectedProvider: driver,
+      selectedInstanceId: instanceId,
+      threadModelSelection: foreignSelection,
+      projectModelSelection: null,
+      settings,
+    });
+    expect(switched.selectedModel).toBe("cpamc/opus");
+  });
+
+  it("does not pick a model outside an empty allowed prefix catalog", () => {
+    const instanceId = ProviderInstanceId.make("opencode-cpamc");
+    const driver = ProviderDriverKind.make("opencode");
+    const providers = [
+      provider({ provider: driver, instanceId, models: ["opencode/x-preview-f-free"] }),
+    ];
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      providerModelPolicies: {
+        [instanceId]: { hiddenModels: [], allowedModelPrefixes: ["cpamc/"] },
+      },
+    };
+    expect(resolveAppModelSelectionForInstance(instanceId, settings, providers, null)).toBe("");
+    expect(
+      resolveAppModelSelectionForInstance(
+        instanceId,
+        settings,
+        providers,
+        "opencode/x-preview-f-free",
+      ),
+    ).toBe("opencode/x-preview-f-free");
+    expect(
+      resolveAppModelSelectionForInstance(instanceId, settings, providers, "opencode/old-route", {
+        preserveUnavailableSelection: true,
+      }),
+    ).toBe("opencode/old-route");
+    const state = deriveEffectiveComposerModelState({
+      draft: null,
+      providers,
+      selectedProvider: driver,
+      selectedInstanceId: instanceId,
+      threadModelSelection: null,
+      projectModelSelection: null,
+      settings,
+    });
+    expect(state.selectedModel).toBe("");
   });
 
   it("drops server-reported custom rows that are no longer in settings", () => {

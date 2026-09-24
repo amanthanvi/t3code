@@ -13,6 +13,153 @@ import {
 } from "./modelOptions";
 
 describe("mobile model options", () => {
+  it("keeps a hidden custom selection and traits while omitting it from picker groups", () => {
+    const instanceId = ProviderInstanceId.make("claude-cpamc");
+    const alias = "gateway/claude-opus-5-5";
+    const selection: ModelSelection = {
+      instanceId,
+      model: alias,
+      options: [
+        { id: "effort", value: "high" },
+        { id: "contextWindow", value: "1m" },
+      ],
+    };
+    const config = {
+      settings: {
+        providerModelPolicies: {
+          [instanceId]: { hiddenModels: [alias], allowedModelPrefixes: [] },
+        },
+      },
+      providers: [
+        {
+          instanceId,
+          driver: "claudeAgent",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "claude-opus-5-5",
+              name: "Opus",
+              isCustom: false,
+              isDefault: true,
+              capabilities: null,
+            },
+            { slug: alias, name: "Old Opus", isCustom: true, capabilities: null },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    const options = buildModelOptions(config, selection);
+    expect(options.find((option) => option.key === `${instanceId}:${alias}`)).toMatchObject({
+      isHiddenFromPicker: true,
+      selection,
+    });
+    expect(groupByProvider(options)[0]?.models.map((option) => option.selection.model)).toEqual([
+      "claude-opus-5-5",
+    ]);
+    expect(
+      resolveNewTaskModelSelection({
+        draftSelection: selection,
+        projectDefaultSelection: null,
+        stickySelection: null,
+        modelOptions: options,
+      }),
+    ).toEqual(selection);
+    expect(
+      resolveNewTaskModelSelection({
+        draftSelection: null,
+        projectDefaultSelection: null,
+        stickySelection: null,
+        modelOptions: options,
+      })?.model,
+    ).toBe("claude-opus-5-5");
+  });
+
+  it("offers only allowed prefixes for new choices without dropping a saved selection", () => {
+    const instanceId = ProviderInstanceId.make("opencode-cpamc");
+    const saved: ModelSelection = {
+      instanceId,
+      model: "opencode/x-preview-f-free",
+      options: [{ id: "variant", value: "max" }],
+    };
+    const config = {
+      settings: {
+        providerModelPolicies: {
+          [instanceId]: { hiddenModels: [], allowedModelPrefixes: ["cpamc/"] },
+        },
+      },
+      providers: [
+        {
+          instanceId,
+          driver: "opencode",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: saved.model,
+              name: "Free Preview",
+              isCustom: false,
+              isDefault: true,
+              capabilities: null,
+            },
+            { slug: "cpamc/opus", name: "CPAMC Opus", isCustom: false, capabilities: null },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    const options = buildModelOptions(config, saved);
+    expect(options.find((option) => option.selection.model === saved.model)?.selection).toEqual(
+      saved,
+    );
+    expect(groupByProvider(options)[0]?.models.map((option) => option.selection.model)).toEqual([
+      "cpamc/opus",
+    ]);
+    expect(
+      resolveNewTaskModelSelection({
+        draftSelection: null,
+        projectDefaultSelection: null,
+        stickySelection: null,
+        modelOptions: options,
+      })?.model,
+    ).toBe("cpamc/opus");
+    expect(
+      resolveNewTaskModelSelection({
+        draftSelection: saved,
+        projectDefaultSelection: null,
+        stickySelection: null,
+        modelOptions: options,
+      }),
+    ).toEqual(saved);
+
+    const emptyConfig = {
+      ...config,
+      providers: [{ ...config.providers[0]!, models: [config.providers[0]!.models[0]!] }],
+    } as unknown as ServerConfig;
+    const emptyOptions = buildModelOptions(emptyConfig, null);
+    expect(groupByProvider(emptyOptions)).toEqual([]);
+    expect(
+      resolveNewTaskModelSelection({
+        draftSelection: null,
+        projectDefaultSelection: null,
+        stickySelection: null,
+        modelOptions: emptyOptions,
+      }),
+    ).toBeNull();
+    const savedWhenUnavailable = buildModelOptions(emptyConfig, {
+      ...saved,
+      model: "opencode/old-route",
+    });
+    expect(groupByProvider(savedWhenUnavailable)).toEqual([]);
+    expect(
+      savedWhenUnavailable.find((option) => option.selection.model === "opencode/old-route")
+        ?.selection.options,
+    ).toEqual(saved.options);
+  });
+
   it("groups models by provider and flags legacy entries", () => {
     const config = {
       providers: [

@@ -254,6 +254,32 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(settingsState.updateSettings).not.toHaveBeenCalled();
   });
 
+  it("keeps an instance prefix filter when visibility changes", () => {
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerModelPolicies: {
+        [codexId]: { hiddenModels: ["legacy"], allowedModelPrefixes: ["cpamc/"] },
+      },
+    };
+    atoms.providers = [provider()];
+    const panel = renderPanel();
+    const editor = visitElements(
+      panel,
+      (element) => element.props.instanceId === codexId && element.props.mode === "editor",
+    );
+    expect(editor?.props.allowedModelPrefixes).toEqual(["cpamc/"]);
+    expect(editor?.props.policyHiddenModels).toEqual(["legacy"]);
+    (editor?.props.onHiddenModelsChange as (models: string[]) => void)(["cpamc/old"]);
+    expect(settingsState.updateClientSettings).toHaveBeenCalledExactlyOnceWith({
+      providerModelPreferences: {
+        [codexId]: {
+          hiddenModels: ["cpamc/old"],
+          modelOrder: [],
+        },
+      },
+    });
+  });
+
   it("does not substitute another account when the requested instance was removed", () => {
     atoms.providers = [provider()];
     const panel = renderPanel({ targetInstanceId: customId });

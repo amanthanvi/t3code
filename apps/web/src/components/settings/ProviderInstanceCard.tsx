@@ -155,6 +155,8 @@ function nextConfigBlobWithValue(
 export function deriveProviderModelsForDisplay(input: {
   readonly liveModels: ReadonlyArray<ServerProviderModel> | undefined;
   readonly customModels: ReadonlyArray<CustomModelDefinition>;
+  readonly allowedModelPrefixes?: ReadonlyArray<string>;
+  readonly policyHiddenModels?: ReadonlyArray<string>;
 }): ReadonlyArray<ServerProviderModel> {
   const liveCustomModelsBySlug = new Map(
     Arr.filterMap(input.liveModels ?? [], (model) =>
@@ -169,7 +171,13 @@ export function deriveProviderModelsForDisplay(input: {
     capabilities:
       entry.capabilities ?? liveCustomModelsBySlug.get(entry.slug)?.capabilities ?? null,
   }));
-  return [...serverModels, ...customModels];
+  const prefixes = input.allowedModelPrefixes ?? [];
+  const hidden = new Set(input.policyHiddenModels ?? []);
+  return [...serverModels, ...customModels].filter(
+    (model) =>
+      !hidden.has(model.slug) &&
+      (prefixes.length === 0 || prefixes.some((prefix) => model.slug.startsWith(prefix))),
+  );
 }
 
 function ProviderAuthEmail(props: { readonly email: string | undefined }) {
@@ -390,6 +398,8 @@ interface ProviderInstanceCardProps {
   readonly hiddenModels: ReadonlyArray<string>;
   readonly favoriteModels: ReadonlyArray<string>;
   readonly modelOrder: ReadonlyArray<string>;
+  readonly allowedModelPrefixes?: ReadonlyArray<string>;
+  readonly policyHiddenModels?: ReadonlyArray<string>;
   readonly onHiddenModelsChange: (next: ReadonlyArray<string>) => void;
   readonly onFavoriteModelsChange: (next: ReadonlyArray<string>) => void;
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
@@ -433,6 +443,8 @@ export function ProviderInstanceCard({
   hiddenModels,
   favoriteModels,
   modelOrder,
+  allowedModelPrefixes = [],
+  policyHiddenModels = [],
   onHiddenModelsChange,
   onFavoriteModelsChange,
   onModelOrderChange,
@@ -508,6 +520,8 @@ export function ProviderInstanceCard({
   const modelsForDisplay = deriveProviderModelsForDisplay({
     liveModels: liveProvider?.models,
     customModels,
+    allowedModelPrefixes,
+    policyHiddenModels,
   });
   const updateDisplayName = (value: string) => {
     const trimmed = value.trim();
@@ -967,6 +981,7 @@ export function ProviderInstanceCard({
               hiddenModels={hiddenModels}
               favoriteModels={favoriteModels}
               modelOrder={modelOrder}
+              allowedModelPrefixes={allowedModelPrefixes}
               onChange={updateCustomModels}
               onHiddenModelsChange={onHiddenModelsChange}
               onFavoriteModelsChange={onFavoriteModelsChange}

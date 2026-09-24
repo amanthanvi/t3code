@@ -961,6 +961,8 @@ export function EnvironmentProviderSettings({
         hiddenModels={modelPreferences.hiddenModels}
         favoriteModels={favoriteModels}
         modelOrder={modelPreferences.modelOrder}
+        allowedModelPrefixes={settings.providerModelPolicies[row.instanceId]?.allowedModelPrefixes}
+        policyHiddenModels={settings.providerModelPolicies[row.instanceId]?.hiddenModels}
         onHiddenModelsChange={(hiddenModels) =>
           updateProviderModelPreferences(row.instanceId, {
             ...modelPreferences,
