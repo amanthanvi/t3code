@@ -247,7 +247,7 @@ const detectDarwinMachineKind = Effect.fn("detectDarwinMachineKind")(function* (
 
 const fileExists = Effect.fn("fileExists")(function* (path: string) {
   const fileSystem = yield* FileSystem.FileSystem;
-  return yield* fileSystem.exists(path).pipe(Effect.catch(() => Effect.succeed(false)));
+  return yield* fileSystem.exists(path).pipe(Effect.orElseSucceed(() => false));
 });
 
 const detectLinuxMachineKind = Effect.fn("detectLinuxMachineKind")(function* () {
