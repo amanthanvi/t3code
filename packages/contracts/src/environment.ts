@@ -72,10 +72,54 @@ export type EnvironmentMachineKind = typeof EnvironmentMachineKind.Type;
 export const isEnvironmentMachineKind = Schema.is(EnvironmentMachineKind);
 
 /**
- * A named glyph: one of the curated ids above, an id the clients add on top
- * of them, or a Lucide id. One field rather than one variant per source,
- * because renderers resolve the curated map first and fall through, so the
- * name alone says which map answers.
+ * Named glyphs every client draws: the machine kinds a server can detect,
+ * plus roles a machine is given but never detected as. Both renderers hold an
+ * exhaustive map over this list, so a new id fails typecheck until each
+ * surface can draw it. Only the machine kinds have a bare-string form on the
+ * wire; a role always travels as the object, which is why picking one needs
+ * the `environmentIconOverride` capability.
+ */
+export const ENVIRONMENT_CURATED_ICON_IDS = [
+  ...ENVIRONMENT_MACHINE_KINDS,
+  "terminal",
+  "database",
+  "container",
+  "globe",
+  "home",
+  "gpu",
+  "network",
+] as const;
+export const EnvironmentCuratedIconId = Schema.Literals(ENVIRONMENT_CURATED_ICON_IDS);
+export type EnvironmentCuratedIconId = typeof EnvironmentCuratedIconId.Type;
+export const isEnvironmentCuratedIconId = Schema.is(EnvironmentCuratedIconId);
+
+/**
+ * What each curated glyph is called in a picker and in an accessibility
+ * label. Web and mobile draw different glyph sets for the same id, so the
+ * name is the one thing both surfaces must agree on, and typecheck only
+ * catches a missing entry rather than two that drifted apart.
+ */
+export const ENVIRONMENT_ICON_LABELS: Record<EnvironmentCuratedIconId, string> = {
+  server: "Server",
+  cloud: "Cloud VM",
+  linux: "Linux/WSL",
+  desktop: "Desktop",
+  laptop: "Laptop",
+  "mac-mini": "Mini PC",
+  "mac-studio": "Workstation",
+  terminal: "Dev box",
+  database: "Database",
+  container: "Container",
+  globe: "Edge",
+  home: "Home server",
+  gpu: "GPU box",
+  network: "Network",
+};
+
+/**
+ * A named glyph: one of the curated ids above, or a Lucide id. One field
+ * rather than one variant per source, because renderers resolve the curated
+ * map first and fall through, so the name alone says which map answers.
  */
 export const EnvironmentIconName = LucideIconName;
 export type EnvironmentIconName = typeof EnvironmentIconName.Type;
