@@ -1,4 +1,4 @@
-import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import { resolveEnvironmentIcon } from "@t3tools/contracts";
 
 import {
   useClientSettings,
@@ -92,7 +92,7 @@ export function LoadBalancingSettings({
       {environments.map((environment) => (
         <EnvironmentRow
           key={environment.environmentId}
-          kind={resolveEnvironmentMachineKind(environment.serverConfig)}
+          kind={resolveEnvironmentIcon(environment.serverConfig)}
           label={environment.label}
           subtitle={environmentTransportLabel(environment)}
         >

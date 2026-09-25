@@ -1,6 +1,6 @@
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import { type EnvironmentMachineKind, resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import { type EnvironmentIcon, resolveEnvironmentIcon } from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useMemo } from "react";
 import { ActivityIndicator, Alert, Pressable, View } from "react-native";
@@ -113,7 +113,7 @@ export function SettingsClientStorageRouteScreen() {
                   savedConnectionsById[environment.environmentId]?.environmentLabel ??
                   environment.environmentId
                 }
-                machine={resolveEnvironmentMachineKind(
+                machine={resolveEnvironmentIcon(
                   serverConfigs.get(environment.environmentId) ?? null,
                 )}
                 disabled={isClearing}
@@ -167,7 +167,7 @@ export function SettingsClientStorageRouteScreen() {
 function CacheEnvironmentRow(props: {
   readonly environment: EnvironmentClientCacheSummary;
   readonly environmentLabel: string;
-  readonly machine: EnvironmentMachineKind;
+  readonly machine: EnvironmentIcon;
   readonly disabled: boolean;
   readonly first: boolean;
   readonly onClear: () => void;
@@ -180,7 +180,7 @@ function CacheEnvironmentRow(props: {
           : "border-t border-border flex-row items-center gap-3 p-4"
       }
     >
-      <EnvironmentMachineSymbol kind={props.machine} size={22} tintColorClassName="accent-icon" />
+      <EnvironmentMachineSymbol icon={props.machine} size={22} tintColorClassName="accent-icon" />
       <Text className="min-w-0 flex-1 text-base text-foreground" numberOfLines={1}>
         {props.environmentLabel}
       </Text>

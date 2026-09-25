@@ -14,7 +14,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
-  resolveEnvironmentMachineKind,
+  resolveEnvironmentIcon,
   resolveProviderInstanceEnabled,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
@@ -244,9 +244,7 @@ function EnvironmentUnavailablePlaceholder({
   return (
     <ProviderSettingsPlaceholder
       deviceTabs={deviceTabs}
-      icon={
-        <EnvironmentMachineIcon kind={resolveEnvironmentMachineKind(environment.serverConfig)} />
-      }
+      icon={<EnvironmentMachineIcon icon={resolveEnvironmentIcon(environment.serverConfig)} />}
       title={title}
       description={description}
     >
@@ -346,7 +344,7 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
           }}
         >
           {options.map((environment) => {
-            const machine = resolveEnvironmentMachineKind(environment.serverConfig);
+            const machine = resolveEnvironmentIcon(environment.serverConfig);
             const detail = providerEnvironmentDetail(environment);
             const statusText = connectionStatusTitle(environment.connection);
             return (
@@ -355,7 +353,7 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
                   render={
                     <Toggle value={environment.environmentId}>
                       <EnvironmentMachineIcon
-                        kind={machine}
+                        icon={machine}
                         className="size-3.5 shrink-0"
                         aria-hidden
                       />
@@ -387,14 +385,14 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
       {targetEnvironmentMissing ? (
         <ProviderSettingsPlaceholder
           deviceTabs={deviceTabs}
-          icon={<EnvironmentMachineIcon kind={resolveEnvironmentMachineKind(null)} />}
+          icon={<EnvironmentMachineIcon icon={resolveEnvironmentIcon(null)} />}
           title="Device unavailable"
           description="Reconnect this device to set up its provider, or select another device."
         />
       ) : null}
       {options.length === 0 && !targetEnvironmentMissing ? (
         <ProviderSettingsPlaceholder
-          icon={<EnvironmentMachineIcon kind={resolveEnvironmentMachineKind(null)} />}
+          icon={<EnvironmentMachineIcon icon={resolveEnvironmentIcon(null)} />}
           title={isReady ? "No connected devices" : "Loading devices"}
           description={
             isReady

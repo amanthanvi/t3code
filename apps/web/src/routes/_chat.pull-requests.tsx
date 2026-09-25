@@ -1,6 +1,6 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { Spinner } from "~/components/ui/spinner";
-import { pullRequestHostOf, resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import { pullRequestHostOf, resolveEnvironmentIcon } from "@t3tools/contracts";
 import type {
   EnvironmentId,
   ProjectId,
@@ -1876,7 +1876,7 @@ function PullRequestsRouteView() {
     ...capableEnvironments.map((environment) => ({
       value: environment.environmentId,
       label: environment.label,
-      Icon: environmentMachineIcon(resolveEnvironmentMachineKind(environment.serverConfig)),
+      Icon: environmentMachineIcon(resolveEnvironmentIcon(environment.serverConfig)),
     })),
   ];
   const sortMenu = (

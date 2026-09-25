@@ -1,4 +1,8 @@
-import type { EnvironmentId, EnvironmentMachineKind } from "@t3tools/contracts";
+import {
+  environmentIconForMachineKind,
+  type EnvironmentId,
+  type EnvironmentIcon,
+} from "@t3tools/contracts";
 
 import type { SidebarProjectSnapshot } from "~/sidebarProjectGrouping";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
@@ -15,7 +19,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 export function ProjectEnvironmentBadge(props: {
   readonly group: Pick<SidebarProjectSnapshot, "memberProjects">;
   readonly primaryEnvironmentId: EnvironmentId | null;
-  readonly machineByEnvironmentId: ReadonlyMap<EnvironmentId, EnvironmentMachineKind>;
+  readonly machineByEnvironmentId: ReadonlyMap<EnvironmentId, EnvironmentIcon>;
 }) {
   // Member order follows registration order and can differ between sessions,
   // so sort by label to keep the icon and tooltip stable.
@@ -44,7 +48,10 @@ export function ProjectEnvironmentBadge(props: {
       >
         <EnvironmentMachineIcon
           aria-hidden
-          kind={props.machineByEnvironmentId.get(first.environmentId) ?? "server"}
+          icon={
+            props.machineByEnvironmentId.get(first.environmentId) ??
+            environmentIconForMachineKind("server")
+          }
           className="size-3.5"
         />
       </TooltipTrigger>

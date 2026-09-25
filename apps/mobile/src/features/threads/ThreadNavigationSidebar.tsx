@@ -11,7 +11,7 @@ import {
 import { LegendList } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomValue } from "@effect/atom-react";
-import { type EnvironmentId, resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import { type EnvironmentId, resolveEnvironmentIcon } from "@t3tools/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LayoutChangeEvent } from "react-native";
 import { Platform, StyleSheet, TextInput, View } from "react-native";
@@ -375,8 +375,7 @@ function ThreadNavigationSidebarPane(
     () =>
       new Map(
         [...serverConfigs].map(
-          ([environmentId, config]) =>
-            [environmentId, resolveEnvironmentMachineKind(config)] as const,
+          ([environmentId, config]) => [environmentId, resolveEnvironmentIcon(config)] as const,
         ),
       ),
     [serverConfigs],

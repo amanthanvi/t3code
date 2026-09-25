@@ -1,4 +1,4 @@
-import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import { resolveEnvironmentIcon } from "@t3tools/contracts";
 import { useLocation } from "@tanstack/react-router";
 import { ChevronDownIcon, LayersIcon } from "lucide-react";
 import type { ReactNode } from "react";
@@ -121,7 +121,7 @@ function EnvironmentScopeMenu({ value, groups, environments, onChange }: Setting
         selected ? (
           <EnvironmentMachineIcon
             aria-hidden
-            kind={resolveEnvironmentMachineKind(selected.serverConfig)}
+            icon={resolveEnvironmentIcon(selected.serverConfig)}
             className="size-3.5 shrink-0"
           />
         ) : null
@@ -153,7 +153,7 @@ function EnvironmentScopeMenu({ value, groups, environments, onChange }: Setting
             <span className="flex min-w-0 items-center gap-2">
               <EnvironmentMachineIcon
                 aria-hidden
-                kind={resolveEnvironmentMachineKind(environment.serverConfig)}
+                icon={resolveEnvironmentIcon(environment.serverConfig)}
                 className="size-3.5"
               />
               <span className="min-w-0 flex-1 truncate">

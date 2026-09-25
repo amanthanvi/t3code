@@ -1,6 +1,6 @@
 import type { DraftId } from "~/composerDraftStore";
 import { useComposerDraftStore } from "~/composerDraftStore";
-import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
+import { resolveEnvironmentIcon, type ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { FolderPlusIcon } from "lucide-react";
 import { useCallback, useMemo } from "react";
@@ -98,10 +98,7 @@ export function DraftHeroHeadline({
       new Map(
         environments.map(
           (environment) =>
-            [
-              environment.environmentId,
-              resolveEnvironmentMachineKind(environment.serverConfig),
-            ] as const,
+            [environment.environmentId, resolveEnvironmentIcon(environment.serverConfig)] as const,
         ),
       ),
     [environments],

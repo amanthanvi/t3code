@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import { resolveEnvironmentIcon } from "@t3tools/contracts";
 import {
   gitHubRoutingConnectionKey,
   gitHubRoutingPermissionFor,
@@ -80,7 +80,7 @@ export function GitHubRoutingSettings({
       {environments.map((environment) => (
         <EnvironmentRow
           key={environment.environmentId}
-          kind={resolveEnvironmentMachineKind(environment.serverConfig)}
+          kind={resolveEnvironmentIcon(environment.serverConfig)}
           label={environment.label}
           subtitle={environmentTransportLabel(environment)}
         >

@@ -7,9 +7,9 @@ import {
 } from "@t3tools/client-runtime/connection";
 import {
   type EnvironmentId,
-  type EnvironmentMachineKind,
+  type EnvironmentIcon,
   type ExecutionEnvironmentDescriptor,
-  resolveEnvironmentMachineKind,
+  resolveEnvironmentIcon,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useState } from "react";
@@ -239,7 +239,7 @@ function ConnectedCloudEnvironmentRow(props: {
         connectionState={enabled || unsupported ? props.environment.connectionState : "available"}
         errorExpanded={props.errorExpanded}
         label={props.environment.environmentLabel}
-        machine={resolveEnvironmentMachineKind(
+        machine={resolveEnvironmentIcon(
           serverConfig ?? (lastDescriptor === undefined ? null : { environment: lastDescriptor }),
         )}
         onValueChange={props.onSetEnabled}
@@ -274,7 +274,7 @@ function CloudEnvironmentRow(props: {
       connectionState={presentation.connectionState}
       errorExpanded={props.errorExpanded}
       label={props.environment.environment.label}
-      machine={resolveEnvironmentMachineKind(
+      machine={resolveEnvironmentIcon(
         props.environment.status?.descriptor === undefined
           ? null
           : { environment: props.environment.status.descriptor },
@@ -301,7 +301,7 @@ function CloudEnvironmentRowShell(props: {
   readonly disabled?: boolean;
   readonly errorExpanded: boolean;
   readonly label: string;
-  readonly machine: EnvironmentMachineKind;
+  readonly machine: EnvironmentIcon;
   readonly onToggleError: () => void;
   readonly onValueChange: (enabled: boolean) => void;
   readonly statusText?: string;
@@ -354,7 +354,7 @@ function CloudEnvironmentRowShell(props: {
         <View className="min-w-0 flex-row items-center gap-2">
           <ConnectionStatusDot state={props.connectionState} pulse={shouldPulse} size={7} />
           <EnvironmentMachineSymbol
-            kind={props.machine}
+            icon={props.machine}
             size={14}
             tintColorClassName="accent-foreground-muted"
           />

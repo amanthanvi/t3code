@@ -16,7 +16,7 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
-import type { EnvironmentMachineKind } from "@t3tools/contracts";
+import type { EnvironmentIcon } from "@t3tools/contracts";
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
@@ -265,7 +265,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
   readonly projectTitle?: string;
   readonly environmentLabel: string | null;
   /** Drawn beside the label; ignored while the label is null. */
-  readonly environmentMachine?: EnvironmentMachineKind;
+  readonly environmentMachine?: EnvironmentIcon;
   readonly pane?: "screen" | "sidebar";
   /** Draws the "Unsent" divider above the first draft or queued row. */
   readonly showPendingDivider: boolean;
@@ -375,7 +375,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
           </Text>
           {props.environmentLabel && props.environmentMachine ? (
             <EnvironmentMachineSymbol
-              kind={props.environmentMachine}
+              icon={props.environmentMachine}
               size={11}
               tintColorClassName={
                 sidebarPane ? "accent-drawer-foreground-muted" : "accent-foreground-tertiary"
@@ -467,7 +467,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly environmentLabel: string | null;
   /** Drawn after the label so the machine reads at a glance; ignored while
       the label is null. */
-  readonly environmentMachine?: EnvironmentMachineKind;
+  readonly environmentMachine?: EnvironmentIcon;
   /** Hosting surface. "screen" (default) renders the compact Home idiom:
       flat edge-to-edge rows on the screen background with inset hairlines.
       "sidebar" renders the iPad split-view idiom: rounded rows blending
@@ -1007,7 +1007,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             </Text>
             {props.environmentLabel && props.environmentMachine ? (
               <EnvironmentMachineSymbol
-                kind={props.environmentMachine}
+                icon={props.environmentMachine}
                 size={11}
                 tintColorClassName={
                   selected

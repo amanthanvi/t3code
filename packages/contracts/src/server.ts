@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
+  type EnvironmentIcon,
   type EnvironmentMachineKind,
   ExecutionEnvironmentDescriptor,
   isEnvironmentMachineKind,
@@ -621,25 +622,53 @@ export const ServerConfig = Schema.Struct({
 });
 export type ServerConfig = typeof ServerConfig.Type;
 
+const ICON_BY_MACHINE_KIND = new Map<EnvironmentMachineKind, EnvironmentIcon>();
+
 /**
- * The machine an environment should be drawn as: the user's pick, else what
+ * The icon that draws a machine kind, one reference per kind. Rows that show
+ * an environment glyph are memoized on the icon, so the resolver hands back
+ * the same object for the same plain kind across renders and across settings
+ * snapshots. Without it every thread row would repaint on any settings
+ * change, because each snapshot decodes to a fresh object.
+ *
+ * The cache only covers plain kinds, which is every row until a user picks
+ * something richer. An emoji, monogram, or image icon is returned as the
+ * decoded value, so those rows do repaint once per settings change. Settings
+ * change on user action, not on a timer, so a content-keyed cache would buy
+ * a repaint nobody sees at the price of holding image bytes alive.
+ */
+export function environmentIconForMachineKind(kind: EnvironmentMachineKind): EnvironmentIcon {
+  const cached = ICON_BY_MACHINE_KIND.get(kind);
+  if (cached !== undefined) return cached;
+  const icon: EnvironmentIcon = { kind: "icon", name: kind };
+  ICON_BY_MACHINE_KIND.set(kind, icon);
+  return icon;
+}
+
+/**
+ * The icon an environment should be drawn with: the user's pick, else what
  * the server detected, else a generic server. Settings only exist once
  * connected; a descriptor alone (relay discovery, before any connection)
  * still yields the detected kind. A null config (nothing known yet, or an
  * older server) resolves to the same generic so rows never flicker between
- * glyphs.
+ * glyphs. A plain pick of a machine kind resolves to that kind's shared
+ * reference; anything richer is the stored value itself.
  */
-export function resolveEnvironmentMachineKind(
+export function resolveEnvironmentIcon(
   config: {
     readonly environment: Pick<ExecutionEnvironmentDescriptor, "platform">;
     readonly settings?: Pick<ServerSettings, "environmentIcon">;
   } | null,
-): EnvironmentMachineKind {
+): EnvironmentIcon {
   const picked = config?.settings?.environmentIcon;
-  if (picked?.kind === "icon" && isEnvironmentMachineKind(picked.name)) {
-    return picked.name;
+  if (picked) {
+    return picked.kind === "icon" &&
+      picked.color === undefined &&
+      isEnvironmentMachineKind(picked.name)
+      ? environmentIconForMachineKind(picked.name)
+      : picked;
   }
-  return config?.environment.platform.machine ?? "server";
+  return environmentIconForMachineKind(config?.environment.platform.machine ?? "server");
 }
 
 const ServerUpsertKeybindingReplaceTarget = Schema.Struct({

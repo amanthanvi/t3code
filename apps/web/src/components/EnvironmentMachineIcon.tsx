@@ -1,4 +1,8 @@
-import type { EnvironmentMachineKind } from "@t3tools/contracts";
+import {
+  isEnvironmentMachineKind,
+  type EnvironmentIcon,
+  type EnvironmentMachineKind,
+} from "@t3tools/contracts";
 import { CloudIcon, LaptopIcon, MonitorIcon, ServerIcon, type LucideProps } from "lucide-react";
 import type { FunctionComponent, SVGProps } from "react";
 import { LinuxIcon } from "./Icons";
@@ -63,16 +67,20 @@ export const ENVIRONMENT_MACHINE_KIND_LABELS: Record<EnvironmentMachineKind, str
   "mac-studio": "Workstation",
 };
 
-export function environmentMachineIcon(
-  kind: EnvironmentMachineKind,
-): FunctionComponent<LucideProps> {
-  return ICON_BY_KIND[kind];
+/**
+ * The glyph for a named icon. A name this build cannot draw (picked on a
+ * newer client) gets the generic server so the row still reads as a machine.
+ */
+export function environmentMachineIcon(icon: EnvironmentIcon): FunctionComponent<LucideProps> {
+  return icon.kind === "icon" && isEnvironmentMachineKind(icon.name)
+    ? ICON_BY_KIND[icon.name]
+    : ICON_BY_KIND.server;
 }
 
 export function EnvironmentMachineIcon({
-  kind,
+  icon,
   ...props
-}: LucideProps & { readonly kind: EnvironmentMachineKind }) {
-  const Icon = ICON_BY_KIND[kind];
+}: LucideProps & { readonly icon: EnvironmentIcon }) {
+  const Icon = environmentMachineIcon(icon);
   return <Icon {...props} />;
 }

@@ -50,7 +50,8 @@ import {
   type ScopedThreadRef,
   type ResolvedKeybindingsConfig,
   type SidebarProjectGroupingMode,
-  resolveEnvironmentMachineKind,
+  environmentIconForMachineKind,
+  resolveEnvironmentIcon,
   ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -423,7 +424,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   // glyph is what tells the environments apart.
   const isRemoteThread = thread.environmentId !== primaryEnvironmentId;
   const remoteEnvLabel = environment?.label ?? null;
-  const remoteMachine = resolveEnvironmentMachineKind(environment?.serverConfig ?? null);
+  const remoteMachine = resolveEnvironmentIcon(environment?.serverConfig ?? null);
   // A desktop-local secondary backend (e.g. the WSL backend) shows up as a
   // bearer environment whose connection id is prefixed "local:". It runs on the
   // user's own machine, so the cloud icon is misleading, label it "Local" and
@@ -909,7 +910,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       }
                     >
                       <EnvironmentMachineIcon
-                        kind={remoteMachine}
+                        icon={remoteMachine}
                         className="size-3 text-muted-foreground/40"
                       />
                     </TooltipTrigger>
@@ -1171,11 +1172,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     isManualProjectSorting,
     dragHandleProps,
   } = props;
-  const environmentMachine = project.allRemoteMembersAreWsl
-    ? "linux"
-    : project.allRemoteMembersAreDesktopLocal
-      ? "laptop"
-      : "cloud";
+  const environmentMachine = environmentIconForMachineKind(
+    project.allRemoteMembersAreWsl
+      ? "linux"
+      : project.allRemoteMembersAreDesktopLocal
+        ? "laptop"
+        : "cloud",
+  );
   const threadSortOrder = useClientSettings<SidebarThreadSortOrder>(
     (settings) => settings.sidebarThreadSortOrder,
   );
@@ -2438,7 +2441,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                 />
               }
             >
-              <EnvironmentMachineIcon kind={environmentMachine} className="size-3" />
+              <EnvironmentMachineIcon icon={environmentMachine} className="size-3" />
             </TooltipTrigger>
             <TooltipPopup side="top">
               {project.allRemoteMembersAreDesktopLocal

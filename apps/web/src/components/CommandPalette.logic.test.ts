@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  environmentIconForMachineKind,
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import type { Project, Thread } from "../types";
 import {
   buildBrowseGroups,
@@ -61,10 +67,17 @@ describe("buildCommandPaletteProjectMetadata", () => {
   const localEnvironmentId = EnvironmentId.make("environment-local");
   const remoteEnvironmentId = EnvironmentId.make("environment-build-box");
   const locations = new Map([
-    [localEnvironmentId, { kind: "local" as const, label: "Local", machine: "laptop" as const }],
+    [
+      localEnvironmentId,
+      { kind: "local" as const, label: "Local", machine: environmentIconForMachineKind("laptop") },
+    ],
     [
       remoteEnvironmentId,
-      { kind: "remote" as const, label: "Build box", machine: "server" as const },
+      {
+        kind: "remote" as const,
+        label: "Build box",
+        machine: environmentIconForMachineKind("server"),
+      },
     ],
   ]);
 
