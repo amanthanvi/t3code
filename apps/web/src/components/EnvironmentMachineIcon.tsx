@@ -1,5 +1,6 @@
 import {
   isEnvironmentCuratedIconId,
+  isEnvironmentLucideIconId,
   type EnvironmentCuratedIconId,
   type EnvironmentIcon,
 } from "@t3tools/contracts";
@@ -17,7 +18,8 @@ import {
   TerminalIcon,
   type LucideProps,
 } from "lucide-react";
-import type { FunctionComponent, SVGProps } from "react";
+import type { IconName } from "lucide-react/dynamic";
+import { lazy, Suspense, type FunctionComponent, type SVGProps } from "react";
 import { cn } from "~/lib/utils";
 import { projectIconColorClassName } from "../projectIconColors";
 import { LinuxIcon } from "./Icons";
@@ -62,6 +64,13 @@ function MacStudioIcon(props: SVGProps<SVGSVGElement>) {
     </LucideLike>
   );
 }
+
+// Resolves a Lucide id at runtime and code-splits each icon into its own
+// chunk, so none of the ~1,900 reach the main bundle; ProjectFavicon does the
+// same for project icons.
+const DynamicIcon = lazy(() =>
+  import("lucide-react/dynamic").then((module) => ({ default: module.DynamicIcon })),
+);
 
 const ICON_BY_ID: Record<EnvironmentCuratedIconId, FunctionComponent<LucideProps>> = {
   server: ServerIcon,
@@ -127,14 +136,33 @@ export function EnvironmentMachineIcon({
   if (icon.kind === "monogram") {
     return <ProjectMonogram text={icon.text} color={icon.color ?? "gray"} className={className} />;
   }
-  const Icon = ICON_BY_ID[curatedIconId(icon)];
   const color = icon.kind === "icon" && icon.color !== undefined ? icon.color : undefined;
-  return (
-    <Icon
-      {...props}
-      className={color === undefined ? className : cn(className, projectIconColorClassName(color))}
-    />
-  );
+  const coloredClassName =
+    color === undefined ? className : cn(className, projectIconColorClassName(color));
+  // Curated first, then the shared Lucide list, else the generic server. The
+  // chunk loads once per icon; until then the slot holds the server glyph at
+  // the same size so the row does not shift.
+  if (icon.kind === "icon" && !isEnvironmentCuratedIconId(icon.name)) {
+    if (isEnvironmentLucideIconId(icon.name)) {
+      const placeholder = <ServerIcon {...props} className={coloredClassName} />;
+      return (
+        <Suspense fallback={placeholder}>
+          <DynamicIcon
+            {...props}
+            // `IconName` and `EnvironmentLucideIconId` are declared apart, so
+            // nothing relates them at compile time. The generator test reads
+            // every shared id out of the same lucide-react build this resolves
+            // from, so an id Lucide does not ship fails there instead of here.
+            name={icon.name as IconName}
+            className={coloredClassName}
+            fallback={() => placeholder}
+          />
+        </Suspense>
+      );
+    }
+  }
+  const Icon = ICON_BY_ID[curatedIconId(icon)];
+  return <Icon {...props} className={coloredClassName} />;
 }
 
 const COMPONENT_BY_ICON = new WeakMap<

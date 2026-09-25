@@ -1,17 +1,20 @@
 import {
   ENVIRONMENT_CURATED_ICON_IDS,
   ENVIRONMENT_ICON_LABELS,
+  ENVIRONMENT_LUCIDE_ICON_IDS,
   environmentIconForCuratedId,
   environmentIconForMachineKind,
   isEnvironmentCuratedIconId,
+  isEnvironmentLucideIconId,
   isEnvironmentMachineKind,
   type EnvironmentCuratedIconId,
   type EnvironmentIcon,
+  type EnvironmentLucideIconId,
   type EnvironmentMachineKind,
   type IconColor,
   type ServerConfig,
 } from "@t3tools/contracts";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { firstEmoji, PROJECT_EMOJIS } from "../../iconEmoji";
@@ -40,6 +43,27 @@ import {
 
 const DEFAULT_EMOJI = "💻";
 
+/** A Lucide id as a label: `hard-drive` reads as `Hard Drive`. */
+function iconLabel(name: string): string {
+  return name
+    .split("-")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+/** The shared Lucide ids whose name contains every word of `query`. */
+export function filterEnvironmentLucideIconIds(
+  query: string,
+): ReadonlyArray<EnvironmentLucideIconId> {
+  const words = query
+    .trim()
+    .toLowerCase()
+    .split(/\s+/u)
+    .filter((word) => word.length > 0);
+  if (words.length === 0) return ENVIRONMENT_LUCIDE_ICON_IDS;
+  return ENVIRONMENT_LUCIDE_ICON_IDS.filter((id) => words.every((word) => id.includes(word)));
+}
+
 /**
  * The dialog's state for the current pick. Each mode starts from what is
  * stored, or from a sensible default.
@@ -56,6 +80,8 @@ function initialState(input: {
       current.kind === "icon" && isEnvironmentCuratedIconId(current.name)
         ? current.name
         : input.detected,
+    lucideId:
+      current.kind === "icon" && isEnvironmentLucideIconId(current.name) ? current.name : null,
     color: current.kind === "icon" || current.kind === "monogram" ? (current.color ?? null) : null,
     emoji: current.kind === "emoji" ? current.emoji : DEFAULT_EMOJI,
     monogram:
@@ -90,6 +116,8 @@ export function EnvironmentIconPickerDialog({
   const initial = initialState({ current, detected, environmentLabel });
   const [mode, setMode] = useState<EnvironmentIconDialogMode>(initial.mode);
   const [iconId, setIconId] = useState<EnvironmentCuratedIconId>(initial.iconId);
+  const [lucideId, setLucideId] = useState<EnvironmentLucideIconId | null>(initial.lucideId);
+  const [query, setQuery] = useState("");
   const [color, setColor] = useState<IconColor | null>(initial.color);
   const [emoji, setEmoji] = useState(initial.emoji);
   const [monogram, setMonogram] = useState(initial.monogram);
@@ -101,6 +129,8 @@ export function EnvironmentIconPickerDialog({
       const next = initialState({ current, detected, environmentLabel });
       setMode(next.mode);
       setIconId(next.iconId);
+      setLucideId(next.lucideId);
+      setQuery("");
       setColor(next.color);
       setEmoji(next.emoji);
       setMonogram(next.monogram);
@@ -110,9 +140,11 @@ export function EnvironmentIconPickerDialog({
   }, [current, detected, environmentLabel, open]);
 
   const richLock = resolveEnvironmentRichIconLock(serverConfig);
+  const lucideIds = useMemo(() => filterEnvironmentLucideIconIds(query), [query]);
   const write = resolveEnvironmentIconDialogWrite({
     mode,
     iconId,
+    lucideId,
     color,
     emoji,
     monogram,
@@ -121,7 +153,8 @@ export function EnvironmentIconPickerDialog({
   // Anything beyond a plain machine kind travels as the object form, which
   // only a server with the override capability stores.
   const writeLocked =
-    richLock !== null && (mode !== "icon" || color !== null || !isEnvironmentMachineKind(iconId));
+    richLock !== null &&
+    (mode !== "icon" || color !== null || lucideId !== null || !isEnvironmentMachineKind(iconId));
   const canSave = write.kind === "write" && !writeLocked;
   const save = () => {
     if (write.kind !== "write" || writeLocked) return;
@@ -204,39 +237,86 @@ export function EnvironmentIconPickerDialog({
           ) : null}
 
           {mode === "icon" ? (
-            <div className="grid grid-cols-2 gap-1 sm:grid-cols-3" role="group" aria-label="Icon">
-              {ENVIRONMENT_CURATED_ICON_IDS.map((id) => {
-                const lock = resolveEnvironmentIconChoiceLock({ serverConfig, id });
-                return (
-                  <button
-                    key={id}
-                    type="button"
-                    aria-pressed={iconId === id}
-                    disabled={lock !== null}
-                    className={cn(
-                      "flex items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-left text-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40",
-                      iconId === id && "border-border bg-accent",
-                    )}
-                    onClick={() => setIconId(id)}
-                  >
-                    <EnvironmentMachineIcon
-                      icon={
-                        color === null
-                          ? environmentIconForCuratedId(id)
-                          : { kind: "icon", name: id, color }
-                      }
-                      className="size-4 shrink-0"
-                    />
-                    <span className="min-w-0 flex-1 truncate">{ENVIRONMENT_ICON_LABELS[id]}</span>
-                    {id === detected ? (
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        {serverConfig?.environment.platform.machine ? "detected" : "default"}
-                      </span>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </div>
+            <>
+              <div className="grid grid-cols-2 gap-1 sm:grid-cols-3" role="group" aria-label="Icon">
+                {ENVIRONMENT_CURATED_ICON_IDS.map((id) => {
+                  const lock = resolveEnvironmentIconChoiceLock({ serverConfig, id });
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      aria-pressed={lucideId === null && iconId === id}
+                      disabled={lock !== null}
+                      className={cn(
+                        "flex items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-left text-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40",
+                        lucideId === null && iconId === id && "border-border bg-accent",
+                      )}
+                      onClick={() => {
+                        setIconId(id);
+                        setLucideId(null);
+                      }}
+                    >
+                      <EnvironmentMachineIcon
+                        icon={
+                          color === null
+                            ? environmentIconForCuratedId(id)
+                            : { kind: "icon", name: id, color }
+                        }
+                        className="size-4 shrink-0"
+                      />
+                      <span className="min-w-0 flex-1 truncate">{ENVIRONMENT_ICON_LABELS[id]}</span>
+                      {id === detected ? (
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          {serverConfig?.environment.platform.machine ? "detected" : "default"}
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+              <Input
+                type="search"
+                value={query}
+                aria-label="Search more icons"
+                placeholder="Search more icons"
+                disabled={richLock !== null}
+                onChange={(event) => setQuery(event.currentTarget.value)}
+              />
+              <ScrollArea scrollFade className="max-h-40">
+                <div
+                  className="grid grid-cols-8 gap-1 p-0.5 sm:grid-cols-10"
+                  role="group"
+                  aria-label="More icons"
+                >
+                  {lucideIds.map((id) => (
+                    <button
+                      key={id}
+                      type="button"
+                      aria-label={iconLabel(id)}
+                      aria-pressed={lucideId === id}
+                      disabled={richLock !== null}
+                      className={cn(
+                        "flex aspect-square items-center justify-center rounded-md border border-transparent outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40",
+                        lucideId === id && "border-border bg-accent",
+                      )}
+                      onClick={() => setLucideId(id)}
+                    >
+                      <EnvironmentMachineIcon
+                        icon={
+                          color === null
+                            ? { kind: "icon", name: id }
+                            : { kind: "icon", name: id, color }
+                        }
+                        className="size-5"
+                      />
+                    </button>
+                  ))}
+                </div>
+              </ScrollArea>
+              {lucideIds.length === 0 ? (
+                <p className="py-4 text-center text-sm text-muted-foreground">No icons found.</p>
+              ) : null}
+            </>
           ) : mode === "monogram" ? (
             <div className="space-y-2">
               <label htmlFor="environment-monogram" className="text-sm font-medium">

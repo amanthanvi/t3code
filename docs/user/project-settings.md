@@ -105,8 +105,8 @@ from the icon palette, derived from the saved project name. For example, `Nebula
 Each connected machine wears an icon in the sidebar, the command palette, thread lists, and the
 Connections list, so machines with the same hardware can still be told apart. T3 Code detects a
 machine kind on its own. To pick something else, open **Settings → Connections**, open the
-machine's menu, and choose **Change icon**: a named icon, an emoji, or a one or two character
-monogram, with an optional color.
+machine's menu, and choose **Change icon**: a named icon, one of a larger set found by search,
+an emoji, or a one or two character monogram, with an optional color.
 
 The icon is stored on that machine's server, so every device that connects to it sees the same
 one. Picking the detected kind again returns to automatic detection. A server that predates
