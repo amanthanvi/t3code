@@ -62,6 +62,15 @@ describe("resolveEnvironmentIconChoiceLock", () => {
     expect(resolveEnvironmentIconChoiceLock({ serverConfig: null, id: "laptop" })).toBeNull();
   });
 
+  it("locks a detected-only kind like a role, since it has no string form", () => {
+    expect(
+      resolveEnvironmentIconChoiceLock({ serverConfig: config(true), id: "container" }),
+    ).toMatch(/Update/);
+    expect(
+      resolveEnvironmentIconChoiceLock({ serverConfig: config(true, true), id: "container" }),
+    ).toBeNull();
+  });
+
   it("locks a role until the server stores the object form", () => {
     expect(
       resolveEnvironmentIconChoiceLock({ serverConfig: config(true), id: "database" }),
@@ -139,6 +148,34 @@ describe("resolveEnvironmentIconDialogWrite", () => {
     ).toBe("invalid");
     expect(
       resolveEnvironmentIconDialogWrite({ ...base, mode: "monogram", monogram: "" }).kind,
+    ).toBe("invalid");
+  });
+});
+
+describe("resolveEnvironmentIconDialogWrite image mode", () => {
+  const base = {
+    iconId: "laptop",
+    color: null,
+    emoji: "🚀",
+    monogram: "K8",
+    detected: "server",
+  } as const;
+
+  it("writes only a data URL the contract accepts", () => {
+    const png = "data:image/png;base64,iVBORw0KGgo=";
+    expect(
+      resolveEnvironmentIconDialogWrite({ ...base, mode: "image", imageDataUrl: png }),
+    ).toEqual({ kind: "write", icon: { kind: "image", dataUrl: png } });
+    expect(
+      resolveEnvironmentIconDialogWrite({ ...base, mode: "image", imageDataUrl: null }).kind,
+    ).toBe("invalid");
+    // An SVG can script, so the encoder never produces one and the write refuses it.
+    expect(
+      resolveEnvironmentIconDialogWrite({
+        ...base,
+        mode: "image",
+        imageDataUrl: "data:image/svg+xml;base64,PHN2Zz4=",
+      }).kind,
     ).toBe("invalid");
   });
 });

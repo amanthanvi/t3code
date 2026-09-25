@@ -102,15 +102,19 @@ from the icon palette, derived from the saved project name. For example, `Nebula
 
 ## Environment icons
 
-Each connected machine wears an icon in the sidebar, the command palette, thread lists, and the
+Each connected machine has an icon in the sidebar, the command palette, thread lists, and the
 Connections list, so machines with the same hardware can still be told apart. T3 Code detects a
-machine kind on its own. To pick something else, open **Settings → Connections**, open the
-machine's menu, and choose **Change icon**: a named icon, one of a larger set found by search,
-an emoji, or a one or two character monogram, with an optional color.
+machine kind on its own, including containers, virtual machines, and Windows hardware. To pick
+something else, open **Settings → Connections**, open the machine's menu, and choose
+**Change icon**: a named icon, one of a larger set found by search, an emoji, a one or two
+character monogram, or an image, with an optional color. On mobile, open **Settings →
+Environments**, select the machine, expand it under **Connection**, and tap **Icon** to choose a
+named icon or a photo.
 
 The icon is stored on that machine's server, so every device that connects to it sees the same
-one. Picking the detected kind again returns to automatic detection. A server that predates
-the richer icons only keeps the seven machine kinds until it is updated.
+one. An image is cropped to a square and stored small, so choose a simple mark rather than a
+photo. Picking the detected kind again returns to automatic detection. A server that predates
+the richer icons only keeps the machine kinds until it is updated.
 
 ## Keep the default branch current
 

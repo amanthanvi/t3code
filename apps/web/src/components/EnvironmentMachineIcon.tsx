@@ -136,6 +136,22 @@ export function EnvironmentMachineIcon({
   if (icon.kind === "monogram") {
     return <ProjectMonogram text={icon.text} color={icon.color ?? "gray"} className={className} />;
   }
+  if (icon.kind === "image") {
+    // Self-contained, so there is no network state to show. The bytes can
+    // still fail to decode. The schema checks the PNG signature and not the
+    // pixels, so a value a peer wrote by hand can draw as an empty box. An
+    // onError fallback would put state in a component that renders once per
+    // row at 12 pixels, which costs more than the case is worth.
+    return (
+      <img
+        aria-hidden="true"
+        {...props}
+        src={icon.dataUrl}
+        alt=""
+        className={cn("size-4 shrink-0 rounded-[25%] object-cover", className)}
+      />
+    );
+  }
   const color = icon.kind === "icon" && icon.color !== undefined ? icon.color : undefined;
   const coloredClassName =
     color === undefined ? className : cn(className, projectIconColorClassName(color));

@@ -988,6 +988,16 @@ describe("ServerSettings environment icon", () => {
     const plain = decodeServerSettings({ environmentIcon: { kind: "icon", name: "laptop" } });
     expect(encodeServerSettings(plain).environmentIcon).toBe("laptop");
 
+    // A kind added after the string form stays an object, or an older server
+    // would reject the patch and an older client would drop the pick.
+    const container = decodeServerSettings({
+      environmentIcon: { kind: "icon", name: "container" },
+    });
+    expect(encodeServerSettings(container).environmentIcon).toEqual({
+      kind: "icon",
+      name: "container",
+    });
+
     // A color is more than the string form can carry, so it stays an object.
     const colored = decodeServerSettings({
       environmentIcon: { kind: "icon", name: "laptop", color: "red" },

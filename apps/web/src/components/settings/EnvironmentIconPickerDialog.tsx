@@ -6,7 +6,7 @@ import {
   environmentIconForMachineKind,
   isEnvironmentCuratedIconId,
   isEnvironmentLucideIconId,
-  isEnvironmentMachineKind,
+  isLegacyEnvironmentMachineKind,
   type EnvironmentCuratedIconId,
   type EnvironmentIcon,
   type EnvironmentLucideIconId,
@@ -14,9 +14,13 @@ import {
   type IconColor,
   type ServerConfig,
 } from "@t3tools/contracts";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 
 import { cn } from "~/lib/utils";
+import {
+  describeEnvironmentIconImageFailure,
+  encodeEnvironmentIconImage,
+} from "../../lib/environmentIconImage";
 import { firstEmoji, PROJECT_EMOJIS } from "../../iconEmoji";
 import { PROJECT_ICON_COLORS } from "../../projectIconColors";
 import { deriveProjectIdentity } from "../../projectIdentity";
@@ -75,7 +79,7 @@ function initialState(input: {
 }) {
   const { current } = input;
   return {
-    mode: (current.kind === "image" ? "icon" : current.kind) satisfies EnvironmentIconDialogMode,
+    mode: current.kind satisfies EnvironmentIconDialogMode,
     iconId:
       current.kind === "icon" && isEnvironmentCuratedIconId(current.name)
         ? current.name
@@ -88,6 +92,7 @@ function initialState(input: {
       current.kind === "monogram"
         ? current.text
         : deriveProjectIdentity(input.environmentLabel).monogram,
+    imageDataUrl: current.kind === "image" ? current.dataUrl : null,
   };
 }
 
@@ -121,7 +126,12 @@ export function EnvironmentIconPickerDialog({
   const [color, setColor] = useState<IconColor | null>(initial.color);
   const [emoji, setEmoji] = useState(initial.emoji);
   const [monogram, setMonogram] = useState(initial.monogram);
+  const [imageDataUrl, setImageDataUrl] = useState<string | null>(initial.imageDataUrl);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [imageEncoding, setImageEncoding] = useState(false);
+  const imagePickRef = useRef(0);
   const [customEmoji, setCustomEmoji] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const previousOpenRef = useRef(false);
 
   useEffect(() => {
@@ -134,6 +144,12 @@ export function EnvironmentIconPickerDialog({
       setColor(next.color);
       setEmoji(next.emoji);
       setMonogram(next.monogram);
+      setImageDataUrl(next.imageDataUrl);
+      setImageError(null);
+      // An encode still running from the last time the dialog was open must
+      // not land in this one.
+      imagePickRef.current += 1;
+      setImageEncoding(false);
       setCustomEmoji("");
     }
     previousOpenRef.current = open;
@@ -148,16 +164,39 @@ export function EnvironmentIconPickerDialog({
     color,
     emoji,
     monogram,
+    imageDataUrl,
     detected,
   });
+  const handleImageFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (!file) return;
+    // Encoding is async, so a second pick can resolve before the first.
+    const pick = ++imagePickRef.current;
+    setImageEncoding(true);
+    const result = await encodeEnvironmentIconImage(file);
+    if (pick !== imagePickRef.current) return;
+    setImageEncoding(false);
+    if (result.ok) {
+      setImageDataUrl(result.dataUrl);
+      setImageError(null);
+    } else {
+      setImageError(describeEnvironmentIconImageFailure(result.reason));
+    }
+  };
   // Anything beyond a plain machine kind travels as the object form, which
   // only a server with the override capability stores.
   const writeLocked =
     richLock !== null &&
-    (mode !== "icon" || color !== null || lucideId !== null || !isEnvironmentMachineKind(iconId));
-  const canSave = write.kind === "write" && !writeLocked;
+    (mode !== "icon" ||
+      color !== null ||
+      lucideId !== null ||
+      !isLegacyEnvironmentMachineKind(iconId));
+  // Saving mid-encode would write the previous image and drop the new pick.
+  const imagePending = mode === "image" && imageEncoding;
+  const canSave = write.kind === "write" && !writeLocked && !imagePending;
   const save = () => {
-    if (write.kind !== "write" || writeLocked) return;
+    if (write.kind !== "write" || writeLocked || imagePending) return;
     onSelect(write.icon);
     onOpenChange(false);
   };
@@ -185,7 +224,14 @@ export function EnvironmentIconPickerDialog({
               value={[mode]}
               onValueChange={(next) => {
                 const value = next[0];
-                if (value === "icon" || value === "emoji" || value === "monogram") setMode(value);
+                if (
+                  value === "icon" ||
+                  value === "emoji" ||
+                  value === "monogram" ||
+                  value === "image"
+                ) {
+                  setMode(value);
+                }
               }}
             >
               <Toggle value="icon">Icons</Toggle>
@@ -195,12 +241,15 @@ export function EnvironmentIconPickerDialog({
               <Toggle value="monogram" disabled={richLock !== null}>
                 Monogram
               </Toggle>
+              <Toggle value="image" disabled={richLock !== null}>
+                Image
+              </Toggle>
             </ToggleGroup>
           </div>
 
           {richLock !== null ? <p className="text-xs text-muted-foreground">{richLock}</p> : null}
 
-          {mode !== "emoji" ? (
+          {mode === "icon" || mode === "monogram" ? (
             <div>
               <div className="mb-2 text-xs font-medium text-muted-foreground">Color</div>
               <div className="flex flex-wrap gap-1.5" role="group" aria-label="Icon color">
@@ -317,6 +366,39 @@ export function EnvironmentIconPickerDialog({
                 <p className="py-4 text-center text-sm text-muted-foreground">No icons found.</p>
               ) : null}
             </>
+          ) : mode === "image" ? (
+            <div className="flex items-center gap-4 py-2">
+              {imageDataUrl !== null ? (
+                <EnvironmentMachineIcon
+                  icon={{ kind: "image", dataUrl: imageDataUrl }}
+                  className="size-12 shrink-0"
+                />
+              ) : (
+                <span className="size-12 shrink-0 rounded-[25%] border border-dashed border-muted-foreground" />
+              )}
+              <div className="flex-1 space-y-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  className="sr-only"
+                  onChange={(event) => void handleImageFile(event)}
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  {imageDataUrl === null ? "Choose image" : "Replace image"}
+                </Button>
+                <p className="text-xs text-muted-foreground">
+                  {imageEncoding
+                    ? "Preparing image…"
+                    : (imageError ?? "Cropped to a square and stored at 64 by 64.")}
+                </p>
+              </div>
+            </div>
           ) : mode === "monogram" ? (
             <div className="space-y-2">
               <label htmlFor="environment-monogram" className="text-sm font-medium">

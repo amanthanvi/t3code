@@ -78,8 +78,11 @@ export const ICON_IMAGE_DATA_URL_MAX_LENGTH = 32_768;
  * image library sniffs content instead, so there the guarantee is that neither
  * renderer in use has a script engine, not the prefix.
  *
- * Nothing past the signature is read, so this says nothing about frame count.
- * APNG carries the same signature and animates.
+ * Nothing past the signature is read, so this says nothing about frame count:
+ * APNG carries the same eight bytes and animates. Neither encoder can emit
+ * one, because web draws a single frame through a canvas and mobile re-encodes
+ * through the platform image APIs, so an animated icon takes a hand-written
+ * patch and cannot come from the picker.
  *
  * The first pattern spells out whole base64 quartets rather than a run of
  * characters and loose padding. That refuses the three in four truncations

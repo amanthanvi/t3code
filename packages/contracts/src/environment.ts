@@ -37,8 +37,9 @@ export type ExecutionEnvironmentPlatformArch = typeof ExecutionEnvironmentPlatfo
  * The kinds a released server accepts as a bare string. Only these have that
  * wire form. A server without `environmentIconOverride` takes them and
  * nothing else, and an older client decodes them from a snapshot. A kind
- * added later travels as the object, because an older peer decodes a string
- * it does not know as null and loses the icon. The list is frozen.
+ * added later, such as `container`, travels as the object, because an older
+ * peer decodes a string it does not know as null and loses the icon. The
+ * list is frozen.
  *
  * `linux` has one gap. The `environmentIcon` capability shipped on
  * 2026-09-02 and `linux` joined the set on 2026-09-06, so 25 nightly builds
@@ -66,7 +67,10 @@ export const isLegacyEnvironmentMachineKind = Schema.is(
  * the `environmentIcon` server setting lets a user pick one instead. This list
  * grows as detection improves, which is why the wire form above does not.
  */
-export const ENVIRONMENT_MACHINE_KINDS = [...LEGACY_ENVIRONMENT_MACHINE_KINDS] as const;
+export const ENVIRONMENT_MACHINE_KINDS = [
+  ...LEGACY_ENVIRONMENT_MACHINE_KINDS,
+  "container",
+] as const;
 export const EnvironmentMachineKind = Schema.Literals(ENVIRONMENT_MACHINE_KINDS);
 export type EnvironmentMachineKind = typeof EnvironmentMachineKind.Type;
 export const isEnvironmentMachineKind = Schema.is(EnvironmentMachineKind);
@@ -83,7 +87,6 @@ export const ENVIRONMENT_CURATED_ICON_IDS = [
   ...ENVIRONMENT_MACHINE_KINDS,
   "terminal",
   "database",
-  "container",
   "globe",
   "home",
   "gpu",
@@ -341,8 +344,8 @@ export const ExecutionEnvironmentPlatform = Schema.Struct({
   os: ExecutionEnvironmentPlatformOs,
   arch: ExecutionEnvironmentPlatformArch,
   /** Hardware shape detected at startup. Absent when the host gives no usable
-      signal (containers, Windows, unknown DMI), on servers that predate it, or
-      when a newer server names a kind this build cannot draw. */
+      signal (a board without DMI, a probe that timed out), on servers that
+      predate it, or when a newer server names a kind this build cannot draw. */
   machine: ForwardCompatibleOptional(EnvironmentMachineKind),
 });
 

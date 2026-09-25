@@ -10,8 +10,10 @@ import { vi } from "vite-plus/test";
 import * as ProcessRunner from "../processRunner.ts";
 import {
   detectServerEnvironmentMachineKind,
+  isContainerCgroup,
   machineKindFromAppleProductName,
   machineKindFromDmi,
+  machineKindFromWindowsComputerSystem,
 } from "./ServerEnvironmentMachine.ts";
 
 const runMock = vi.fn<ProcessRunner.ProcessRunner["Service"]["run"]>();
@@ -33,8 +35,12 @@ const processOutput = (stdout: string, code = 0) =>
     stderrInvalidUtf8: false,
   });
 
-const dmiFileSystem = (files: Readonly<Record<string, string>>) =>
+const dmiFileSystem = (
+  files: Readonly<Record<string, string>>,
+  existing: ReadonlyArray<string> = [],
+) =>
   FileSystem.layerNoop({
+    exists: (path) => Effect.succeed(existing.includes(path)),
     readFileString: (path) => {
       const name = path.slice(path.lastIndexOf("/") + 1);
       return name in files
@@ -69,8 +75,12 @@ describe("machineKindFromAppleProductName", () => {
     expect(machineKindFromAppleProductName("Mac Pro (2023)")).toBe("desktop");
   });
 
-  it("returns null for Apple silicon model identifiers, which carry no product family", () => {
-    expect(machineKindFromAppleProductName("Mac16,10")).toBeNull();
+  it("looks up Apple silicon model identifiers, which carry no product family", () => {
+    expect(machineKindFromAppleProductName("Mac16,10")).toBe("mac-mini");
+    expect(machineKindFromAppleProductName("Mac14,13")).toBe("mac-studio");
+    expect(machineKindFromAppleProductName("Mac15,3")).toBe("laptop");
+    expect(machineKindFromAppleProductName("Mac16,2")).toBe("desktop");
+    expect(machineKindFromAppleProductName("Mac99,1")).toBeNull();
   });
 });
 
@@ -121,6 +131,54 @@ describe("machineKindFromDmi", () => {
     expect(
       machineKindFromDmi({ chassisType: "3", sysVendor: "Apple", productName: "Mac Studio" }),
     ).toBe("mac-studio");
+  });
+});
+
+describe("machineKindFromWindowsComputerSystem", () => {
+  it("prefers virtualization markers, then the first mapped enclosure type", () => {
+    expect(
+      machineKindFromWindowsComputerSystem({
+        chassisTypes: ["3"],
+        manufacturer: "Microsoft Corporation",
+        model: "Virtual Machine",
+      }),
+    ).toBe("cloud");
+    expect(
+      machineKindFromWindowsComputerSystem({
+        chassisTypes: ["10"],
+        manufacturer: "LENOVO",
+        model: "ThinkPad X1",
+      }),
+    ).toBe("laptop");
+    // Some firmware lists an unmapped shape first; the mapped one still counts.
+    expect(
+      machineKindFromWindowsComputerSystem({
+        chassisTypes: ["1", "23"],
+        manufacturer: "Dell",
+        model: "PowerEdge",
+      }),
+    ).toBe("server");
+    expect(
+      machineKindFromWindowsComputerSystem({ chassisTypes: [], manufacturer: null, model: null }),
+    ).toBeNull();
+  });
+});
+
+describe("isContainerCgroup", () => {
+  it("recognizes the runtimes that name themselves in PID 1's cgroup", () => {
+    expect(isContainerCgroup("0::/system.slice/docker-abc123.scope\n")).toBe(true);
+    expect(isContainerCgroup("0::/kubepods/besteffort/pod1/abc\n")).toBe(true);
+    expect(isContainerCgroup("0::/lxc/web\n")).toBe(true);
+    expect(isContainerCgroup("0::/init.scope\n")).toBe(false);
+    expect(isContainerCgroup("0::/user.slice/user-1000.slice/session-2.scope\n")).toBe(false);
+  });
+
+  it("does not read a bare root cgroup as a container", () => {
+    // WSL 2 and any non-systemd init leave PID 1 in the root cgroup and read
+    // the same as a container with a private cgroup namespace. Reporting every
+    // Alpine and Void host as a container costs more than the runtimes this
+    // would catch, all of which either drop a marker file or name themselves.
+    expect(isContainerCgroup("0::/\n")).toBe(false);
   });
 });
 
@@ -222,7 +280,44 @@ describe("detectServerEnvironmentMachineKind", () => {
     }),
   );
 
-  it.effect("returns null on Linux without DMI (containers, ARM boards)", () =>
+  it.effect("reads a host whose init leaves PID 1 in the root cgroup", () =>
+    Effect.gen(function* () {
+      // Stock WSL 2 runs Microsoft's own init, not systemd.
+      const onWsl = yield* detectServerEnvironmentMachineKind().pipe(
+        Effect.provide(
+          withPlatform(
+            "linux",
+            dmiFileSystem({
+              osrelease: "5.15.153.1-microsoft-standard-WSL2\n",
+              cgroup: "0::/\n",
+              chassis_type: "3\n",
+              sys_vendor: "Microsoft Corporation\n",
+              product_name: "Virtual Machine\n",
+            }),
+          ),
+        ),
+      );
+      expect(onWsl).toBe("linux");
+
+      // So does any non-systemd distribution on bare metal.
+      const onAlpine = yield* detectServerEnvironmentMachineKind().pipe(
+        Effect.provide(
+          withPlatform(
+            "linux",
+            dmiFileSystem({
+              cgroup: "0::/\n",
+              chassis_type: "3\n",
+              sys_vendor: "Dell Inc.\n",
+              product_name: "OptiPlex 7090\n",
+            }),
+          ),
+        ),
+      );
+      expect(onAlpine).toBe("desktop");
+    }),
+  );
+
+  it.effect("returns null on Linux without DMI (ARM boards)", () =>
     Effect.gen(function* () {
       const result = yield* detectServerEnvironmentMachineKind().pipe(
         Effect.provide(withPlatform("linux", dmiFileSystem({}))),
@@ -232,10 +327,97 @@ describe("detectServerEnvironmentMachineKind", () => {
     }),
   );
 
-  it.effect("skips detection on other platforms", () =>
+  it.effect("recognizes a container by its runtime marker before the host's DMI", () =>
     Effect.gen(function* () {
+      const inDocker = yield* detectServerEnvironmentMachineKind().pipe(
+        Effect.provide(
+          withPlatform(
+            "linux",
+            dmiFileSystem(
+              { chassis_type: "23\n", sys_vendor: "Supermicro\n", product_name: "X11\n" },
+              ["/.dockerenv"],
+            ),
+          ),
+        ),
+      );
+      expect(inDocker).toBe("container");
+
+      const inKubernetes = yield* detectServerEnvironmentMachineKind().pipe(
+        Effect.provide(
+          withPlatform("linux", dmiFileSystem({ cgroup: "0::/kubepods/burstable/pod1/abc\n" })),
+        ),
+      );
+      expect(inKubernetes).toBe("container");
+
+      // A Docker Desktop container runs on the WSL 2 kernel; the marker wins.
+      const onDockerDesktop = yield* detectServerEnvironmentMachineKind().pipe(
+        Effect.provide(
+          withPlatform(
+            "linux",
+            dmiFileSystem({ osrelease: "5.15.153.1-microsoft-standard-WSL2\n" }, ["/.dockerenv"]),
+          ),
+        ),
+      );
+      expect(onDockerDesktop).toBe("container");
+      expect(runMock).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("reads the SMBIOS enclosure through PowerShell on Windows", () =>
+    Effect.gen(function* () {
+      runMock.mockReturnValueOnce(
+        processOutput('{"chassisTypes":[10],"manufacturer":"LENOVO","model":"ThinkPad X1"}\n'),
+      );
+
       const result = yield* detectServerEnvironmentMachineKind().pipe(
         Effect.provide(withPlatform("win32")),
+      );
+
+      expect(result).toBe("laptop");
+      expect(runMock).toHaveBeenCalledTimes(1);
+      const call = runMock.mock.calls[0]?.[0];
+      expect(call?.command).toBe("powershell.exe");
+      expect(call?.args.slice(0, 3)).toEqual(["-NoProfile", "-NonInteractive", "-Command"]);
+      // The script must wrap the enclosure list, or a single type unwraps to a scalar.
+      expect(call?.args[3]).toContain("@($e.ChassisTypes)");
+      expect(call?.args[3]).toContain("ConvertTo-Json -Compress");
+    }),
+  );
+
+  it.effect("keeps the Windows vendor fields when the enclosure is missing", () =>
+    Effect.gen(function* () {
+      runMock.mockReturnValueOnce(
+        processOutput(
+          '{"chassisTypes":[null],"manufacturer":"Microsoft Corporation","model":"Virtual Machine"}\n',
+        ),
+      );
+
+      const result = yield* detectServerEnvironmentMachineKind().pipe(
+        Effect.provide(withPlatform("win32")),
+      );
+
+      expect(result).toBe("cloud");
+    }),
+  );
+
+  it.effect("returns null when the Windows probe fails or prints something else", () =>
+    Effect.gen(function* () {
+      runMock.mockReturnValueOnce(processOutput("", 1));
+      expect(
+        yield* detectServerEnvironmentMachineKind().pipe(Effect.provide(withPlatform("win32"))),
+      ).toBeNull();
+
+      runMock.mockReturnValueOnce(processOutput("Access is denied.\n"));
+      expect(
+        yield* detectServerEnvironmentMachineKind().pipe(Effect.provide(withPlatform("win32"))),
+      ).toBeNull();
+    }),
+  );
+
+  it.effect("skips detection on platforms with no probe", () =>
+    Effect.gen(function* () {
+      const result = yield* detectServerEnvironmentMachineKind().pipe(
+        Effect.provide(withPlatform("freebsd")),
       );
 
       expect(result).toBeNull();

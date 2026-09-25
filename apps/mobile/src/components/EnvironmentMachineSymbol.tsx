@@ -5,6 +5,7 @@ import {
   type EnvironmentCuratedIconId,
   type EnvironmentIcon,
 } from "@t3tools/contracts";
+import { Image } from "expo-image";
 import { Platform, Text, View } from "react-native";
 
 import { cn } from "../lib/cn";
@@ -63,6 +64,22 @@ export function EnvironmentMachineSymbol(props: {
       >
         {icon.emoji}
       </Text>
+    );
+  }
+  if (icon.kind === "image") {
+    // Inline bytes need no disk cache, and the URL itself is the cache key.
+    // The bytes carry no name to read out, so the label names the kind. Every
+    // other branch here labels itself, and `accessible` is what makes a label
+    // on a non-text element reachable.
+    return (
+      <Image
+        accessible
+        accessibilityLabel="Custom icon"
+        source={{ uri: icon.dataUrl }}
+        cachePolicy="memory"
+        contentFit="cover"
+        style={{ width: size, height: size, borderRadius: size * 0.25 }}
+      />
     );
   }
   if (icon.kind === "monogram") {
