@@ -3,9 +3,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   resolveEnvironmentIconChoiceLock,
+  resolveEnvironmentIconDialogWrite,
   resolveEnvironmentIconPickerLock,
-  resolveEnvironmentIconWrite,
-} from "./EnvironmentIconPicker";
+} from "./EnvironmentIconPicker.logic";
 
 const config = (environmentIcon: boolean | undefined, environmentIconOverride?: boolean) =>
   ({
@@ -49,25 +49,6 @@ describe("resolveEnvironmentIconPickerLock", () => {
   });
 });
 
-describe("resolveEnvironmentIconWrite", () => {
-  it("clears the override when the pick matches detection", () => {
-    expect(resolveEnvironmentIconWrite({ next: "laptop", detected: "laptop" })).toBeNull();
-  });
-
-  it("writes a machine kind as its shared reference", () => {
-    expect(resolveEnvironmentIconWrite({ next: "laptop", detected: "server" })).toBe(
-      environmentIconForMachineKind("laptop"),
-    );
-  });
-
-  it("writes a role as a named icon", () => {
-    expect(resolveEnvironmentIconWrite({ next: "database", detected: "server" })).toEqual({
-      kind: "icon",
-      name: "database",
-    });
-  });
-});
-
 describe("resolveEnvironmentIconChoiceLock", () => {
   it("never locks a machine kind, which every server stores as a string", () => {
     expect(
@@ -83,5 +64,66 @@ describe("resolveEnvironmentIconChoiceLock", () => {
     expect(
       resolveEnvironmentIconChoiceLock({ serverConfig: config(true, true), id: "database" }),
     ).toBeNull();
+  });
+});
+
+describe("resolveEnvironmentIconDialogWrite", () => {
+  const base = {
+    iconId: "laptop",
+    color: null,
+    emoji: "🚀",
+    monogram: "K8",
+    detected: "server",
+  } as const;
+
+  it("clears the override when a plain pick matches detection", () => {
+    expect(resolveEnvironmentIconDialogWrite({ ...base, mode: "icon", iconId: "server" })).toEqual({
+      kind: "write",
+      icon: null,
+    });
+  });
+
+  it("writes a machine kind as its shared reference and a role as a named icon", () => {
+    const plain = resolveEnvironmentIconDialogWrite({ ...base, mode: "icon" });
+    expect(plain.kind === "write" && plain.icon).toBe(environmentIconForMachineKind("laptop"));
+    expect(
+      resolveEnvironmentIconDialogWrite({ ...base, mode: "icon", iconId: "database" }),
+    ).toEqual({ kind: "write", icon: { kind: "icon", name: "database" } });
+  });
+
+  it("keeps a colored pick of the detected kind, since the color is the point", () => {
+    expect(
+      resolveEnvironmentIconDialogWrite({ ...base, mode: "icon", iconId: "server", color: "red" }),
+    ).toEqual({ kind: "write", icon: { kind: "icon", name: "server", color: "red" } });
+  });
+
+  it("accepts exactly one emoji and nothing else", () => {
+    expect(resolveEnvironmentIconDialogWrite({ ...base, mode: "emoji" })).toEqual({
+      kind: "write",
+      icon: { kind: "emoji", emoji: "🚀" },
+    });
+    expect(resolveEnvironmentIconDialogWrite({ ...base, mode: "emoji", emoji: "x" }).kind).toBe(
+      "invalid",
+    );
+  });
+
+  it("normalizes a monogram and holds it to two characters", () => {
+    expect(
+      resolveEnvironmentIconDialogWrite({ ...base, mode: "monogram", monogram: " k8 " }),
+    ).toEqual({ kind: "write", icon: { kind: "monogram", text: "K8" } });
+    expect(
+      resolveEnvironmentIconDialogWrite({
+        ...base,
+        mode: "monogram",
+        monogram: "e\u0301x",
+        color: "teal",
+      }),
+    ).toEqual({ kind: "write", icon: { kind: "monogram", text: "ÉX", color: "teal" } });
+    expect(
+      resolveEnvironmentIconDialogWrite({ ...base, mode: "monogram", monogram: "ABC" }).kind,
+    ).toBe("invalid");
+    expect(
+      resolveEnvironmentIconDialogWrite({ ...base, mode: "monogram", monogram: "" }).kind,
+    ).toBe("invalid");
   });
 });

@@ -364,7 +364,7 @@ function SidebarThreadTooltip({
             <div className="flex min-w-0 items-center gap-2">
               <EnvironmentMachineIcon
                 icon={environmentMachine}
-                className="size-3 shrink-0 stroke-muted-foreground"
+                className="size-3 shrink-0 text-muted-foreground"
               />
               <div className="min-w-0 truncate text-foreground/75">{environmentLabel}</div>
             </div>

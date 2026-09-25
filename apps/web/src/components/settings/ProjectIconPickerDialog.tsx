@@ -8,10 +8,9 @@ import {
 } from "@t3tools/contracts";
 import { DynamicIcon, type IconName } from "lucide-react/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { firstEmoji, PROJECT_EMOJIS } from "../../iconEmoji";
 import {
   filterProjectIconNames,
-  firstEmoji,
-  PROJECT_EMOJIS,
   PROJECT_ICON_COLORS,
   projectIconColorClassName,
 } from "../../projectIconOptions";
