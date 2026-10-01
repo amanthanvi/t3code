@@ -5,6 +5,7 @@ import {
   ProviderDriverKind,
   type ServerProviderModel,
 } from "@t3tools/contracts";
+import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Option from "effect/Option";
 import {
   getModelSelectionStringOptionValue,
@@ -70,6 +71,90 @@ export function resolveClaudeModelCatalog(manifest: ModelManifestData): ClaudeMo
 }
 
 export const BUNDLED_CLAUDE_MODEL_CATALOG = resolveClaudeModelCatalog(BUNDLED_MODEL_MANIFEST);
+
+export function applyClaudeConfiguredDefault(
+  catalog: ClaudeModelCatalog,
+  defaultModel: string,
+  modelIdPrefix: string,
+): ClaudeModelCatalog {
+  if (!defaultModel) return catalog;
+  const chosen =
+    catalog.models.find(
+      ({ model }) =>
+        !model.isCustom &&
+        !model.slug.includes("/") &&
+        `${modelIdPrefix}${model.slug}` === defaultModel,
+    ) ?? catalog.models.find(({ model }) => !model.isCustom && model.slug === defaultModel);
+  if (!chosen || chosen.model.isDefault) return catalog;
+  return {
+    models: catalog.models.map((entry) => ({
+      ...entry,
+      model: {
+        ...entry.model,
+        ...(entry === chosen ? { isDefault: true } : { isDefault: false }),
+      },
+    })),
+  };
+}
+
+export interface DiscoveredClaudeModel {
+  readonly value: string;
+  readonly resolvedModel?: string;
+  readonly displayName: string;
+  readonly supportedEffortLevels?: ReadonlyArray<"low" | "medium" | "high" | "xhigh" | "max">;
+}
+
+const CLAUDE_GATEWAY_MODEL = /^claude\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+export function extendClaudeModelCatalog(
+  catalog: ClaudeModelCatalog,
+  discovered: ReadonlyArray<DiscoveredClaudeModel>,
+  customModels: ReadonlyArray<CustomModelSetting>,
+  modelIdPrefix: string,
+): ClaudeModelCatalog {
+  if (modelIdPrefix !== "claude/" || discovered.length === 0) return catalog;
+  const seen = new Set([
+    ...catalog.models.map(({ model }) =>
+      model.slug.includes("/") ? model.slug : `${modelIdPrefix}${model.slug}`,
+    ),
+    ...readCustomModelEntries(customModels).map(({ slug }) => slug),
+  ]);
+  const additions: ClaudeCatalogModel[] = [];
+  for (const model of discovered) {
+    if (!CLAUDE_GATEWAY_MODEL.test(model.value)) continue;
+    const slug = model.resolvedModel ?? model.value;
+    if (!CLAUDE_GATEWAY_MODEL.test(slug) || seen.has(slug)) continue;
+    seen.add(slug);
+    const effortLevels = [...new Set(model.supportedEffortLevels ?? [])];
+    additions.push({
+      model: {
+        slug,
+        name: model.displayName.trim() || slug,
+        isCustom: false,
+        capabilities: createModelCapabilities({
+          optionDescriptors:
+            effortLevels.length > 0
+              ? [
+                  {
+                    id: "effort",
+                    label: "Reasoning",
+                    type: "select",
+                    options: effortLevels.map((level) => ({
+                      id: level,
+                      label:
+                        level === "xhigh" ? "Extra High" : level[0]!.toUpperCase() + level.slice(1),
+                    })),
+                  },
+                ]
+              : [],
+        }),
+      },
+      runtime: {},
+      compatibility: {},
+    });
+  }
+  return additions.length > 0 ? { models: [...catalog.models, ...additions] } : catalog;
+}
 
 /**
  * Scope the catalog to one instance's settings: custom model slugs stay opaque

@@ -4,7 +4,10 @@ import { ProviderInstanceId } from "@t3tools/contracts";
 import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
 import type { ModelManifestData } from "./ModelManifest.ts";
 import {
+  applyClaudeConfiguredDefault,
+  extendClaudeModelCatalog,
   formatClaudeVersionUpgradeMessage,
+  getClaudeCatalogModelCapabilities,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
   resolveClaudeCatalogEffort,
@@ -70,6 +73,70 @@ const manifest = (): ModelManifestData => ({
 });
 
 describe("Claude model catalog", () => {
+  it("maps a qualified instance default to the visible native model", () => {
+    const catalog = resolveClaudeModelCatalog(manifest());
+    const configured = applyClaudeConfiguredDefault(
+      catalog,
+      "claude/claude-synthetic-next",
+      "claude/",
+    );
+    assert.deepStrictEqual(
+      configured.models.filter(({ model }) => model.isDefault).map(({ model }) => model.slug),
+      ["claude-synthetic-next"],
+    );
+    assert.strictEqual(applyClaudeConfiguredDefault(catalog, "claude/missing", "claude/"), catalog);
+  });
+
+  it("adds only new qualified gateway models without guessing context capabilities", () => {
+    const catalog = extendClaudeModelCatalog(
+      resolveClaudeModelCatalog(manifest()),
+      [
+        { value: "sonnet", resolvedModel: "claude/claude-sonnet-5-5", displayName: "Sonnet alias" },
+        { value: "claude/claude-synthetic-next", displayName: "Duplicate built-in" },
+        { value: "claude/claude-legacy", displayName: "Saved compatibility route" },
+        { value: "openrouter/claude-sonnet-5-5", displayName: "Other provider" },
+        {
+          value: "claude/claude-sonnet-5-5",
+          displayName: "Claude Sonnet 5.5",
+          supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
+        },
+        { value: "claude/claude-sonnet-5-5", displayName: "Duplicate route" },
+      ],
+      ["claude/claude-legacy"],
+      "claude/",
+    );
+    assert.deepStrictEqual(
+      catalog.models.map(({ model }) => model.slug),
+      ["claude-synthetic-next", "claude/claude-sonnet-5-5"],
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogApiModelId(
+        catalog,
+        {
+          instanceId: ProviderInstanceId.make("claude-cpamc"),
+          model: "claude/claude-sonnet-5-5",
+          options: [{ id: "effort", value: "xhigh" }],
+        },
+        "claude/",
+      ),
+      "claude/claude-sonnet-5-5",
+    );
+    assert.deepStrictEqual(
+      getClaudeCatalogModelCapabilities(catalog, "claude/claude-sonnet-5-5").optionDescriptors?.map(
+        ({ id }) => id,
+      ),
+      ["effort"],
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogEffort(catalog, "claude/claude-sonnet-5-5", "xhigh"),
+      "xhigh",
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogEffort(catalog, "claude/claude-sonnet-5-5", undefined),
+      undefined,
+    );
+  });
+
   it("filters models at runtime-version boundaries and derives the upgrade message", () => {
     const catalog = resolveClaudeModelCatalog(manifest());
     assert.deepStrictEqual(resolveClaudeModelsForVersion(catalog, "3.1.9"), []);

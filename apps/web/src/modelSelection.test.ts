@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@t3tools/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
-import { createModelSelection } from "@t3tools/shared/model";
+import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
 import { deriveEffectiveComposerModelState } from "./composerDraftStore";
 import { getComposerProviderState } from "./components/chat/composerProviderState";
 import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "./providerInstances";
@@ -67,6 +67,105 @@ function settingsWithProviderInstances(): UnifiedSettings {
 }
 
 describe("instance-scoped model selection", () => {
+  it("leaves effort unset when a discovered Claude model has no SDK default", () => {
+    const instanceId = ProviderInstanceId.make("claude-cpamc");
+    const driver = ProviderDriverKind.make("claudeAgent");
+    const model = "claude/claude-sonnet-5-5";
+    const state = getComposerProviderState({
+      provider: driver,
+      model,
+      models: [
+        {
+          slug: model,
+          name: "Claude Sonnet 5.5",
+          isCustom: false,
+          capabilities: createModelCapabilities({
+            optionDescriptors: [
+              {
+                id: "effort",
+                label: "Reasoning",
+                type: "select",
+                options: [
+                  { id: "low", label: "Low" },
+                  { id: "medium", label: "Medium" },
+                ],
+              },
+            ],
+          }),
+        },
+      ],
+      modelOptions: undefined,
+      planModeEnabled: false,
+    });
+    expect(state.promptEffort).toBeNull();
+    expect(createModelSelection(instanceId, model, state.modelOptionsForDispatch)).toEqual(
+      createModelSelection(instanceId, model),
+    );
+  });
+
+  it("dispatches the configured Claude instance default only for a fresh selection", () => {
+    const instanceId = ProviderInstanceId.make("claude-cpamc");
+    const driver = ProviderDriverKind.make("claudeAgent");
+    const base = provider({
+      provider: driver,
+      instanceId,
+      models: ["claude-fable-5-1", "claude-opus-5-5", "claude/claude-opus-5-5"],
+    });
+    const providers = [
+      {
+        ...base,
+        models: base.models.map((model) => ({
+          ...model,
+          isCustom: model.slug.includes("/"),
+          isDefault: model.slug === "claude-opus-5-5",
+        })),
+      },
+    ];
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      providerInstances: {
+        [instanceId]: {
+          driver,
+          config: { defaultModel: "claude/claude-opus-5-5", modelIdPrefix: "claude/" },
+        },
+      },
+      providerModelPolicies: {
+        [instanceId]: { hiddenModels: ["claude/claude-opus-5-5"], allowedModelPrefixes: [] },
+      },
+    };
+    const fresh = deriveEffectiveComposerModelState({
+      draft: null,
+      providers,
+      selectedProvider: driver,
+      selectedInstanceId: instanceId,
+      threadModelSelection: null,
+      projectModelSelection: null,
+      settings,
+    });
+    const dispatch = getComposerProviderState({
+      provider: driver,
+      model: fresh.selectedModel,
+      models: providers[0]!.models,
+      modelOptions: fresh.modelOptions?.[instanceId],
+      planModeEnabled: false,
+    });
+    expect(
+      createModelSelection(instanceId, fresh.selectedModel, dispatch.modelOptionsForDispatch),
+    ).toEqual(createModelSelection(instanceId, "claude-opus-5-5"));
+    const saved = createModelSelection(instanceId, "claude-fable-5-1");
+    expect(
+      deriveEffectiveComposerModelState({
+        draft: null,
+        providers,
+        selectedProvider: driver,
+        selectedInstanceId: instanceId,
+        threadModelSelection: saved,
+        projectModelSelection: null,
+        settings,
+      }).selectedModel,
+    ).toBe(saved.model);
+  });
+
   it("preserves server-provided legacy model metadata", () => {
     const baseProvider = provider({
       instanceId: "claudeAgent",

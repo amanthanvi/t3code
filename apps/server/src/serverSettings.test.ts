@@ -239,6 +239,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         homePath: "",
         customModels: ["claude-custom"],
         modelIdPrefix: "",
+        defaultModel: "",
         launchArgs: "",
         autoCompactWindow: "",
       });
@@ -981,6 +982,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         homePath: "",
         customModels: [],
         modelIdPrefix: "",
+        defaultModel: "",
         launchArgs: "",
         autoCompactWindow: "",
       });

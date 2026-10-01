@@ -249,6 +249,17 @@ describe("ClaudeSettings auto-compaction", () => {
 });
 
 describe("ClaudeSettings model ID prefix", () => {
+  it("accepts an instance default without changing the native default", () => {
+    expect(decodeClaudeSettings({}).defaultModel).toBe("");
+    expect(decodeClaudeSettings({ defaultModel: "claude/claude-opus-5-5" }).defaultModel).toBe(
+      "claude/claude-opus-5-5",
+    );
+    expect(
+      decodeServerSettingsPatch({ providers: { claudeAgent: { defaultModel: "claude/opus" } } })
+        .providers?.claudeAgent?.defaultModel,
+    ).toBe("claude/opus");
+  });
+
   it("defaults to native IDs and accepts a provider prefix in full and patch settings", () => {
     expect(decodeClaudeSettings({}).modelIdPrefix).toBe("");
     expect(decodeClaudeSettings({ modelIdPrefix: "claude/" }).modelIdPrefix).toBe("claude/");

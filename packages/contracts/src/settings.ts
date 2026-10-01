@@ -663,6 +663,10 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         providerSettingsForm: { placeholder: "e.g. claude/", clearWhenEmpty: "omit" },
       }),
     ),
+    defaultModel: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
     launchArgs: Schema.String.pipe(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
@@ -1421,6 +1425,7 @@ const ClaudeSettingsPatch = Schema.Struct({
   modelIdPrefix: Schema.optionalKey(
     TrimmedString.check(Schema.isPattern(CLAUDE_MODEL_ID_PREFIX_PATTERN)),
   ),
+  defaultModel: Schema.optionalKey(TrimmedString),
   launchArgs: Schema.optionalKey(TrimmedString),
   // Validated at the patch boundary so a typo fails the one update with a
   // schema error instead of a generic whole-settings failure.

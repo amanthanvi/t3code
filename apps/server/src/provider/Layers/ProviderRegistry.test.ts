@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import type { ModelInfo } from "@anthropic-ai/claude-agent-sdk";
 import { describe, it, assert } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -139,6 +140,7 @@ function booleanDescriptor(id: string, label: string) {
 }
 
 type TestClaudeCapabilities = {
+  readonly models?: ReadonlyArray<ModelInfo>;
   readonly email: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
@@ -2659,6 +2661,85 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
     // ── checkClaudeProviderStatus tests ──────────────────────────
 
     describe("checkClaudeProviderStatus", () => {
+      it.effect("selects the visible native row for a configured qualified default", () =>
+        Effect.gen(function* () {
+          const settings = {
+            ...defaultClaudeSettings,
+            modelIdPrefix: "claude/",
+            defaultModel: "claude/claude-opus-5-5",
+            customModels: ["claude/claude-opus-5-5"],
+          };
+          const status = yield* checkClaudeProviderStatus(settings, claudeCapabilities());
+          assert.deepStrictEqual(
+            status.models.filter((model) => model.isDefault).map((model) => model.slug),
+            ["claude-opus-5-5"],
+          );
+          assert.notStrictEqual(
+            status.models.find((model) => model.slug === "claude/claude-opus-5-5")?.isDefault,
+            true,
+          );
+          const missing = yield* checkClaudeProviderStatus(
+            { ...settings, defaultModel: "claude/claude-not-offered" },
+            claudeCapabilities(),
+          );
+          assert.include(missing.message, "claude/claude-not-offered");
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              if (args.join(" ") === "--version")
+                return { stdout: "2.1.286\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${args.join(" ")}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("adds SDK-discovered qualified gateway models only for the CPAMC instance", () =>
+        Effect.gen(function* () {
+          const discovered = claudeCapabilities({
+            models: [
+              {
+                value: "claude/claude-sonnet-5-5",
+                resolvedModel: "claude/claude-sonnet-5-5",
+                displayName: "Claude Sonnet 5.5",
+                description: "",
+                supportedEffortLevels: ["low", "high"],
+              },
+            ],
+          });
+          const settings = { ...defaultClaudeSettings, modelIdPrefix: "claude/" };
+          const gateway = yield* checkClaudeProviderStatus(settings, discovered, {
+            ...process.env,
+            CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
+          });
+          const ordinary = yield* checkClaudeProviderStatus(settings, discovered, {
+            ...process.env,
+            CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "0",
+          });
+          const empty = yield* checkClaudeProviderStatus(
+            settings,
+            claudeCapabilities({ models: [] }),
+            { ...process.env, CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1" },
+          );
+          assert.strictEqual(
+            gateway.models.filter((model) => model.slug === "claude/claude-sonnet-5-5").length,
+            1,
+          );
+          assert.isFalse(
+            ordinary.models.some((model) => model.slug === "claude/claude-sonnet-5-5"),
+          );
+          assert.isFalse(empty.models.some((model) => model.slug === "claude/claude-sonnet-5-5"));
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              if (args.join(" ") === "--version")
+                return { stdout: "2.1.286\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${args.join(" ")}`);
+            }),
+          ),
+        ),
+      );
+
       it.effect("returns ready when claude is installed and authenticated", () =>
         Effect.gen(function* () {
           const status = yield* checkClaudeProviderStatus(

@@ -19,6 +19,7 @@ import {
   type SlashCommand as ClaudeSlashCommand,
   type SDKControlGetUsageResponse,
   type SDKUserMessage,
+  type ModelInfo,
   type SettingSource,
 } from "@anthropic-ai/claude-agent-sdk";
 
@@ -44,6 +45,8 @@ import {
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
+  applyClaudeConfiguredDefault,
+  extendClaudeModelCatalog,
   formatClaudeVersionUpgradeMessage,
   resolveClaudeModelsForVersion,
 } from "../ClaudeModelCatalog.ts";
@@ -225,6 +228,7 @@ function nonEmptyProbeString(value: string): string | undefined {
 }
 
 type ClaudeCapabilitiesProbe = {
+  readonly models?: ReadonlyArray<ModelInfo>;
   readonly email: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
@@ -381,6 +385,7 @@ const probeClaudeCapabilities = (
             }
           | undefined;
         return {
+          ...(init.models ? { models: init.models } : {}),
           email: account?.email,
           subscriptionType: account?.subscriptionType,
           tokenSource: account?.tokenSource,
@@ -433,8 +438,13 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 > {
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
+  const configuredCatalog = applyClaudeConfiguredDefault(
+    modelCatalog,
+    claudeSettings.defaultModel,
+    claudeSettings.modelIdPrefix,
+  );
   const allModels = providerModelsFromSettings(
-    modelCatalog.models.map((entry) => entry.model),
+    configuredCatalog.models.map((entry) => entry.model),
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
@@ -523,16 +533,41 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
-  const models = providerModelsFromSettings(
-    resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
-    claudeSettings.customModels,
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
-  );
   const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
 
   const capabilities = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
     : undefined;
+  const discoveredCatalog =
+    resolvedEnvironment.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY === "1" && capabilities
+      ? extendClaudeModelCatalog(
+          configuredCatalog,
+          capabilities.models ?? [],
+          claudeSettings.customModels,
+          claudeSettings.modelIdPrefix,
+        )
+      : configuredCatalog;
+  const selectedCatalog = applyClaudeConfiguredDefault(
+    discoveredCatalog,
+    claudeSettings.defaultModel,
+    claudeSettings.modelIdPrefix,
+  );
+  const models = providerModelsFromSettings(
+    resolveClaudeModelsForVersion(selectedCatalog, parsedVersion),
+    claudeSettings.customModels,
+    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+  );
+  const defaultWarning =
+    claudeSettings.defaultModel &&
+    !models.some(
+      (model) =>
+        model.isDefault &&
+        !model.isCustom &&
+        (model.slug === claudeSettings.defaultModel ||
+          `${claudeSettings.modelIdPrefix}${model.slug}` === claudeSettings.defaultModel),
+    )
+      ? `Configured Claude default ${claudeSettings.defaultModel} is unavailable in this instance.`
+      : undefined;
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
   const slashCommands = [COMPACT_SLASH_COMMAND, ...(capabilities?.slashCommands ?? [])];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
@@ -550,7 +585,12 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         version: parsedVersion,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Could not verify Claude authentication status from initialization result.",
+        message: [
+          "Could not verify Claude authentication status from initialization result.",
+          defaultWarning,
+        ]
+          .filter(Boolean)
+          .join(" "),
       },
     });
   }
@@ -584,7 +624,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         ...(capabilities.email ? { email: capabilities.email } : {}),
         ...(authMetadata ? authMetadata : {}),
       },
-      ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
+      ...(versionUpgradeMessage || defaultWarning
+        ? { message: [versionUpgradeMessage, defaultWarning].filter(Boolean).join(" ") }
+        : {}),
       usageLimits,
     },
   });

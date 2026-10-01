@@ -146,6 +146,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
       );
 
       assert.deepEqual(capabilities, {
+        models: [],
         email: "dev@example.com",
         subscriptionType: "pro",
         tokenSource: "oauth",
@@ -199,6 +200,15 @@ it.effect("preserves initialized capabilities when optional usage times out", ()
         initializationResult: async () => ({
           account: { email: "dev@example.com", subscriptionType: "pro", tokenSource: "oauth" },
           commands: [{ name: "review", description: "Review changes", argumentHint: "[path]" }],
+          models: [
+            {
+              value: "claude/claude-sonnet-5-5",
+              resolvedModel: "claude/claude-sonnet-5-5",
+              displayName: "Claude Sonnet 5.5",
+              description: "",
+              supportedEffortLevels: ["low", "high"],
+            },
+          ],
         }),
         usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () => {
           Deferred.doneUnsafe(usageStarted, Effect.void);
@@ -216,6 +226,10 @@ it.effect("preserves initialized capabilities when optional usage times out", ()
     assert.equal(capabilities?.email, "dev@example.com");
     assert.equal(capabilities?.subscriptionType, "pro");
     assert.equal(capabilities?.tokenSource, "oauth");
+    assert.deepEqual(
+      capabilities?.models?.map(({ value }) => value),
+      ["claude/claude-sonnet-5-5"],
+    );
     assert.deepEqual(capabilities?.slashCommands, [
       { name: "review", description: "Review changes", input: { hint: "[path]" } },
     ]);
