@@ -80,12 +80,14 @@ jobs:
       - name: Align package versions
         run: node scripts/update-release-package-versions.ts "${{ steps.candidate.outputs.version }}"
 
-      - name: Test Claude model routing and settings
+      - name: Test provider model routing and settings
         run: |
           vp test run \
             packages/contracts/src/settings.test.ts \
             apps/server/src/provider/ClaudeModelCatalog.test.ts \
             apps/server/src/provider/Layers/ClaudeAdapter.test.ts \
+            apps/server/src/provider/Layers/codexCatalogSource.test.ts \
+            apps/server/src/provider/Layers/codexLaunchArgs.test.ts \
             apps/server/src/provider/Layers/ProviderInstanceRegistryLive.test.ts \
             apps/server/src/serverSettings.test.ts \
             apps/web/src/components/settings/ProviderSettingsForm.test.ts \
@@ -97,6 +99,7 @@ jobs:
             apps/web/src/components/settings/ProviderSettingsPanel.environment.test.tsx \
             apps/web/src/components/chat/ProviderModelPicker.test.tsx \
             apps/web/src/components/chat/ModelPickerContent.test.ts \
+            apps/web/src/components/chat/TraitsPicker.test.ts \
             apps/mobile/src/lib/modelOptions.test.ts
 
       - name: Typecheck changed surfaces
