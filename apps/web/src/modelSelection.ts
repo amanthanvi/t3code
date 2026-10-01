@@ -99,7 +99,7 @@ function appendUnavailableDynamicModelSelection(
   hiddenModels: ReadonlyArray<string>,
   allowedModelPrefixes: ReadonlyArray<string>,
 ): AppModelOption[] {
-  if (provider !== "opencode" && provider !== "antigravity") return options;
+  if (provider !== "codex" && provider !== "opencode" && provider !== "antigravity") return options;
   const slug = normalizeCustomModelSlug(selectedModel);
   if (!slug) return options;
   if (
@@ -379,7 +379,9 @@ export function resolveAppModelSelectionForInstance(
   if (resolvedSelection) return resolvedSelection;
   if (
     resolutionOptions?.preserveUnavailableSelection &&
-    (entry.driverKind === "opencode" || entry.driverKind === "antigravity")
+    (entry.driverKind === "codex" ||
+      entry.driverKind === "opencode" ||
+      entry.driverKind === "antigravity")
   ) {
     const unavailableSelection = normalizeCustomModelSlug(selectedModel);
     const preferences = readInstanceModelPreferences(settings, entry.instanceId);

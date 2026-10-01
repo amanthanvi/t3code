@@ -2674,6 +2674,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             status.models.filter((model) => model.isDefault).map((model) => model.slug),
             ["claude-opus-5-5"],
           );
+          const effort = status.models
+            .find((model) => model.slug === "claude-opus-5-5")
+            ?.capabilities?.optionDescriptors?.find((descriptor) => descriptor.id === "effort");
+          assert.isTrue(effort?.type === "select");
+          if (effort?.type === "select") {
+            assert.isFalse(effort.options.some((option) => option.isDefault));
+            assert.isUndefined(effort.currentValue);
+          }
           assert.notStrictEqual(
             status.models.find((model) => model.slug === "claude/claude-opus-5-5")?.isDefault,
             true,

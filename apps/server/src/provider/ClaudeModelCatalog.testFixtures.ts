@@ -13,7 +13,9 @@ const effort = {
   type: "select" as const,
   options: [
     { id: "low", label: "Low" },
+    { id: "medium", label: "Medium" },
     { id: "high", label: "High", isDefault: true },
+    { id: "xhigh", label: "Extra High" },
     { id: "max", label: "Max" },
     { id: "ultrathink", label: "Ultrathink" },
   ],

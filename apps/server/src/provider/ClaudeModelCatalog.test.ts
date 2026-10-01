@@ -8,6 +8,7 @@ import {
   extendClaudeModelCatalog,
   formatClaudeVersionUpgradeMessage,
   getClaudeCatalogModelCapabilities,
+  inheritClaudeGatewayEffortDefaults,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
   resolveClaudeCatalogEffort,
@@ -73,6 +74,31 @@ const manifest = (): ModelManifestData => ({
 });
 
 describe("Claude model catalog", () => {
+  it("inherits gateway effort while retaining explicit levels and context defaults", () => {
+    const catalog = resolveClaudeModelCatalog(manifest());
+    const gateway = inheritClaudeGatewayEffortDefaults(catalog, "claude/");
+    assert.strictEqual(
+      resolveClaudeCatalogEffort(gateway, "claude-synthetic-next", undefined),
+      undefined,
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogEffort(gateway, "claude-synthetic-next", "extreme"),
+      "extreme",
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogEffort(catalog, "claude-synthetic-next", undefined),
+      "extreme",
+    );
+    assert.deepStrictEqual(
+      getClaudeCatalogModelCapabilities(gateway, "claude-synthetic-next").optionDescriptors?.find(
+        (descriptor) => descriptor.id === "contextWindow",
+      ),
+      getClaudeCatalogModelCapabilities(catalog, "claude-synthetic-next").optionDescriptors?.find(
+        (descriptor) => descriptor.id === "contextWindow",
+      ),
+    );
+  });
+
   it("maps a qualified instance default to the visible native model", () => {
     const catalog = resolveClaudeModelCatalog(manifest());
     const configured = applyClaudeConfiguredDefault(

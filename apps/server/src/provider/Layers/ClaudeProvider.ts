@@ -48,6 +48,7 @@ import {
   applyClaudeConfiguredDefault,
   extendClaudeModelCatalog,
   formatClaudeVersionUpgradeMessage,
+  inheritClaudeGatewayEffortDefaults,
   resolveClaudeModelsForVersion,
 } from "../ClaudeModelCatalog.ts";
 
@@ -438,9 +439,12 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 > {
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
-  const configuredCatalog = applyClaudeConfiguredDefault(
-    modelCatalog,
-    claudeSettings.defaultModel,
+  const configuredCatalog = inheritClaudeGatewayEffortDefaults(
+    applyClaudeConfiguredDefault(
+      modelCatalog,
+      claudeSettings.defaultModel,
+      claudeSettings.modelIdPrefix,
+    ),
     claudeSettings.modelIdPrefix,
   );
   const allModels = providerModelsFromSettings(

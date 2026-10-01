@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 import { ProviderDriverKind, type ProviderOptionDescriptor } from "@t3tools/contracts";
-import { buildTraitsTriggerDisplay, buildUnavailableModelOptionDescriptors } from "./TraitsPicker";
+import {
+  buildTraitsTriggerDisplay,
+  buildUnavailableModelOptionDescriptors,
+  clearExplicitEffortSelection,
+} from "./TraitsPicker";
 
 function selectDescriptor(
   id: string,
@@ -51,6 +55,22 @@ const CONTEXT_WINDOW = selectDescriptor(
 
 const CODEX = ProviderDriverKind.make("codex");
 
+describe("clearExplicitEffortSelection", () => {
+  it("removes only explicit effort and retains other traits", () => {
+    expect(
+      clearExplicitEffortSelection([
+        { id: "effort", value: "high" },
+        { id: "contextWindow", value: "1m" },
+        { id: "fastMode", value: true },
+      ]),
+    ).toEqual([
+      { id: "contextWindow", value: "1m" },
+      { id: "fastMode", value: true },
+    ]);
+    expect(clearExplicitEffortSelection([{ id: "effort", value: "high" }])).toBeUndefined();
+  });
+});
+
 function display(descriptors: ReadonlyArray<ProviderOptionDescriptor>) {
   return buildTraitsTriggerDisplay({
     provider: CODEX,
@@ -61,6 +81,26 @@ function display(descriptors: ReadonlyArray<ProviderOptionDescriptor>) {
 }
 
 describe("buildTraitsTriggerDisplay", () => {
+  it("labels an unselected Claude effort as inherited", () => {
+    const inherited: Extract<ProviderOptionDescriptor, { type: "select" }> = {
+      id: "effort",
+      label: "Reasoning",
+      type: "select",
+      options: [
+        { id: "medium", label: "Medium" },
+        { id: "high", label: "High" },
+      ],
+    };
+    expect(
+      buildTraitsTriggerDisplay({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        descriptors: [inherited, CONTEXT_WINDOW],
+        primarySelectDescriptorId: "effort",
+        ultrathinkPromptControlled: false,
+      }),
+    ).toEqual({ label: "Inherited · 1M", showFastModeIcon: false });
+  });
+
   it("omits fast mode from the label entirely when it is off", () => {
     expect(display([EFFORT, fastModeDescriptor(false), CONTEXT_WINDOW])).toEqual({
       label: "High · 1M",

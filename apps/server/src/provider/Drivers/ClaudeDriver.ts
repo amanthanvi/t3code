@@ -42,6 +42,7 @@ import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import {
   applyClaudeConfiguredDefault,
   extendClaudeModelCatalog,
+  inheritClaudeGatewayEffortDefaults,
   resolveClaudeModelCatalog,
 } from "../ClaudeModelCatalog.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -132,8 +133,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         binaryPath: expandHomePath(config.binaryPath),
       } satisfies ClaudeSettings;
       const modelCatalog = Effect.all([modelManifest.current, Ref.get(discoveredModels)]).pipe(
-        Effect.map(([manifest, discovered]) =>
-          applyClaudeConfiguredDefault(
+        Effect.map(([manifest, discovered]) => {
+          const catalog =
             processEnv.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY === "1"
               ? extendClaudeModelCatalog(
                   resolveClaudeModelCatalog(manifest),
@@ -141,11 +142,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
                   effectiveConfig.customModels,
                   effectiveConfig.modelIdPrefix,
                 )
-              : resolveClaudeModelCatalog(manifest),
-            effectiveConfig.defaultModel,
+              : resolveClaudeModelCatalog(manifest);
+          return inheritClaudeGatewayEffortDefaults(
+            applyClaudeConfiguredDefault(
+              catalog,
+              effectiveConfig.defaultModel,
+              effectiveConfig.modelIdPrefix,
+            ),
             effectiveConfig.modelIdPrefix,
-          ),
-        ),
+          );
+        }),
       );
       const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
         resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {

@@ -97,6 +97,45 @@ export function applyClaudeConfiguredDefault(
   };
 }
 
+export function inheritClaudeGatewayEffortDefaults(
+  catalog: ClaudeModelCatalog,
+  modelIdPrefix: string,
+): ClaudeModelCatalog {
+  if (modelIdPrefix !== "claude/") return catalog;
+  return {
+    models: catalog.models.map((entry) => {
+      const descriptors = entry.model.capabilities?.optionDescriptors;
+      if (
+        entry.model.isCustom ||
+        !descriptors?.some(
+          (descriptor) =>
+            descriptor.id === "effort" &&
+            descriptor.type === "select" &&
+            (descriptor.currentValue !== undefined ||
+              descriptor.options.some((option) => option.isDefault)),
+        )
+      )
+        return entry;
+      return {
+        ...entry,
+        model: {
+          ...entry.model,
+          capabilities: createModelCapabilities({
+            optionDescriptors: descriptors.map((descriptor) => {
+              if (descriptor.id !== "effort" || descriptor.type !== "select") return descriptor;
+              const { currentValue: _currentValue, ...withoutCurrent } = descriptor;
+              return {
+                ...withoutCurrent,
+                options: descriptor.options.map(({ isDefault: _isDefault, ...option }) => option),
+              };
+            }),
+          }),
+        },
+      };
+    }),
+  };
+}
+
 export interface DiscoveredClaudeModel {
   readonly value: string;
   readonly resolvedModel?: string;

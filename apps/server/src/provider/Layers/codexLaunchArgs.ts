@@ -9,9 +9,10 @@ export const resolveCodexLaunchArgs = (
 
 const codexLaunchArgv = (launchArgs?: string): ReadonlyArray<string> => tokenizeCliArgs(launchArgs);
 
-export const codexAppServerArgs = (launchArgs?: string) => [
+export const codexAppServerArgs = (launchArgs?: string, catalogPath?: string) => [
   "app-server",
   ...codexLaunchArgv(launchArgs),
+  ...(catalogPath ? ["-c", `model_catalog_json=${JSON.stringify(catalogPath)}`] : []),
 ];
 
 export const codexExecLaunchArgs = (launchArgs?: string) => {
@@ -41,7 +42,12 @@ export const codexExecLaunchArgs = (launchArgs?: string) => {
 export const codexSessionAppServerArgs = (
   appServerArgs: ReadonlyArray<string> | undefined,
   launchArgs: string | undefined,
+  catalogPath?: string,
 ) => {
   const launchAppServerArgs = codexAppServerArgs(launchArgs);
-  return appServerArgs ? [...launchAppServerArgs, ...appServerArgs] : launchAppServerArgs;
+  return [
+    ...launchAppServerArgs,
+    ...(appServerArgs ?? []),
+    ...(catalogPath ? ["-c", `model_catalog_json=${JSON.stringify(catalogPath)}`] : []),
+  ];
 };

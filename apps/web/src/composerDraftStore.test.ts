@@ -2005,6 +2005,43 @@ describe("composerDraftStore modelSelection", () => {
     );
   });
 
+  it("persists inherited Claude effort without discarding other draft and sticky traits", async () => {
+    vi.useFakeTimers();
+    try {
+      const store = useComposerDraftStore.getState();
+      const selected = modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6", {
+        effort: "high",
+        contextWindow: "1m",
+        fastMode: true,
+      });
+      store.setModelSelection(threadRef, selected);
+      store.setStickyModelSelection(selected);
+
+      store.setProviderModelOptions(
+        threadRef,
+        CLAUDE_AGENT_DRIVER,
+        toSelections({ contextWindow: "1m", fastMode: true }),
+        { persistSticky: true },
+      );
+      await vi.advanceTimersByTimeAsync(300);
+      resetComposerDraftStore();
+      await useComposerDraftStore.persist.rehydrate();
+
+      const inherited = modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6", {
+        contextWindow: "1m",
+        fastMode: true,
+      });
+      expect(
+        draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[CLAUDE_AGENT_INSTANCE],
+      ).toEqual(inherited);
+      expect(
+        useComposerDraftStore.getState().stickyModelSelectionByProvider[CLAUDE_AGENT_INSTANCE],
+      ).toEqual(inherited);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("marks trait edits as explicit model intent", () => {
     const store = useComposerDraftStore.getState();
     store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"));

@@ -172,6 +172,7 @@ export interface CodexSessionRuntimeOptions {
   readonly binaryPath: string;
   readonly homePath?: string;
   readonly launchArgs?: string;
+  readonly catalogSource?: Effect.Effect<string | undefined>;
   readonly environment?: NodeJS.ProcessEnv;
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
@@ -1319,7 +1320,12 @@ export const makeCodexSessionRuntime = (
       ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
     };
     const extendEnv = options.environment === undefined;
-    const appServerArgs = codexSessionAppServerArgs(options.appServerArgs, options.launchArgs);
+    const catalogPath = options.catalogSource ? yield* options.catalogSource : undefined;
+    const appServerArgs = codexSessionAppServerArgs(
+      options.appServerArgs,
+      options.launchArgs,
+      catalogPath,
+    );
     const spawnCommand = yield* resolveSpawnCommand(options.binaryPath, appServerArgs, {
       env,
       extendEnv,

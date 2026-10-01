@@ -38,6 +38,10 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
 import {
+  makeCodexCatalogSourceResolver,
+  probeCodexCatalogSource,
+} from "../Layers/codexCatalogSource.ts";
+import {
   CODEX_RESET_CREDIT_TIMEOUT,
   CodexResetCreditCoordinator,
 } from "../Layers/codexResetCredit.ts";
@@ -161,6 +165,10 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         binaryPath: expandHomePath(config.binaryPath),
         homePath: homeLayout.effectiveHomePath ?? "",
       } satisfies CodexSettings;
+      const catalogSource = makeCodexCatalogSourceResolver(
+        effectiveConfig.catalogSourcePath,
+        effectiveConfig.homePath,
+      );
       const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
         resolveProviderMaintenanceCapabilitiesEffect(
           makeCodexMaintenanceResolver(homeLayout.sharedHomePath),
@@ -184,6 +192,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       const adapter = yield* makeCodexAdapter(effectiveConfig, {
         instanceId,
         environment: processEnv,
+        catalogSource: catalogSource.accepted,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });
 
@@ -197,7 +206,9 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       const checkProvider = modelManifest.refreshInBackground.pipe(
         Effect.andThen(
           Effect.zipWith(
-            checkCodexProviderStatus(effectiveConfig, undefined, processEnv),
+            probeCodexCatalogSource(catalogSource, (catalogPath) =>
+              checkCodexProviderStatus(effectiveConfig, undefined, processEnv, catalogPath),
+            ),
             modelManifest.current,
             (draft, manifest) =>
               stampIdentity(ModelManifest.applyModelManifest(draft, manifest, DRIVER_KIND)),
@@ -251,17 +262,24 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
           ? snapshot.getSnapshot
           : Effect.all([
               snapshot.getSnapshot,
-              probeCodexSkillsForCwd({
-                binaryPath: effectiveConfig.binaryPath,
-                homePath: effectiveConfig.homePath,
-                launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
-                cwd,
-                environment: processEnv,
-              }).pipe(
-                Effect.scoped,
-                Effect.timeout("20 seconds"),
-                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-              ),
+              catalogSource.accepted
+                .pipe(
+                  Effect.flatMap((catalogPath) =>
+                    probeCodexSkillsForCwd({
+                      binaryPath: effectiveConfig.binaryPath,
+                      homePath: effectiveConfig.homePath,
+                      launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+                      ...(catalogPath ? { catalogPath } : {}),
+                      cwd,
+                      environment: processEnv,
+                    }),
+                  ),
+                )
+                .pipe(
+                  Effect.scoped,
+                  Effect.timeout("20 seconds"),
+                  Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                ),
             ]).pipe(
               Effect.map(([machineSnapshot, skills]) => ({ ...machineSnapshot, skills })),
               Effect.mapError(
@@ -291,6 +309,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
                 binaryPath: effectiveConfig.binaryPath,
                 homePath: effectiveConfig.homePath,
                 launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+                catalogPath: yield* catalogSource.accepted,
                 // Account-level request; any directory serves, same as the status probe.
                 cwd: process.cwd(),
                 environment: processEnv,

@@ -92,6 +92,14 @@ type TraitsPersistence =
     };
 
 const ULTRATHINK_PROMPT_PREFIX = "Ultrathink:\n";
+const INHERITED_EFFORT_VALUE = "__inherited_effort__";
+
+export function clearExplicitEffortSelection(
+  selections: ProviderOptions | null | undefined,
+): ProviderOptions | undefined {
+  const remaining = selections?.filter((selection) => selection.id !== "effort");
+  return remaining?.length ? remaining : undefined;
+}
 
 function DefaultBadge() {
   return (
@@ -340,6 +348,12 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     value: string,
   ) => {
     if (!value) return;
+    if (descriptor.id === "effort" && value === INHERITED_EFFORT_VALUE) {
+      if (ultrathinkInBodyText) return;
+      if (ultrathinkPromptControlled) onPromptChange(prompt.replace(/^Ultrathink:\s*/i, ""));
+      updateModelOptions(clearExplicitEffortSelection(modelOptions));
+      return;
+    }
     if (descriptor.promptInjectedValues?.includes(value)) {
       const nextPrompt =
         prompt.trim().length === 0
@@ -385,10 +399,15 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   return (
     <>
       {selectDescriptors.map((descriptor, index) => {
+        const allowInheritedEffort =
+          provider === "claudeAgent" &&
+          descriptor.id === "effort" &&
+          !descriptor.options.some((option) => option.isDefault);
         const selectedValue =
           ultrathinkPromptControlled && descriptor.id === primarySelectDescriptor?.id
             ? "ultrathink"
-            : (getDescriptorStringValue(descriptor) ?? "");
+            : (getDescriptorStringValue(descriptor) ??
+              (allowInheritedEffort ? INHERITED_EFFORT_VALUE : ""));
 
         return (
           <div key={descriptor.id}>
@@ -407,6 +426,16 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                 value={selectedValue}
                 onValueChange={(value) => handleSelectChange(descriptor, value)}
               >
+                {allowInheritedEffort ? (
+                  <MenuRadioItem
+                    value={INHERITED_EFFORT_VALUE}
+                    hideIndicator
+                    closeOnClick
+                    disabled={ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id}
+                  >
+                    Inherited
+                  </MenuRadioItem>
+                ) : null}
                 {descriptor.options.map((option) => (
                   <MenuRadioItem
                     key={option.id}
@@ -519,7 +548,10 @@ export function buildTraitsTriggerDisplay(input: {
         ? "Ultrathink"
         : descriptor.type === "boolean"
           ? `${descriptor.label} ${descriptor.currentValue === true ? "On" : "Off"}`
-          : getProviderOptionCurrentLabel(descriptor);
+          : (getProviderOptionCurrentLabel(descriptor) ??
+            (input.provider === "claudeAgent" && descriptor.id === "effort"
+              ? "Inherited"
+              : undefined));
     if (typeof label === "string" && label.length > 0) {
       labels.push(label);
     }

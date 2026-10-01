@@ -741,6 +741,11 @@ describe("instance-scoped model selection", () => {
 
   describe.each([
     {
+      driverName: "codex",
+      availableModel: "openai/gpt-6-sol",
+      missingModel: "openai/gpt-6-legacy",
+    },
+    {
       driverName: "opencode",
       availableModel: "opencode/big-pickle",
       missingModel: "opencode/kimi-k3",
@@ -882,33 +887,33 @@ describe("instance-scoped model selection", () => {
     });
   });
 
-  it("does not add unavailable options for other providers", () => {
+  it("does not add unavailable options for providers without dynamic catalogs", () => {
     const providers = [
       provider({
-        provider: ProviderDriverKind.make("codex"),
-        instanceId: "codex",
-        models: ["gpt-5.6-sol"],
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId: "claudeAgent",
+        models: ["claude-opus-5-5"],
       }),
     ];
     const entry = deriveProviderInstanceEntries(providers)[0]!;
 
     expect(
-      getAppModelOptionsForInstance(settingsWithProviderInstances(), entry, "gpt-missing").map(
+      getAppModelOptionsForInstance(settingsWithProviderInstances(), entry, "claude-missing").map(
         (option) => option.slug,
       ),
-    ).toEqual(["gpt-5.6-sol"]);
+    ).toEqual(["claude-opus-5-5"]);
     expect(
       resolveAppModelSelectionForInstance(
-        ProviderInstanceId.make("codex"),
+        ProviderInstanceId.make("claudeAgent"),
         settingsWithProviderInstances(),
         providers,
-        "gpt-missing",
+        "claude-missing",
         { preserveUnavailableSelection: true },
       ),
-    ).toBe("gpt-5.6-sol");
+    ).toBe("claude-opus-5-5");
   });
 
-  it("falls back from an explicit non-OpenCode draft with a missing model", () => {
+  it("preserves an explicit Codex draft model while dropping unsupported options", () => {
     const instanceId = ProviderInstanceId.make("codex");
     const driver = ProviderDriverKind.make("codex");
     const providers = [provider({ provider: driver, instanceId, models: ["gpt-5.6-sol"] })];
@@ -936,8 +941,36 @@ describe("instance-scoped model selection", () => {
       planModeEnabled: false,
     });
 
-    expect(state.selectedModel).toBe("gpt-5.6-sol");
+    expect(state.selectedModel).toBe("gpt-missing");
     expect(dispatch.modelOptionsForDispatch).toBeUndefined();
+  });
+
+  it("preserves a saved Codex thread selection after catalog rotation", () => {
+    const instanceId = ProviderInstanceId.make("codex-cpamc");
+    const driver = ProviderDriverKind.make("codex");
+    const saved = createModelSelection(instanceId, "openai/gpt-6-legacy");
+    const providers = [provider({ provider: driver, instanceId, models: ["openai/gpt-6-sol"] })];
+    const state = deriveEffectiveComposerModelState({
+      draft: null,
+      providers,
+      selectedProvider: driver,
+      selectedInstanceId: instanceId,
+      threadModelSelection: saved,
+      projectModelSelection: null,
+      settings: settingsWithProviderInstances(),
+    });
+
+    expect(state.selectedModel).toBe(saved.model);
+    expect(
+      getAppModelOptionsForInstance(
+        settingsWithProviderInstances(),
+        deriveProviderInstanceEntries(providers)[0]!,
+        state.selectedModel,
+      ),
+    ).toEqual([
+      expect.objectContaining({ slug: "openai/gpt-6-sol" }),
+      expect.objectContaining({ slug: saved.model, isUnavailable: true }),
+    ]);
   });
 
   it("preserves an explicit draft OpenCode selection while the catalog is empty", () => {

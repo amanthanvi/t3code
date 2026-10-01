@@ -46,6 +46,10 @@ import {
   SYNTHETIC_CLAUDE_STANDARD_MODEL,
   SYNTHETIC_CLAUDE_THINKING_MODEL,
 } from "../ClaudeModelCatalog.testFixtures.ts";
+import {
+  inheritClaudeGatewayEffortDefaults,
+  type ClaudeModelCatalog,
+} from "../ClaudeModelCatalog.ts";
 import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import type { ClaudeScopedLimitNames } from "./claudeUsageLimits.ts";
@@ -167,6 +171,7 @@ function makeHarness(config?: {
   readonly cwd?: string;
   readonly baseDir?: string;
   readonly claudeConfig?: Partial<ClaudeSettings>;
+  readonly modelCatalog?: ClaudeModelCatalog;
   readonly instanceId?: ProviderInstanceId;
   readonly scopedLimitNames?: ClaudeAdapterLiveOptions["scopedLimitNames"];
   readonly environment?: ClaudeAdapterLiveOptions["environment"];
@@ -186,7 +191,7 @@ function makeHarness(config?: {
     ...(config?.environment ? { environment: config.environment } : {}),
     ...(config?.instanceId ? { instanceId: config.instanceId } : {}),
     ...(config?.scopedLimitNames ? { scopedLimitNames: config.scopedLimitNames } : {}),
-    modelCatalog: Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
+    modelCatalog: Effect.succeed(config?.modelCatalog ?? SYNTHETIC_CLAUDE_MODEL_CATALOG),
     ...(config?.getSessionMessages ? { getSessionMessages: config.getSessionMessages } : {}),
     ...(config?.forkSession ? { forkSession: config.forkSession } : {}),
     createQuery: (input) => {
@@ -589,6 +594,45 @@ describe("ClaudeAdapterLive", () => {
       Effect.provide(harness.layer),
     );
   });
+
+  it.effect("inherits gateway effort until the user selects a level", () =>
+    Effect.gen(function* () {
+      const gatewayCatalog = inheritClaudeGatewayEffortDefaults(
+        SYNTHETIC_CLAUDE_MODEL_CATALOG,
+        "claude/",
+      );
+      for (const [prefix, selected, expected] of [
+        ["claude/", undefined, undefined],
+        ["claude/", "medium", "medium"],
+        ["claude/", "high", "high"],
+        ["claude/", "xhigh", "xhigh"],
+        ["", undefined, "high"],
+      ] as const) {
+        const harness = makeHarness({
+          claudeConfig: { modelIdPrefix: prefix },
+          modelCatalog: prefix ? gatewayCatalog : SYNTHETIC_CLAUDE_MODEL_CATALOG,
+        });
+        const actual = yield* Effect.gen(function* () {
+          const adapter = yield* ClaudeAdapter;
+          yield* adapter.startSession({
+            threadId: THREAD_ID,
+            provider: ProviderDriverKind.make("claudeAgent"),
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+              selected ? [{ id: "effort", value: selected }] : [],
+            ),
+            runtimeMode: "full-access",
+          });
+          return harness.getLastCreateQueryInput()?.options.effort;
+        }).pipe(
+          Effect.provideService(Random.Random, makeDeterministicRandomService()),
+          Effect.provide(harness.layer),
+        );
+        assert.equal(actual, expected);
+      }
+    }),
+  );
 
   it.effect("runs Claude SDK sessions with the configured CLAUDE_CONFIG_DIR", () => {
     const harness = makeHarness({ claudeConfig: { homePath: "~/.claude-work" } });
