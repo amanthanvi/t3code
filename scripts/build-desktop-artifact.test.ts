@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -31,6 +32,7 @@ import {
   MAC_FILE_EXCLUSIONS,
   InvalidMacPasskeyRpDomainError,
   InvalidMacPasskeyPublishableKeyError,
+  InvalidManagedMacIdentityBuildError,
   InvalidMockUpdateServerPortError,
   UnsupportedDesktopBuildArchitectureError,
   isMacPasskeySigningConfigurationError,
@@ -38,6 +40,7 @@ import {
   LinuxDesktopBuildPrerequisitesMissingError,
   MacDesktopBuildPrerequisitesMissingError,
   MacPackagedAppInfoMismatchError,
+  MacManagedIdentityArtifactError,
   MacPackagedAppMissingError,
   MacPackagedZipMissingError,
   MacPasskeySigningConfigurationResolutionError,
@@ -1884,6 +1887,155 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
+  it.effect("packages an opted-in managed macOS preview without an update feed", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "1.2.3-preview.20261002.1702",
+        false,
+        false,
+        undefined,
+        undefined,
+        false,
+        "arm64",
+        true,
+      );
+
+      assert.equal(config.appId, "com.t3tools.t3code.managed");
+      assert.equal(config.productName, "T3 Code (Alpha)");
+      assert.notProperty(config, "publish");
+      assert.equal(
+        (config.dmg as Record<string, unknown>).title,
+        "T3 Code (Alpha) 1.2.3-preview.20261002.1702 Installer",
+      );
+      const mac = config.mac as Record<string, unknown>;
+      assert.equal(mac.identity, "-");
+      assert.deepStrictEqual(mac.protocols, [
+        { name: "T3 Code", schemes: ["t3code", "t3code-dev"] },
+      ]);
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
+  it.effect("rejects managed identity outside unsigned macOS previews", () =>
+    Effect.gen(function* () {
+      for (const [platform, version, signed] of [
+        ["mac", "1.2.3-preview.20261002.1702", true],
+        ["mac", "1.2.3", false],
+        ["linux", "1.2.3-preview.20261002.1702", false],
+      ] as const) {
+        const error = yield* Effect.flip(
+          createBuildConfig(
+            platform,
+            platform === "linux" ? "AppImage" : "dmg",
+            version,
+            signed,
+            false,
+            undefined,
+            undefined,
+            false,
+            "arm64",
+            true,
+          ),
+        );
+        assert.instanceOf(error, InvalidManagedMacIdentityBuildError);
+      }
+    }),
+  );
+
+  it.effect("checks the emitted managed Mac identity and update resources", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const stageDistDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-managed-mac-" });
+        const appPath = path.join(stageDistDir, "mac-arm64", "T3 Code (Alpha).app");
+        const resourcesPath = path.join(appPath, "Contents", "Resources");
+        yield* fs.makeDirectory(resourcesPath, { recursive: true });
+        yield* fs.writeFileString(path.join(appPath, "Contents", "Info.plist"), "plist fixture");
+        yield* fs.writeFileString(
+          path.join(stageDistDir, "T3-Code-1.2.3-preview.20261002.1702-arm64.zip"),
+          "zip fixture",
+        );
+
+        const validInfo = {
+          CFBundleIdentifier: "com.t3tools.t3code.managed",
+          CFBundleName: "T3 Code (Alpha)",
+          CFBundleDisplayName: "T3 Code (Alpha)",
+          CFBundleURLTypes: [{ CFBundleURLSchemes: ["t3code", "t3code-dev"] }],
+        };
+        const encodePlist = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+        let plistOutput = yield* encodePlist(validInfo);
+        let extractedUpdate = false;
+        const commands: string[] = [];
+        const spawner = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            const process = command as unknown as {
+              readonly command: string;
+              readonly args: ReadonlyArray<string>;
+            };
+            commands.push(process.command);
+            if (process.command === "ditto") {
+              const extractedAppPath = path.join(process.args[3]!, "T3 Code (Alpha).app");
+              return fs
+                .copy(appPath, extractedAppPath)
+                .pipe(
+                  Effect.andThen(
+                    extractedUpdate
+                      ? fs.writeFileString(
+                          path.join(extractedAppPath, "Contents", "Resources", "app-update.yml"),
+                          "provider: github",
+                        )
+                      : Effect.void,
+                  ),
+                  Effect.as(mockProcess(0)),
+                );
+            }
+            return Effect.succeed(mockProcess(0, process.command === "plutil" ? plistOutput : ""));
+          }),
+        );
+        const validate = validateMacPackagedApp({
+          stageDistDir,
+          targetArch: "arm64",
+          target: "dmg",
+          appVersion: "1.2.3-preview.20261002.1702",
+          managedIdentity: true,
+        }).pipe(Effect.provide(spawner));
+
+        yield* validate;
+        assert.deepStrictEqual(commands, ["plutil", "codesign", "ditto", "codesign"]);
+
+        for (const [plist, reason] of [
+          [{ ...validInfo, CFBundleIdentifier: "com.t3tools.t3code" }, "bundle-id-mismatch"],
+          [{ ...validInfo, CFBundleName: "T3 Code (Managed)" }, "app-name-mismatch"],
+          [{ ...validInfo, CFBundleURLTypes: [] }, "url-schemes-missing"],
+        ] as const) {
+          plistOutput = yield* encodePlist(plist);
+          const error = yield* Effect.flip(validate);
+          assert.instanceOf(error, MacManagedIdentityArtifactError);
+          assert.equal(error.reason, reason);
+        }
+        plistOutput = "not json";
+        const invalidPlist = yield* Effect.flip(validate);
+        assert.instanceOf(invalidPlist, MacManagedIdentityArtifactError);
+        assert.equal(invalidPlist.reason, "invalid-info-plist");
+
+        plistOutput = yield* encodePlist(validInfo);
+        yield* fs.writeFileString(path.join(resourcesPath, "app-update.yml"), "provider: github");
+        const updateFeed = yield* Effect.flip(validate);
+        assert.instanceOf(updateFeed, MacManagedIdentityArtifactError);
+        assert.equal(updateFeed.reason, "update-feed-present");
+
+        yield* fs.remove(path.join(resourcesPath, "app-update.yml"));
+        extractedUpdate = true;
+        const zipUpdateFeed = yield* Effect.flip(validate);
+        assert.instanceOf(zipUpdateFeed, MacManagedIdentityArtifactError);
+        assert.equal(zipUpdateFeed.reason, "update-feed-present");
+      }),
+    ),
+  );
+
   it.effect("uses the nightly DMG background for nightly macOS builds", () =>
     Effect.gen(function* () {
       const config = yield* createBuildConfig(
@@ -2457,6 +2609,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
                 T3CODE_DESKTOP_SKIP_BUILD: "true",
                 T3CODE_DESKTOP_KEEP_STAGE: "true",
                 T3CODE_DESKTOP_SIGNED: "true",
+                T3CODE_DESKTOP_MAC_MANAGED_IDENTITY: "true",
                 T3CODE_DESKTOP_VERBOSE: "true",
                 T3CODE_DESKTOP_MOCK_UPDATES: "true",
               },
@@ -2468,6 +2621,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(resolved.skipBuild, false);
       assert.equal(resolved.keepStage, false);
       assert.equal(resolved.signed, false);
+      assert.equal(resolved.macManagedIdentity, true);
       assert.equal(resolved.verbose, false);
       assert.equal(resolved.mockUpdates, false);
     }),

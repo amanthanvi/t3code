@@ -102,6 +102,9 @@ jobs:
             apps/web/src/components/chat/TraitsPicker.test.ts \
             apps/mobile/src/lib/modelOptions.test.ts
 
+      - name: Test desktop artifact packaging
+        run: vp test run scripts/build-desktop-artifact.test.ts
+
       - name: Typecheck changed surfaces
         run: |
           status=0
@@ -216,6 +219,7 @@ jobs:
       version: ${{ needs.bundle.outputs.version }}
       ref: ${{ github.sha }}
       release_channel: preview
+      mac_managed_identity: true
       relay_client_tracing: false
       clerk_publishable_key: ${{ needs.bundle.outputs.clerk_publishable_key }}
       clerk_jwt_template: ${{ needs.bundle.outputs.clerk_jwt_template }}

@@ -55,6 +55,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
 const DESKTOP_APP_ID = "com.t3tools.t3code";
+const MANAGED_MAC_APP_ID = "com.t3tools.t3code.managed";
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
@@ -252,6 +253,19 @@ export class UnsupportedDesktopBuildArchitectureError extends Schema.TaggedError
 ) {
   override get message(): string {
     return `Unsupported architecture '${this.arch}' for ${this.platform}.`;
+  }
+}
+
+export class InvalidManagedMacIdentityBuildError extends Schema.TaggedError<InvalidManagedMacIdentityBuildError>()(
+  "InvalidManagedMacIdentityBuildError",
+  {
+    platform: BuildPlatform,
+    signed: Schema.Boolean,
+    version: Schema.String,
+  },
+) {
+  override get message(): string {
+    return "Managed macOS identity requires an unsigned macOS preview build.";
   }
 }
 
@@ -694,6 +708,33 @@ export class MacPackagedAppInfoMismatchError extends Schema.TaggedError<MacPacka
   }
 }
 
+export class MacManagedIdentityArtifactError extends Schema.TaggedError<MacManagedIdentityArtifactError>()(
+  "MacManagedIdentityArtifactError",
+  {
+    reason: Schema.Literals([
+      "invalid-info-plist",
+      "bundle-id-mismatch",
+      "app-name-mismatch",
+      "url-schemes-missing",
+      "update-feed-present",
+    ]),
+  },
+) {
+  override get message(): string {
+    return `Managed macOS artifact identity check failed: ${this.reason}.`;
+  }
+}
+
+const MacInfoPlist = Schema.Struct({
+  CFBundleIdentifier: Schema.String,
+  CFBundleName: Schema.optional(Schema.String),
+  CFBundleDisplayName: Schema.optional(Schema.String),
+  CFBundleURLTypes: Schema.optional(
+    Schema.Array(Schema.Struct({ CFBundleURLSchemes: Schema.Array(Schema.String) })),
+  ),
+});
+const decodeMacInfoPlist = Schema.decodeUnknownEffect(Schema.fromJsonString(MacInfoPlist));
+
 export class WslRuntimeArchiveMissingError extends Schema.TaggedError<WslRuntimeArchiveMissingError>()(
   "WslRuntimeArchiveMissingError",
   {
@@ -942,6 +983,7 @@ interface ResolvedBuildOptions {
   readonly skipBuild: boolean;
   readonly keepStage: boolean;
   readonly signed: boolean;
+  readonly macManagedIdentity: boolean;
   readonly verbose: boolean;
   readonly mockUpdates: boolean;
   readonly mockUpdateServerPort: number | undefined;
@@ -1573,6 +1615,9 @@ const BuildEnvConfig = Config.all({
   skipBuild: Config.Boolean("T3CODE_DESKTOP_SKIP_BUILD").pipe(Config.withDefault(false)),
   keepStage: Config.Boolean("T3CODE_DESKTOP_KEEP_STAGE").pipe(Config.withDefault(false)),
   signed: Config.Boolean("T3CODE_DESKTOP_SIGNED").pipe(Config.withDefault(false)),
+  macManagedIdentity: Config.Boolean("T3CODE_DESKTOP_MAC_MANAGED_IDENTITY").pipe(
+    Config.withDefault(false),
+  ),
   verbose: Config.Boolean("T3CODE_DESKTOP_VERBOSE").pipe(Config.withDefault(false)),
   mockUpdates: Config.Boolean("T3CODE_DESKTOP_MOCK_UPDATES").pipe(Config.withDefault(false)),
   mockUpdateServerPort: Config.String("T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(Config.option),
@@ -1683,6 +1728,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     skipBuild,
     keepStage,
     signed,
+    macManagedIdentity: env.macManagedIdentity,
     verbose,
     mockUpdates,
     mockUpdateServerPort,
@@ -2645,6 +2691,16 @@ export function resolveDesktopProductName(version: string): string {
     : (desktopPackageJson.productName ?? "T3 Code");
 }
 
+export function resolveManagedMacIdentity(
+  platform: typeof BuildPlatform.Type,
+  signed: boolean,
+  version: string,
+  requested: boolean,
+): boolean {
+  if (!requested) return false;
+  return platform === "mac" && !signed && isDesktopPreviewVersion(version);
+}
+
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -2663,9 +2719,19 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   // source file was never written fails the electron-builder step.
   wslRuntimeBundled = false,
   arch?: typeof BuildArch.Type,
+  macManagedIdentity = false,
 ) {
+  if (macManagedIdentity && !resolveManagedMacIdentity(platform, signed, version, true)) {
+    return yield* new InvalidManagedMacIdentityBuildError({ platform, signed, version });
+  }
+  const managedMacIdentity = resolveManagedMacIdentity(
+    platform,
+    signed,
+    version,
+    macManagedIdentity,
+  );
   const buildConfig: Record<string, unknown> = {
-    appId: DESKTOP_APP_ID,
+    appId: managedMacIdentity ? MANAGED_MAC_APP_ID : DESKTOP_APP_ID,
     productName: resolveDesktopProductName(version),
     artifactName: "T3-Code-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
@@ -3116,6 +3182,7 @@ export const validateMacPackagedApp = Effect.fn("desktopArtifact.validateMacPack
     readonly targetArch: typeof BuildArch.Type;
     readonly target: string;
     readonly appVersion: string;
+    readonly managedIdentity?: boolean;
     readonly verbose?: boolean;
   }) {
     const fs = yield* FileSystem.FileSystem;
@@ -3129,6 +3196,37 @@ export const validateMacPackagedApp = Effect.fn("desktopArtifact.validateMacPack
         distPath: input.stageDistDir,
         appName,
       });
+    }
+
+    if (input.managedIdentity) {
+      const infoPath = path.join(appPath, "Contents", "Info.plist");
+      const result = yield* spawnAndCollectOutput(
+        ChildProcess.make("plutil", ["-convert", "json", "-o", "-", infoPath]),
+      ).pipe(Effect.orElseSucceed(() => ({ stdout: "", exitCode: 1 })));
+      const info =
+        result.exitCode === 0
+          ? yield* decodeMacInfoPlist(result.stdout).pipe(Effect.orElseSucceed(() => null))
+          : null;
+      if (info === null) {
+        return yield* new MacManagedIdentityArtifactError({ reason: "invalid-info-plist" });
+      }
+      if (info.CFBundleIdentifier !== MANAGED_MAC_APP_ID) {
+        return yield* new MacManagedIdentityArtifactError({ reason: "bundle-id-mismatch" });
+      }
+      const expectedName = resolveDesktopProductName(input.appVersion);
+      if (
+        info.CFBundleName !== expectedName ||
+        (info.CFBundleDisplayName !== undefined && info.CFBundleDisplayName !== expectedName)
+      ) {
+        return yield* new MacManagedIdentityArtifactError({ reason: "app-name-mismatch" });
+      }
+      const schemes = new Set(info.CFBundleURLTypes?.flatMap((entry) => entry.CFBundleURLSchemes));
+      if (!schemes.has("t3code") || !schemes.has("t3code-dev")) {
+        return yield* new MacManagedIdentityArtifactError({ reason: "url-schemes-missing" });
+      }
+      if (yield* fs.exists(path.join(appPath, "Contents", "Resources", "app-update.yml"))) {
+        return yield* new MacManagedIdentityArtifactError({ reason: "update-feed-present" });
+      }
     }
 
     yield* runCommand(
@@ -3163,6 +3261,12 @@ export const validateMacPackagedApp = Effect.fn("desktopArtifact.validateMacPack
           .pipe(Effect.orElseSucceed(() => null));
         if (extractedStat?.type !== "Directory") {
           return yield* new MacPackagedAppMissingError({ distPath: zipPath, appName });
+        }
+        if (
+          input.managedIdentity &&
+          (yield* fs.exists(path.join(extractedAppPath, "Contents", "Resources", "app-update.yml")))
+        ) {
+          return yield* new MacManagedIdentityArtifactError({ reason: "update-feed-present" });
         }
 
         const infoPath = path.join("Contents", "Info.plist");
@@ -3509,6 +3613,16 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   });
 
   const appVersion = options.version ?? serverPackageJson.version;
+  if (
+    options.macManagedIdentity &&
+    !resolveManagedMacIdentity(options.platform, options.signed, appVersion, true)
+  ) {
+    return yield* new InvalidManagedMacIdentityBuildError({
+      platform: options.platform,
+      signed: options.signed,
+      version: appVersion,
+    });
+  }
   const iconAssets = resolveDesktopBuildIconAssets(appVersion);
   const commitHash = yield* resolveGitCommitHash(repoRoot);
   const mkdir = options.keepStage ? fs.makeTempDirectory : fs.makeTempDirectoryScoped;
@@ -3772,6 +3886,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
         : undefined,
       bundlesWslRuntime({ platform: options.platform, runtimeArchivePath: options.wslRuntime }),
       options.arch,
+      options.macManagedIdentity,
     ),
     dependencies: stageDependencies,
     devDependencies: {
@@ -3934,6 +4049,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       targetArch: options.arch,
       target: options.target,
       appVersion,
+      managedIdentity: options.macManagedIdentity,
       verbose: options.verbose,
     });
   } else if (options.platform === "win") {
