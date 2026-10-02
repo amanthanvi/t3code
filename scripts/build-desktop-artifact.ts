@@ -667,6 +667,33 @@ export class DesktopBuildNoArtifactsProducedError extends Schema.TaggedError<Des
   }
 }
 
+export class MacPackagedAppMissingError extends Schema.TaggedError<MacPackagedAppMissingError>()(
+  "MacPackagedAppMissingError",
+  { distPath: Schema.String, appName: Schema.String },
+) {
+  override get message(): string {
+    return `Build completed but ${this.appName} was not found in ${this.distPath}`;
+  }
+}
+
+export class MacPackagedZipMissingError extends Schema.TaggedError<MacPackagedZipMissingError>()(
+  "MacPackagedZipMissingError",
+  { zipPath: Schema.String },
+) {
+  override get message(): string {
+    return `Build completed but macOS ZIP was not found at ${this.zipPath}`;
+  }
+}
+
+export class MacPackagedAppInfoMismatchError extends Schema.TaggedError<MacPackagedAppInfoMismatchError>()(
+  "MacPackagedAppInfoMismatchError",
+  { zipPath: Schema.String },
+) {
+  override get message(): string {
+    return `Extracted macOS ZIP app Info.plist differs from the staged app: ${this.zipPath}`;
+  }
+}
+
 export class WslRuntimeArchiveMissingError extends Schema.TaggedError<WslRuntimeArchiveMissingError>()(
   "WslRuntimeArchiveMissingError",
   {
@@ -2699,7 +2726,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           schemes: ["t3code", "t3code-dev"],
         },
       ],
-      ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
+      ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : { identity: "-" }),
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
@@ -3082,6 +3109,92 @@ export const verifyWindowsPrimaryFffNativeLoad = Effect.fn(
     }),
   );
 });
+
+export const validateMacPackagedApp = Effect.fn("desktopArtifact.validateMacPackagedApp")(
+  function* (input: {
+    readonly stageDistDir: string;
+    readonly targetArch: typeof BuildArch.Type;
+    readonly target: string;
+    readonly appVersion: string;
+    readonly verbose?: boolean;
+  }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const appName = `${resolveDesktopProductName(input.appVersion)}.app`;
+    const unpackedDir = input.targetArch === "x64" ? "mac" : `mac-${input.targetArch}`;
+    const appPath = path.join(input.stageDistDir, unpackedDir, appName);
+    const appStat = yield* fs.stat(appPath).pipe(Effect.orElseSucceed(() => null));
+    if (appStat?.type !== "Directory") {
+      return yield* new MacPackagedAppMissingError({
+        distPath: input.stageDistDir,
+        appName,
+      });
+    }
+
+    yield* runCommand(
+      ChildProcess.make("codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath]),
+      {
+        label: `codesign --verify --deep --strict --verbose=2 ${appPath}`,
+        verbose: input.verbose ?? false,
+      },
+    );
+    yield* Effect.log(`[desktop-artifact] Verified macOS app signature at ${appPath}.`);
+
+    if (input.target !== "dmg" && input.target !== "zip") return;
+    const zipPath = path.join(
+      input.stageDistDir,
+      `T3-Code-${input.appVersion}-${input.targetArch}.zip`,
+    );
+    const zipStat = yield* fs.stat(zipPath).pipe(Effect.orElseSucceed(() => null));
+    if (zipStat?.type !== "File") {
+      return yield* new MacPackagedZipMissingError({ zipPath });
+    }
+
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const extractDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mac-zip-verify-" });
+        yield* runCommand(ChildProcess.make("ditto", ["-x", "-k", zipPath, extractDir]), {
+          label: `ditto -x -k ${zipPath} ${extractDir}`,
+          verbose: input.verbose ?? false,
+        });
+        const extractedAppPath = path.join(extractDir, appName);
+        const extractedStat = yield* fs
+          .stat(extractedAppPath)
+          .pipe(Effect.orElseSucceed(() => null));
+        if (extractedStat?.type !== "Directory") {
+          return yield* new MacPackagedAppMissingError({ distPath: zipPath, appName });
+        }
+
+        const infoPath = path.join("Contents", "Info.plist");
+        const [stagedInfo, extractedInfo] = yield* Effect.all([
+          fs.readFile(path.join(appPath, infoPath)),
+          fs.readFile(path.join(extractedAppPath, infoPath)),
+        ]);
+        if (
+          stagedInfo.length !== extractedInfo.length ||
+          !NodeCrypto.timingSafeEqual(stagedInfo, extractedInfo)
+        ) {
+          return yield* new MacPackagedAppInfoMismatchError({ zipPath });
+        }
+
+        yield* runCommand(
+          ChildProcess.make("codesign", [
+            "--verify",
+            "--deep",
+            "--strict",
+            "--verbose=2",
+            extractedAppPath,
+          ]),
+          {
+            label: `codesign --verify --deep --strict --verbose=2 ${extractedAppPath}`,
+            verbose: input.verbose ?? false,
+          },
+        );
+        yield* Effect.log(`[desktop-artifact] Verified macOS ZIP app signature at ${zipPath}.`);
+      }),
+    );
+  },
+);
 
 export const validateWindowsPackagedPayload = Effect.fn(
   "desktopArtifact.validateWindowsPackagedPayload",
@@ -3815,7 +3928,15 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   // Only Windows unpacks anything; macOS and Linux keep the whole tree inside
   // the app asar. Windows validates and executes the separately packed server
   // sidecar after electron-builder copies it into the final payload.
-  if (options.platform === "win") {
+  if (options.platform === "mac") {
+    yield* validateMacPackagedApp({
+      stageDistDir,
+      targetArch: options.arch,
+      target: options.target,
+      appVersion,
+      verbose: options.verbose,
+    });
+  } else if (options.platform === "win") {
     yield* validateWindowsPackagedPayload({
       stageDistDir,
       appExecutableName: `${resolveDesktopProductName(appVersion)}.exe`,

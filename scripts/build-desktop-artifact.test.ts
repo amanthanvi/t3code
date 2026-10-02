@@ -37,6 +37,9 @@ import {
   LinuxIconResizeError,
   LinuxDesktopBuildPrerequisitesMissingError,
   MacDesktopBuildPrerequisitesMissingError,
+  MacPackagedAppInfoMismatchError,
+  MacPackagedAppMissingError,
+  MacPackagedZipMissingError,
   MacPasskeySigningConfigurationResolutionError,
   MissingMacPasskeyProvisioningProfileError,
   packWindowsServerAsar,
@@ -73,6 +76,7 @@ import {
   LinuxBrowserSecretHostError,
   stageBrowserSecret,
   validateWindowsPackagedPayload,
+  validateMacPackagedApp,
   WindowsPrimaryNativeProbeError,
   WindowsDesktopBuildPrerequisitesMissingError,
   WindowsPackagedPayloadValidationError,
@@ -1873,6 +1877,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(mac.entitlements, "/tmp/entitlements.mac.plist");
       assert.equal(mac.provisioningProfile, "/tmp/t3code.provisionprofile");
       assert.match(String(mac.sign), /[\\/]scripts[\\/]sign-macos\.ts$/);
+      assert.notProperty(mac, "identity");
       assert.deepStrictEqual(mac.protocols, [
         { name: "T3 Code", schemes: ["t3code", "t3code-dev"] },
       ]);
@@ -1895,7 +1900,268 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         (config.dmg as Record<string, unknown>).background,
         "dmg/dmg-background-nightly.png",
       );
+      const mac = config.mac as Record<string, unknown>;
+      assert.equal(mac.identity, "-");
+      assert.notProperty(mac, "sign");
+      assert.notProperty(mac, "entitlements");
+      assert.notProperty(mac, "provisioningProfile");
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
+  it.effect("strictly verifies the packaged macOS app before publishing artifacts", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const stageDistDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mac-signature-" });
+        const appPath = path.join(stageDistDir, "mac-arm64", "T3 Code (Nightly).app");
+        yield* fs.makeDirectory(path.join(appPath, "Contents"), { recursive: true });
+        yield* fs.writeFileString(path.join(appPath, "Contents", "Info.plist"), "staged-info");
+        const zipPath = path.join(stageDistDir, "T3-Code-1.2.3-nightly.20260815.1-arm64.zip");
+        yield* fs.writeFileString(zipPath, "zip fixture");
+        const commands: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+        const spawner = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            const childProcess = command as unknown as {
+              readonly command: string;
+              readonly args: ReadonlyArray<string>;
+            };
+            commands.push({ command: childProcess.command, args: childProcess.args });
+            if (childProcess.command === "ditto") {
+              return fs
+                .copy(appPath, path.join(childProcess.args[3]!, "T3 Code (Nightly).app"))
+                .pipe(Effect.as(mockProcess(0)));
+            }
+            return Effect.succeed(mockProcess(0));
+          }),
+        );
+
+        yield* validateMacPackagedApp({
+          stageDistDir,
+          targetArch: "arm64",
+          target: "dmg",
+          appVersion: "1.2.3-nightly.20260815.1",
+        }).pipe(Effect.provide(spawner));
+
+        assert.deepStrictEqual(
+          commands.map(({ command }) => command),
+          ["codesign", "ditto", "codesign"],
+        );
+        assert.deepStrictEqual(commands[0]?.args, [
+          "--verify",
+          "--deep",
+          "--strict",
+          "--verbose=2",
+          appPath,
+        ]);
+        assert.deepStrictEqual(commands[1]?.args.slice(0, 3), ["-x", "-k", zipPath]);
+        assert.deepStrictEqual(commands[2]?.args, [
+          "--verify",
+          "--deep",
+          "--strict",
+          "--verbose=2",
+          path.join(commands[1]!.args[3]!, "T3 Code (Nightly).app"),
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("rejects a packaged macOS app with an invalid signature", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const stageDistDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mac-signature-" });
+        yield* fs.makeDirectory(path.join(stageDistDir, "mac", "T3 Code (Alpha).app"), {
+          recursive: true,
+        });
+        const spawner = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() => Effect.succeed(mockProcess(1))),
+        );
+
+        const error = yield* validateMacPackagedApp({
+          stageDistDir,
+          targetArch: "x64",
+          target: "dmg",
+          appVersion: "1.2.3",
+        }).pipe(Effect.provide(spawner), Effect.flip);
+
+        assert.instanceOf(error, BuildCommandFailedError);
+        assert.equal(error.exitCode, 1);
+        assert.include(error.command, "codesign --verify --deep --strict");
+      }),
+    ),
+  );
+
+  it.effect("rejects a missing packaged macOS app", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const stageDistDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mac-signature-" });
+        const error = yield* validateMacPackagedApp({
+          stageDistDir,
+          targetArch: "universal",
+          target: "dmg",
+          appVersion: "1.2.3",
+        }).pipe(Effect.flip);
+
+        assert.instanceOf(error, MacPackagedAppMissingError);
+        assert.equal(error.appName, "T3 Code (Alpha).app");
+      }),
+    ),
+  );
+
+  it.effect("rejects a missing macOS ZIP after staged app verification", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const stageDistDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mac-signature-" });
+        yield* fs.makeDirectory(path.join(stageDistDir, "mac", "T3 Code (Alpha).app"), {
+          recursive: true,
+        });
+        const spawner = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() => Effect.succeed(mockProcess(0))),
+        );
+
+        const error = yield* validateMacPackagedApp({
+          stageDistDir,
+          targetArch: "x64",
+          target: "dmg",
+          appVersion: "1.2.3",
+        }).pipe(Effect.provide(spawner), Effect.flip);
+
+        assert.instanceOf(error, MacPackagedZipMissingError);
+        assert.equal(error.zipPath, path.join(stageDistDir, "T3-Code-1.2.3-x64.zip"));
+      }),
+    ),
+  );
+
+  it.effect("rejects a macOS ZIP that cannot be extracted", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const stageDistDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mac-signature-" });
+        yield* fs.makeDirectory(path.join(stageDistDir, "mac", "T3 Code (Alpha).app"), {
+          recursive: true,
+        });
+        yield* fs.writeFileString(path.join(stageDistDir, "T3-Code-1.2.3-x64.zip"), "bad zip");
+        const commands: string[] = [];
+        const spawner = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            const childProcess = command as unknown as { readonly command: string };
+            commands.push(childProcess.command);
+            return Effect.succeed(mockProcess(childProcess.command === "ditto" ? 1 : 0));
+          }),
+        );
+
+        const error = yield* validateMacPackagedApp({
+          stageDistDir,
+          targetArch: "x64",
+          target: "dmg",
+          appVersion: "1.2.3",
+        }).pipe(Effect.provide(spawner), Effect.flip);
+
+        assert.instanceOf(error, BuildCommandFailedError);
+        assert.include(error.command, "ditto -x -k");
+        assert.deepStrictEqual(commands, ["codesign", "ditto"]);
+      }),
+    ),
+  );
+
+  it.effect("rejects a ZIP whose extracted app metadata differs from the staged app", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const stageDistDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mac-signature-" });
+        const appPath = path.join(stageDistDir, "mac", "T3 Code (Alpha).app");
+        yield* fs.makeDirectory(path.join(appPath, "Contents"), { recursive: true });
+        yield* fs.writeFileString(path.join(appPath, "Contents", "Info.plist"), "staged-info");
+        yield* fs.writeFileString(path.join(stageDistDir, "T3-Code-1.2.3-x64.zip"), "zip fixture");
+        const commands: string[] = [];
+        const spawner = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            const childProcess = command as unknown as {
+              readonly command: string;
+              readonly args: ReadonlyArray<string>;
+            };
+            commands.push(childProcess.command);
+            if (childProcess.command === "ditto") {
+              const extractedAppPath = path.join(childProcess.args[3]!, "T3 Code (Alpha).app");
+              return fs.copy(appPath, extractedAppPath).pipe(
+                Effect.flatMap(() =>
+                  fs.writeFileString(
+                    path.join(extractedAppPath, "Contents", "Info.plist"),
+                    "changed-info",
+                  ),
+                ),
+                Effect.as(mockProcess(0)),
+              );
+            }
+            return Effect.succeed(mockProcess(0));
+          }),
+        );
+
+        const error = yield* validateMacPackagedApp({
+          stageDistDir,
+          targetArch: "x64",
+          target: "zip",
+          appVersion: "1.2.3",
+        }).pipe(Effect.provide(spawner), Effect.flip);
+
+        assert.instanceOf(error, MacPackagedAppInfoMismatchError);
+        assert.deepStrictEqual(commands, ["codesign", "ditto"]);
+      }),
+    ),
+  );
+
+  it.effect("rejects an extracted macOS ZIP app with an invalid signature", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const stageDistDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mac-signature-" });
+        const appPath = path.join(stageDistDir, "mac", "T3 Code (Alpha).app");
+        yield* fs.makeDirectory(path.join(appPath, "Contents"), { recursive: true });
+        yield* fs.writeFileString(path.join(appPath, "Contents", "Info.plist"), "same-info");
+        yield* fs.writeFileString(path.join(stageDistDir, "T3-Code-1.2.3-x64.zip"), "zip fixture");
+        let codesignCount = 0;
+        const spawner = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            const childProcess = command as unknown as {
+              readonly command: string;
+              readonly args: ReadonlyArray<string>;
+            };
+            if (childProcess.command === "ditto") {
+              return fs
+                .copy(appPath, path.join(childProcess.args[3]!, "T3 Code (Alpha).app"))
+                .pipe(Effect.as(mockProcess(0)));
+            }
+            codesignCount += 1;
+            return Effect.succeed(mockProcess(codesignCount === 2 ? 1 : 0));
+          }),
+        );
+
+        const error = yield* validateMacPackagedApp({
+          stageDistDir,
+          targetArch: "x64",
+          target: "dmg",
+          appVersion: "1.2.3",
+        }).pipe(Effect.provide(spawner), Effect.flip);
+
+        assert.instanceOf(error, BuildCommandFailedError);
+        assert.include(error.command, "codesign --verify --deep --strict");
+        assert.equal(codesignCount, 2);
+      }),
+    ),
   );
 
   it.effect("keeps executable resource editing enabled for unsigned Windows builds", () =>
