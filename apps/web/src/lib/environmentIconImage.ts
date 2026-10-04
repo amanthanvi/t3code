@@ -60,7 +60,7 @@ export async function encodeEnvironmentIconImage(file: Blob): Promise<Environmen
     );
     // Failure reaches the caller through the result, and the caller awaits
     // without a catch. toDataURL is the last call here that reports by
-    // throwing, so it does not get to leave through that hole.
+    // throwing, so the catch turns its throw into a result.
     let png: string;
     try {
       png = canvas.toDataURL("image/png");
