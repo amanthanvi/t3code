@@ -1,6 +1,7 @@
 import { ConnectionTraceId } from "./ConnectionTraceId";
 import { SymbolView } from "../../components/AppSymbol";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
+import { resolveEnvironmentIconLock } from "@t3tools/client-runtime/environment-icon";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import { type EnvironmentId, resolveEnvironmentIcon } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -21,7 +22,6 @@ import { serverEnvironment } from "../../state/server";
 import { ConnectionFormField } from "./ConnectionFormField";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
 import { EnvironmentIconPickerSheet } from "./EnvironmentIconPickerSheet";
-import { resolveMobileEnvironmentIconLock } from "./environmentIconPicker.logic";
 
 function connectionStatusLabel(environment: ConnectedEnvironmentSummary): string | null {
   if (!environment.isEnabled && environment.connectionState !== "unsupported") {
@@ -53,7 +53,7 @@ export function ConnectionEnvironmentRow(props: {
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(props.environment.environmentId),
   );
-  const iconLock = resolveMobileEnvironmentIconLock(serverConfig);
+  const iconLock = resolveEnvironmentIconLock(serverConfig);
   const unsupported = props.environment.connectionState === "unsupported";
   const enabled = props.environment.isEnabled && !unsupported;
   const statusLabel = connectionStatusLabel(props.environment);

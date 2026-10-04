@@ -31,6 +31,10 @@
       "types": "./src/load-balancing.ts",
       "default": "./src/load-balancing.ts"
     },
+    "./environment-icon": {
+      "types": "./src/environmentIcon.ts",
+      "default": "./src/environmentIcon.ts"
+    },
     "./project-favicon-cache": {
       "types": "./src/projectFaviconCache.ts",
       "default": "./src/projectFaviconCache.ts"

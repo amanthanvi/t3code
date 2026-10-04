@@ -13,6 +13,7 @@ import {
   type IconColor,
   type ServerConfig,
 } from "@t3tools/contracts";
+import { resolveEnvironmentRichIconLock } from "@t3tools/client-runtime/environment-icon";
 import { useMemo, useRef, useState, type ChangeEvent } from "react";
 
 import { cn } from "~/lib/utils";
@@ -41,7 +42,6 @@ import {
   filterEnvironmentLucideIconIds,
   resolveEnvironmentIconChoiceLock,
   resolveEnvironmentIconDialogWrite,
-  resolveEnvironmentRichIconLock,
   type EnvironmentIconDialogMode,
 } from "./EnvironmentIconPicker.logic";
 

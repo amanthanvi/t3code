@@ -1,12 +1,7 @@
 import { environmentIconForMachineKind, type ServerConfig } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  listMobileEnvironmentIconChoices,
-  resolveMobileEnvironmentIconLock,
-  resolveMobileEnvironmentIconWrite,
-  selectedMobileEnvironmentIconId,
-} from "./environmentIconPicker.logic";
+import { listMobileEnvironmentIconChoices } from "./environmentIconPicker.logic";
 
 const config = (environmentIcon: boolean | undefined, environmentIconOverride?: boolean) =>
   ({
@@ -17,14 +12,6 @@ const config = (environmentIcon: boolean | undefined, environmentIconOverride?: 
       },
     },
   }) as unknown as ServerConfig;
-
-describe("resolveMobileEnvironmentIconLock", () => {
-  it("locks until connected, then on servers that predate the setting", () => {
-    expect(resolveMobileEnvironmentIconLock(null)).toMatch(/Connect/);
-    expect(resolveMobileEnvironmentIconLock(config(undefined))).toMatch(/too old/);
-    expect(resolveMobileEnvironmentIconLock(config(true))).toBeNull();
-  });
-});
 
 describe("listMobileEnvironmentIconChoices", () => {
   it("marks detection and gates roles on the object-form capability", () => {
@@ -51,26 +38,5 @@ describe("listMobileEnvironmentIconChoices", () => {
     expect(current.find((choice) => choice.id === "laptop")?.icon).toBe(
       environmentIconForMachineKind("laptop"),
     );
-  });
-});
-
-describe("resolveMobileEnvironmentIconWrite", () => {
-  it("clears on the detected kind, shares machine kinds, names roles", () => {
-    expect(resolveMobileEnvironmentIconWrite({ next: "laptop", detected: "laptop" })).toBeNull();
-    expect(resolveMobileEnvironmentIconWrite({ next: "laptop", detected: "server" })).toBe(
-      environmentIconForMachineKind("laptop"),
-    );
-    expect(resolveMobileEnvironmentIconWrite({ next: "database", detected: "server" })).toEqual({
-      kind: "icon",
-      name: "database",
-    });
-  });
-});
-
-describe("selectedMobileEnvironmentIconId", () => {
-  it("selects a curated pick and nothing else", () => {
-    expect(selectedMobileEnvironmentIconId({ kind: "icon", name: "gpu" })).toBe("gpu");
-    expect(selectedMobileEnvironmentIconId({ kind: "icon", name: "cpu" })).toBeNull();
-    expect(selectedMobileEnvironmentIconId({ kind: "emoji", emoji: "🚀" })).toBeNull();
   });
 });

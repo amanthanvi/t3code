@@ -1,6 +1,5 @@
 import {
   ENVIRONMENT_LUCIDE_ICON_IDS,
-  environmentIconForCuratedId,
   IconImageDataUrl,
   isLegacyEnvironmentMachineKind,
   isMonogramLength,
@@ -12,6 +11,11 @@ import {
   type IconColor,
   type ServerConfig,
 } from "@t3tools/contracts";
+import {
+  resolveEnvironmentIconLock,
+  resolveEnvironmentIconPick,
+  resolveEnvironmentRichIconLock,
+} from "@t3tools/client-runtime/environment-icon";
 import * as Schema from "effect/Schema";
 
 import { firstEmoji } from "../../iconEmoji";
@@ -27,16 +31,12 @@ export function resolveEnvironmentIconPickerLock(input: {
   readonly serverConfig: ServerConfig | null;
   readonly operateAccess: "granted" | "denied" | "pending";
 }): string | null {
-  if (input.serverConfig === null) {
-    return "Connect to this environment to change its icon.";
-  }
-  if (input.serverConfig.environment.capabilities.environmentIcon !== true) {
-    return "This environment's server is too old to keep an icon. Update it to choose one.";
-  }
-  if (input.operateAccess !== "granted") {
-    return "Your session on this environment cannot change its settings.";
-  }
-  return null;
+  return (
+    resolveEnvironmentIconLock(input.serverConfig) ??
+    (input.operateAccess !== "granted"
+      ? "Your session on this environment cannot change its settings."
+      : null)
+  );
 }
 
 /**
@@ -50,25 +50,6 @@ export function resolveEnvironmentIconChoiceLock(input: {
 }): string | null {
   if (isLegacyEnvironmentMachineKind(input.id)) return null;
   return resolveEnvironmentRichIconLock(input.serverConfig);
-}
-
-/** Why anything beyond a plain machine kind cannot be written to this server; null when it can. */
-export function resolveEnvironmentRichIconLock(serverConfig: ServerConfig | null): string | null {
-  return serverConfig?.environment.capabilities.environmentIconOverride === true
-    ? null
-    : "Update this environment's server to pick an icon beyond its machine kind.";
-}
-
-/**
- * What to store for a plain named pick. Picking what the server would draw
- * anyway clears the override instead of pinning it, so detection keeps
- * working if the machine changes.
- */
-function resolveNamedIconWrite(input: {
-  readonly next: EnvironmentCuratedIconId;
-  readonly detected: EnvironmentMachineKind;
-}): EnvironmentIcon | null {
-  return input.next === input.detected ? null : environmentIconForCuratedId(input.next);
 }
 
 export type EnvironmentIconDialogMode = "icon" | "emoji" | "monogram" | "image";
@@ -105,7 +86,7 @@ export function resolveEnvironmentIconDialogWrite(input: {
       if (input.lucideId === null && input.color === null) {
         return {
           kind: "write",
-          icon: resolveNamedIconWrite({ next: input.iconId, detected: input.detected }),
+          icon: resolveEnvironmentIconPick({ next: input.iconId, detected: input.detected }),
         };
       }
       const name = input.lucideId ?? input.iconId;

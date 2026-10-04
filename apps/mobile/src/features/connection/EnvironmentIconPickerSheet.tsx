@@ -1,5 +1,10 @@
 import {
+  resolveEnvironmentIconPick,
+  resolveEnvironmentRichIconLock,
+} from "@t3tools/client-runtime/environment-icon";
+import {
   ENVIRONMENT_ICON_LABELS,
+  isEnvironmentCuratedIconId,
   resolveEnvironmentIcon,
   type EnvironmentIcon,
   type EnvironmentId,
@@ -20,12 +25,7 @@ import {
 } from "../../lib/environmentIconImage";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import {
-  listMobileEnvironmentIconChoices,
-  resolveMobileEnvironmentIconWrite,
-  selectedMobileEnvironmentIconId,
-  supportsRichEnvironmentIcon,
-} from "./environmentIconPicker.logic";
+import { listMobileEnvironmentIconChoices } from "./environmentIconPicker.logic";
 
 /**
  * Picks an environment's icon: the curated list, or a photo cropped to a
@@ -51,8 +51,9 @@ export function EnvironmentIconPickerSheet(props: {
   // kind clears the override the same way picking the detected kind does.
   const detected = props.serverConfig?.environment.platform.machine ?? "server";
   const current = resolveEnvironmentIcon(props.serverConfig);
-  const selectedId = selectedMobileEnvironmentIconId(current);
-  const rich = supportsRichEnvironmentIcon(props.serverConfig);
+  const selectedId =
+    current.kind === "icon" && isEnvironmentCuratedIconId(current.name) ? current.name : null;
+  const richLock = resolveEnvironmentRichIconLock(props.serverConfig);
   const choices = listMobileEnvironmentIconChoices({ serverConfig: props.serverConfig, detected });
 
   const applyIcon = async (environmentIcon: EnvironmentIcon | null) => {
@@ -151,7 +152,7 @@ export function EnvironmentIconPickerSheet(props: {
                   }}
                   disabled={!choice.enabled || pending}
                   onPress={() =>
-                    void write(resolveMobileEnvironmentIconWrite({ next: choice.id, detected }))
+                    void write(resolveEnvironmentIconPick({ next: choice.id, detected }))
                   }
                   className={cn(
                     "flex-row items-center gap-3 px-4 py-3 active:opacity-70",
@@ -185,12 +186,12 @@ export function EnvironmentIconPickerSheet(props: {
             </View>
             <Pressable
               accessibilityRole="button"
-              accessibilityState={{ disabled: !rich || pending }}
-              disabled={!rich || pending}
+              accessibilityState={{ disabled: richLock !== null || pending }}
+              disabled={richLock !== null || pending}
               onPress={() => void pickImage()}
               className={cn(
                 "flex-row items-center gap-3 border-t border-border px-4 py-3 active:opacity-70",
-                !rich && "opacity-40",
+                richLock !== null && "opacity-40",
               )}
             >
               {current.kind === "image" ? (
@@ -216,10 +217,7 @@ export function EnvironmentIconPickerSheet(props: {
                   className="text-xs text-foreground-muted"
                   numberOfLines={2}
                 >
-                  {imageError ??
-                    (rich
-                      ? "Cropped to a square and stored at 64 by 64."
-                      : "Update this environment's server to pick an icon beyond its machine kind.")}
+                  {imageError ?? richLock ?? "Cropped to a square and stored at 64 by 64."}
                 </Text>
               </View>
               {current.kind === "image" ? (
