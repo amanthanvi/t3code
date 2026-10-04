@@ -353,7 +353,7 @@ export function EnvironmentIconPickerDialog({
                 >
                   {imageDataUrl === null ? "Choose image" : "Replace image"}
                 </Button>
-                <p className="text-xs text-muted-foreground">
+                <p role="status" className="text-xs text-muted-foreground">
                   {imageEncoding
                     ? "Preparing image…"
                     : (imageError ?? "Cropped to a square and stored at 64 by 64.")}
