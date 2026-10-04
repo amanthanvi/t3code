@@ -1056,7 +1056,7 @@ describe("ServerSettings environment icon", () => {
   it("refuses an inline image that is not whole base64 holding a small PNG", () => {
     // A truncated upload usually stops mid-quartet, and a mislabelled one
     // decodes cleanly to something that is not a PNG. Neither reaches a
-    // decoder that would tell the user, so they die here.
+    // decoder that would tell the user, so the schema refuses them here.
     for (const dataUrl of [
       "data:image/png;base64,iVBORw0KGgo",
       "data:image/png;base64,iVBORw0KGgoAA",

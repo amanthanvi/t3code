@@ -50,20 +50,16 @@ export type ProjectScript = typeof ProjectScript.Type;
 export const ProjectIconColor = IconColor;
 export type ProjectIconColor = IconColor;
 
-const ProjectLucideIconName = LucideIconName;
-
-const ProjectEmoji = IconEmoji;
-
 export const ProjectMonogramText = MonogramText;
 
 const ProjectLucideIcon = Schema.Struct({
   kind: Schema.Literal("lucide"),
-  name: ProjectLucideIconName,
+  name: LucideIconName,
   color: ProjectIconColor,
 });
 const ProjectEmojiIcon = Schema.Struct({
   kind: Schema.Literal("emoji"),
-  emoji: ProjectEmoji,
+  emoji: IconEmoji,
 });
 const ProjectMonogramIcon = Schema.Struct({
   kind: Schema.Literal("monogram"),

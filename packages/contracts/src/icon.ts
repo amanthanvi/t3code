@@ -1,3 +1,5 @@
+import * as Base64 from "effect/encoding/Base64";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -79,7 +81,6 @@ export const ICON_IMAGE_DATA_URL_MAX_LENGTH = 32_768;
 export const ICON_IMAGE_MAX_EDGE = 256;
 
 const PNG_DATA_URL_PREFIX = "data:image/png;base64,";
-const BASE64_DIGITS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 // The eight byte signature, then the first chunk: length 13, type "IHDR".
 const PNG_HEADER_START = [
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 73, 72, 68, 82,
@@ -92,22 +93,12 @@ const PNG_HEADER_START = [
  */
 function hasIconPngHeader(dataUrl: string): boolean {
   const head = dataUrl.slice(PNG_DATA_URL_PREFIX.length, PNG_DATA_URL_PREFIX.length + 32);
-  if (head.length < 32) return false;
-  const bytes: Array<number> = [];
-  for (let index = 0; index < head.length; index += 4) {
-    let quartet = 0;
-    for (let offset = 0; offset < 4; offset += 1) {
-      const digit = BASE64_DIGITS.indexOf(head[index + offset]!);
-      if (digit < 0) return false;
-      quartet = (quartet << 6) | digit;
-    }
-    bytes.push((quartet >> 16) & 0xff, (quartet >> 8) & 0xff, quartet & 0xff);
-  }
+  const bytes = Result.getOrNull(Base64.decode(head));
+  if (bytes === null || bytes.length < 24) return false;
   if (PNG_HEADER_START.some((byte, index) => bytes[index] !== byte)) return false;
-  const edge = (at: number) =>
-    ((bytes[at]! << 24) | (bytes[at + 1]! << 16) | (bytes[at + 2]! << 8) | bytes[at + 3]!) >>> 0;
-  const width = edge(16);
-  const height = edge(20);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const width = view.getUint32(16);
+  const height = view.getUint32(20);
   return width > 0 && height > 0 && width <= ICON_IMAGE_MAX_EDGE && height <= ICON_IMAGE_MAX_EDGE;
 }
 
