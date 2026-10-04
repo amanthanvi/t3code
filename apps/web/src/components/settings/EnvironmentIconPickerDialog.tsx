@@ -11,7 +11,7 @@ import {
   type IconColor,
   type ServerConfig,
 } from "@t3tools/contracts";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { firstEmoji, PROJECT_EMOJIS } from "../../iconEmoji";
@@ -69,13 +69,13 @@ function initialState(input: {
  * Picks an environment's icon: a curated glyph with an optional color, an
  * emoji, or a monogram. Every decision about what to write lives in
  * `EnvironmentIconPicker.logic.ts`; this component only holds the form state.
+ * The host mounts it only while open, so that state starts fresh every time.
  */
 export function EnvironmentIconPickerDialog({
   current,
   detected,
   environmentLabel,
   serverConfig,
-  open,
   onOpenChange,
   onSelect,
 }: {
@@ -83,7 +83,6 @@ export function EnvironmentIconPickerDialog({
   readonly detected: EnvironmentMachineKind;
   readonly environmentLabel: string;
   readonly serverConfig: ServerConfig | null;
-  readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly onSelect: (icon: EnvironmentIcon | null) => void;
 }) {
@@ -94,20 +93,6 @@ export function EnvironmentIconPickerDialog({
   const [emoji, setEmoji] = useState(initial.emoji);
   const [monogram, setMonogram] = useState(initial.monogram);
   const [customEmoji, setCustomEmoji] = useState("");
-  const previousOpenRef = useRef(false);
-
-  useEffect(() => {
-    if (open && !previousOpenRef.current) {
-      const next = initialState({ current, detected, environmentLabel });
-      setMode(next.mode);
-      setIconId(next.iconId);
-      setColor(next.color);
-      setEmoji(next.emoji);
-      setMonogram(next.monogram);
-      setCustomEmoji("");
-    }
-    previousOpenRef.current = open;
-  }, [current, detected, environmentLabel, open]);
 
   const richLock = resolveEnvironmentRichIconLock(serverConfig);
   const write = resolveEnvironmentIconDialogWrite({
@@ -134,7 +119,7 @@ export function EnvironmentIconPickerDialog({
       : environmentIconForMachineKind(detected);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open onOpenChange={onOpenChange}>
       <DialogPopup className="w-full sm:w-[32rem]">
         <DialogHeader>
           <DialogTitle>Choose environment icon</DialogTitle>

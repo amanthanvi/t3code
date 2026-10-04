@@ -79,7 +79,6 @@ export function EnvironmentIconPickerHost({
         detected={serverConfig?.environment.platform.machine ?? "server"}
         environmentLabel={environmentLabel}
         serverConfig={serverConfig}
-        open
         onOpenChange={onOpenChange}
         onSelect={(environmentIcon) => updateSettings({ environmentIcon })}
       />
