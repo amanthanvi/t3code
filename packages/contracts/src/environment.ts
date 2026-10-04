@@ -100,7 +100,8 @@ const EnvironmentMonogramIcon = Schema.Struct({
  * The only setting that holds bytes. It lives in one environment's own
  * `settings.json`, never a map across environments, and the settings stream
  * sends the whole object to every client on change, so one icon per payload
- * is the entire exposure. `IconImageDataUrl` caps the size.
+ * is the entire exposure. `IconImageDataUrl` caps its encoded length and pixel
+ * dimensions.
  */
 const EnvironmentImageIcon = Schema.Struct({
   kind: Schema.Literal("image"),

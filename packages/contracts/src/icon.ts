@@ -72,33 +72,68 @@ export function isMonogramLength(text: string): boolean {
 export const ICON_IMAGE_DATA_URL_MAX_LENGTH = 32_768;
 
 /**
+ * Largest width or height an inline icon may declare. Both pickers write 64 by
+ * 64; the cap leaves room for an encoder working at a display scale while
+ * holding a decoded icon to 256 KiB on every client that draws it.
+ */
+export const ICON_IMAGE_MAX_EDGE = 256;
+
+const PNG_DATA_URL_PREFIX = "data:image/png;base64,";
+const BASE64_DIGITS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+// The eight byte signature, then the first chunk: length 13, type "IHDR".
+const PNG_HEADER_START = [
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 73, 72, 68, 82,
+];
+
+/**
+ * Whether a PNG data URL opens with the signature and an IHDR chunk whose
+ * width and height are within `ICON_IMAGE_MAX_EDGE`. Decodes only the first
+ * 24 bytes, which is where PNG fixes those fields.
+ */
+function hasIconPngHeader(dataUrl: string): boolean {
+  const head = dataUrl.slice(PNG_DATA_URL_PREFIX.length, PNG_DATA_URL_PREFIX.length + 32);
+  if (head.length < 32) return false;
+  const bytes: Array<number> = [];
+  for (let index = 0; index < head.length; index += 4) {
+    let quartet = 0;
+    for (let offset = 0; offset < 4; offset += 1) {
+      const digit = BASE64_DIGITS.indexOf(head[index + offset]!);
+      if (digit < 0) return false;
+      quartet = (quartet << 6) | digit;
+    }
+    bytes.push((quartet >> 16) & 0xff, (quartet >> 8) & 0xff, quartet & 0xff);
+  }
+  if (PNG_HEADER_START.some((byte, index) => bytes[index] !== byte)) return false;
+  const edge = (at: number) =>
+    ((bytes[at]! << 24) | (bytes[at + 1]! << 16) | (bytes[at + 2]! << 8) | bytes[at + 3]!) >>> 0;
+  const width = edge(16);
+  const height = edge(20);
+  return width > 0 && height > 0 && width <= ICON_IMAGE_MAX_EDGE && height <= ICON_IMAGE_MAX_EDGE;
+}
+
+/**
  * A small raster icon carried inline. The prefix is pinned to PNG rather than
  * any `data:image/`. On web that is what keeps an SVG, which can script, out
  * of the `<img>`, because Blink picks the decoder from the declared type. Mobile's
  * image library sniffs content instead, so there the guarantee is that neither
  * renderer in use has a script engine, not the prefix.
  *
- * Nothing past the signature is read, so this says nothing about frame count.
- * APNG carries the same signature and animates.
+ * The pattern spells out whole base64 quartets rather than a run of characters
+ * and loose padding. That refuses the three in four truncations that stop
+ * mid-quartet.
  *
- * The first pattern spells out whole base64 quartets rather than a run of
- * characters and loose padding. That refuses the three in four truncations
- * that stop mid-quartet. One that stops on a quartet boundary still decodes,
- * to a PNG carrying a signature and no pixels, and reaches the renderer.
- *
- * The second is the eight byte PNG signature, which base64 spells as
- * `iVBORw0KGgo`. The last character also carries the top bits of the ninth
- * byte, which is zero in every PNG because the first chunk's length is 13.
- * Stopping at `iVBORw0KGg` would let a seven byte prefix through. Checking the
- * encoded prefix costs nothing on a path that decodes settings for every
- * connected client on every change, and it means the declared type is the
- * writer's claim while this is the evidence.
+ * The header check is the evidence behind the declared type: the PNG
+ * signature, then an IHDR chunk with bounded dimensions. The encoded length cap
+ * says nothing about pixels, since a large flat image compresses to almost
+ * nothing, and this value is broadcast to every connected client. Nothing past
+ * IHDR is read, so this says nothing about frame count. APNG carries the same
+ * header and animates.
  */
 export const IconImageDataUrl = Schema.String.check(
   Schema.isMaxLength(ICON_IMAGE_DATA_URL_MAX_LENGTH),
   Schema.isPattern(
     /^data:image\/png;base64,(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{4}|[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{2}==)$/,
   ),
-  Schema.isPattern(/^data:image\/png;base64,iVBORw0KGgo/),
+  Schema.makeFilter(hasIconPngHeader),
 );
 export type IconImageDataUrl = typeof IconImageDataUrl.Type;

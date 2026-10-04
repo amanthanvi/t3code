@@ -18,6 +18,9 @@ const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
 const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
+// A complete one by one transparent PNG.
+const ONE_PIXEL_PNG =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNgAAIAAAUAAen63NgAAAAASUVORK5CYII=";
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodeServerSettingsPatch = Schema.encodeSync(ServerSettingsPatch);
@@ -991,7 +994,7 @@ describe("ServerSettings environment icon", () => {
       { kind: "icon", name: "cpu", color: "violet" },
       { kind: "emoji", emoji: "🚀" },
       { kind: "monogram", text: "K8", color: "teal" },
-      { kind: "image", dataUrl: "data:image/png;base64,iVBORw0KGgo=" },
+      { kind: "image", dataUrl: ONE_PIXEL_PNG },
     ] as const) {
       const settings = decodeServerSettings({ environmentIcon });
       expect(settings.environmentIcon).toEqual(environmentIcon);
@@ -1050,7 +1053,7 @@ describe("ServerSettings environment icon", () => {
     ).toThrow();
   });
 
-  it("refuses an inline image that is not whole base64 holding a PNG", () => {
+  it("refuses an inline image that is not whole base64 holding a small PNG", () => {
     // A truncated upload usually stops mid-quartet, and a mislabelled one
     // decodes cleanly to something that is not a PNG. Neither reaches a
     // decoder that would tell the user, so they die here.
@@ -1064,17 +1067,21 @@ describe("ServerSettings environment icon", () => {
       "data:image/png;base64,iVBORw==",
       // Stops one byte short of the signature.
       "data:image/png;base64,iVBORw0KGg==",
+      // The signature alone, with no IHDR chunk.
+      "data:image/png;base64,iVBORw0KGgo=",
+      // A complete PNG 257 pixels wide, one past the edge cap. A large flat
+      // image compresses to almost nothing, so the length cap cannot stop it.
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAQEAAAABCAYAAADemxtJAAAAEUlEQVR42mNgGAWjYBSMaAAABAUAATAJXu8AAAAASUVORK5CYII=",
     ]) {
       expect(() =>
         decodeServerSettingsPatch({ environmentIcon: { kind: "image", dataUrl } }),
       ).toThrow();
     }
 
-    const whole = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
     expect(
-      decodeServerSettingsPatch({ environmentIcon: { kind: "image", dataUrl: whole } })
+      decodeServerSettingsPatch({ environmentIcon: { kind: "image", dataUrl: ONE_PIXEL_PNG } })
         .environmentIcon,
-    ).toEqual({ kind: "image", dataUrl: whole });
+    ).toEqual({ kind: "image", dataUrl: ONE_PIXEL_PNG });
   });
 
   it("rejects a patch carrying a variant this build does not know", () => {
