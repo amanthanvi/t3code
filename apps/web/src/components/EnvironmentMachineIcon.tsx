@@ -142,24 +142,26 @@ export function EnvironmentMachineIcon({
   // Curated first, then the shared Lucide list, else the generic server. The
   // chunk loads once per icon; until then the slot holds the server glyph at
   // the same size so the row does not shift.
-  if (icon.kind === "icon" && !isEnvironmentCuratedIconId(icon.name)) {
-    if (isEnvironmentLucideIconId(icon.name)) {
-      const placeholder = <ServerIcon {...props} className={coloredClassName} />;
-      return (
-        <Suspense fallback={placeholder}>
-          <DynamicIcon
-            {...props}
-            // `IconName` and `EnvironmentLucideIconId` are declared apart, so
-            // nothing relates them at compile time. The generator test reads
-            // every shared id out of the same lucide-react build this resolves
-            // from, so an id Lucide does not ship fails there instead of here.
-            name={icon.name as IconName}
-            className={coloredClassName}
-            fallback={() => placeholder}
-          />
-        </Suspense>
-      );
-    }
+  if (
+    icon.kind === "icon" &&
+    !isEnvironmentCuratedIconId(icon.name) &&
+    isEnvironmentLucideIconId(icon.name)
+  ) {
+    const placeholder = <ServerIcon {...props} className={coloredClassName} />;
+    return (
+      <Suspense fallback={placeholder}>
+        <DynamicIcon
+          {...props}
+          // `IconName` and `EnvironmentLucideIconId` are declared apart, so
+          // nothing relates them at compile time. The generator test reads
+          // every shared id out of the same lucide-react build this resolves
+          // from, so an id Lucide does not ship fails there instead of here.
+          name={icon.name as IconName}
+          className={coloredClassName}
+          fallback={() => placeholder}
+        />
+      </Suspense>
+    );
   }
   const Icon = ICON_BY_ID[curatedIconId(icon)];
   return <Icon {...props} className={coloredClassName} />;

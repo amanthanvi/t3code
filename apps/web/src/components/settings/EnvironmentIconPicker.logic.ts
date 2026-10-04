@@ -1,4 +1,5 @@
 import {
+  ENVIRONMENT_LUCIDE_ICON_IDS,
   environmentIconForCuratedId,
   isEnvironmentMachineKind,
   isMonogramLength,
@@ -133,4 +134,17 @@ export function resolveEnvironmentIconDialogWrite(input: {
       };
     }
   }
+}
+
+/** The shared Lucide ids whose name contains every word of `query`. */
+export function filterEnvironmentLucideIconIds(
+  query: string,
+): ReadonlyArray<EnvironmentLucideIconId> {
+  const words = query
+    .trim()
+    .toLowerCase()
+    .split(/\s+/u)
+    .filter((word) => word.length > 0);
+  if (words.length === 0) return ENVIRONMENT_LUCIDE_ICON_IDS;
+  return ENVIRONMENT_LUCIDE_ICON_IDS.filter((id) => words.every((word) => id.includes(word)));
 }

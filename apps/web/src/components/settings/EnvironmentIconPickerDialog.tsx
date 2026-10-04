@@ -1,7 +1,6 @@
 import {
   ENVIRONMENT_CURATED_ICON_IDS,
   ENVIRONMENT_ICON_LABELS,
-  ENVIRONMENT_LUCIDE_ICON_IDS,
   environmentIconForCuratedId,
   environmentIconForMachineKind,
   isEnvironmentCuratedIconId,
@@ -35,6 +34,7 @@ import { Input } from "../ui/input";
 import { ScrollArea } from "../ui/scroll-area";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import {
+  filterEnvironmentLucideIconIds,
   resolveEnvironmentIconChoiceLock,
   resolveEnvironmentIconDialogWrite,
   resolveEnvironmentRichIconLock,
@@ -49,19 +49,6 @@ function iconLabel(name: string): string {
     .split("-")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
-}
-
-/** The shared Lucide ids whose name contains every word of `query`. */
-export function filterEnvironmentLucideIconIds(
-  query: string,
-): ReadonlyArray<EnvironmentLucideIconId> {
-  const words = query
-    .trim()
-    .toLowerCase()
-    .split(/\s+/u)
-    .filter((word) => word.length > 0);
-  if (words.length === 0) return ENVIRONMENT_LUCIDE_ICON_IDS;
-  return ENVIRONMENT_LUCIDE_ICON_IDS.filter((id) => words.every((word) => id.includes(word)));
 }
 
 /**

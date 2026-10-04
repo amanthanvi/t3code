@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import { ENVIRONMENT_LUCIDE_ICON_IDS } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 const GENERATED_MODULE_PATH = NodePath.resolve(
   import.meta.dirname,
@@ -15,11 +16,15 @@ const webRequire = NodeModule.createRequire(
   NodePath.resolve(import.meta.dirname, "../../web/package.json"),
 );
 const lucideRoot = NodePath.dirname(webRequire.resolve("lucide-react/package.json"));
-const lucideVersion = (
-  JSON.parse(NodeFS.readFileSync(NodePath.join(lucideRoot, "package.json"), "utf8")) as {
-    version: string;
-  }
-).version;
+const lucideVersion = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Struct({ version: Schema.String })),
+)(NodeFS.readFileSync(NodePath.join(lucideRoot, "package.json"), "utf8")).version;
+
+const decodeIconNode = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Array(Schema.Tuple([Schema.String, Schema.Record(Schema.String, Schema.String)])),
+  ),
+);
 
 type IconNode = ReadonlyArray<readonly [string, Readonly<Record<string, string>>]>;
 
@@ -35,16 +40,14 @@ function readIconNode(id: string): IconNode {
   );
   const literal = /const __iconNode = (\[[\s\S]*?\]);\n/u.exec(source)?.[1];
   if (literal === undefined) throw new Error(`lucide-react icon ${id} has no __iconNode literal.`);
-  const parsed: unknown = JSON.parse(literal.replaceAll(/(\w+): /gu, '"$1": '));
-  if (!Array.isArray(parsed)) throw new Error(`lucide-react icon ${id} did not parse to a list.`);
-  return parsed.map((entry: unknown): readonly [string, Readonly<Record<string, string>>] => {
-    if (!Array.isArray(entry) || typeof entry[0] !== "string" || typeof entry[1] !== "object") {
-      throw new Error(`lucide-react icon ${id} has an unexpected node.`);
-    }
-    // React needs the key only to reconcile a list; mobile builds a static tree.
-    const { key: _key, ...attributes } = entry[1] as Record<string, string>;
-    return [entry[0], attributes];
-  });
+  let parsed: ReturnType<typeof decodeIconNode>;
+  try {
+    parsed = decodeIconNode(literal.replaceAll(/(\w+): /gu, '"$1": '));
+  } catch (cause) {
+    throw new Error(`lucide-react icon ${id} has an unexpected node.`, { cause });
+  }
+  // React needs the key only to reconcile a list; mobile builds a static tree.
+  return parsed.map(([element, { key: _key, ...attributes }]) => [element, attributes]);
 }
 
 /**

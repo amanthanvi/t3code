@@ -79,17 +79,19 @@ export function EnvironmentMachineSymbol(props: {
       : props.tintColorClassName;
   // Curated first, then the shared Lucide list; the generated module holds
   // path data for exactly those ids, so anything else is the generic server.
-  if (icon.kind === "icon" && !isEnvironmentCuratedIconId(icon.name)) {
-    if (isEnvironmentLucideIconId(icon.name)) {
-      return (
-        <EnvironmentLucideIcon
-          id={icon.name}
-          size={size}
-          colorClassName={tintColorClassName}
-          accessibilityLabel={icon.name.replaceAll("-", " ")}
-        />
-      );
-    }
+  if (
+    icon.kind === "icon" &&
+    !isEnvironmentCuratedIconId(icon.name) &&
+    isEnvironmentLucideIconId(icon.name)
+  ) {
+    return (
+      <EnvironmentLucideIcon
+        id={icon.name}
+        size={size}
+        colorClassName={tintColorClassName}
+        accessibilityLabel={icon.name.replaceAll("-", " ")}
+      />
+    );
   }
   const id = symbolId(icon);
   return (

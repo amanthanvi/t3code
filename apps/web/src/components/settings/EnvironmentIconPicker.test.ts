@@ -6,11 +6,11 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  filterEnvironmentLucideIconIds,
   resolveEnvironmentIconChoiceLock,
   resolveEnvironmentIconDialogWrite,
   resolveEnvironmentIconPickerLock,
 } from "./EnvironmentIconPicker.logic";
-import { filterEnvironmentLucideIconIds } from "./EnvironmentIconPickerDialog";
 
 const config = (environmentIcon: boolean | undefined, environmentIconOverride?: boolean) =>
   ({
