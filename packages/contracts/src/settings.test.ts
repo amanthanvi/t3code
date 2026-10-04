@@ -1062,6 +1062,8 @@ describe("ServerSettings environment icon", () => {
       "data:image/png;base64,SGVsbG8=",
       // Stops four bytes into the eight byte signature.
       "data:image/png;base64,iVBORw==",
+      // Stops one byte short of the signature.
+      "data:image/png;base64,iVBORw0KGg==",
     ]) {
       expect(() =>
         decodeServerSettingsPatch({ environmentIcon: { kind: "image", dataUrl } }),

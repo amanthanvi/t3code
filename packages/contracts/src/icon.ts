@@ -86,16 +86,19 @@ export const ICON_IMAGE_DATA_URL_MAX_LENGTH = 32_768;
  * that stop mid-quartet. One that stops on a quartet boundary still decodes,
  * to a PNG carrying a signature and no pixels, and reaches the renderer.
  *
- * The second is the PNG signature, which base64 fixes to `iVBORw0KGg` for any
- * PNG whatever its ninth byte. Checking the encoded prefix costs nothing on a
- * path that decodes settings for every connected client on every change, and it
- * means the declared type is the writer's claim while this is the evidence.
+ * The second is the eight byte PNG signature, which base64 spells as
+ * `iVBORw0KGgo`. The last character also carries the top bits of the ninth
+ * byte, which is zero in every PNG because the first chunk's length is 13.
+ * Stopping at `iVBORw0KGg` would let a seven byte prefix through. Checking the
+ * encoded prefix costs nothing on a path that decodes settings for every
+ * connected client on every change, and it means the declared type is the
+ * writer's claim while this is the evidence.
  */
 export const IconImageDataUrl = Schema.String.check(
   Schema.isMaxLength(ICON_IMAGE_DATA_URL_MAX_LENGTH),
   Schema.isPattern(
     /^data:image\/png;base64,(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{4}|[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{2}==)$/,
   ),
-  Schema.isPattern(/^data:image\/png;base64,iVBORw0KGg/),
+  Schema.isPattern(/^data:image\/png;base64,iVBORw0KGgo/),
 );
 export type IconImageDataUrl = typeof IconImageDataUrl.Type;
