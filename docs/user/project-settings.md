@@ -183,7 +183,8 @@ named icon or a photo.
 The icon is stored on that machine's server, so every device that connects to it sees the same
 one. An image is cropped to a square and stored small, so choose a simple mark rather than a
 photo. Picking the detected kind again returns to automatic detection. A server that predates
-the richer icons only keeps the machine kinds until it is updated.
+the richer icons can store only the original machine kinds, so Container and everything richer
+wait until it is updated.
 
 ## Keep the default branch current
 
