@@ -18,10 +18,31 @@ const config = (environmentIcon: boolean | undefined, environmentIconOverride?: 
   }) as unknown as ServerConfig;
 
 describe("resolveEnvironmentIconLock", () => {
-  it("locks until connected, then on servers that predate the setting", () => {
-    expect(resolveEnvironmentIconLock(null)).toMatch(/Connect/);
-    expect(resolveEnvironmentIconLock(config(undefined))).toMatch(/too old/);
-    expect(resolveEnvironmentIconLock(config(true))).toBeNull();
+  it("locks until the environment is connected", () => {
+    expect(resolveEnvironmentIconLock({ serverConfig: null, operateAccess: "granted" })).toMatch(
+      /Connect/,
+    );
+  });
+
+  it("locks on servers that predate the setting, before looking at permissions", () => {
+    expect(
+      resolveEnvironmentIconLock({ serverConfig: config(undefined), operateAccess: "denied" }),
+    ).toMatch(/too old/);
+  });
+
+  it("locks when the session cannot operate the environment", () => {
+    expect(
+      resolveEnvironmentIconLock({ serverConfig: config(true), operateAccess: "denied" }),
+    ).toMatch(/cannot change/);
+  });
+
+  it("stays open while access is still resolving so a slow session does not flicker", () => {
+    expect(
+      resolveEnvironmentIconLock({ serverConfig: config(true), operateAccess: "pending" }),
+    ).toBeNull();
+    expect(
+      resolveEnvironmentIconLock({ serverConfig: config(true), operateAccess: "granted" }),
+    ).toBeNull();
   });
 });
 

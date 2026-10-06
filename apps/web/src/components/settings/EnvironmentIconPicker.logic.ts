@@ -12,7 +12,6 @@ import {
   type ServerConfig,
 } from "@t3tools/contracts";
 import {
-  resolveEnvironmentIconLock,
   resolveEnvironmentIconPick,
   resolveEnvironmentRichIconLock,
 } from "@t3tools/client-runtime/environment-icon";
@@ -22,22 +21,6 @@ import { firstEmoji } from "../../iconEmoji";
 
 const isMonogramText = Schema.is(MonogramText);
 const isIconImageDataUrl = Schema.is(IconImageDataUrl);
-
-/**
- * Why the picker is inert, in the order the user can do something about it.
- * Null means it can be changed.
- */
-export function resolveEnvironmentIconPickerLock(input: {
-  readonly serverConfig: ServerConfig | null;
-  readonly operateAccess: "granted" | "denied" | "pending";
-}): string | null {
-  return (
-    resolveEnvironmentIconLock(input.serverConfig) ??
-    (input.operateAccess !== "granted"
-      ? "Your session on this environment cannot change its settings."
-      : null)
-  );
-}
 
 /**
  * Only a plain pick of one of the seven machine kinds has a string form an

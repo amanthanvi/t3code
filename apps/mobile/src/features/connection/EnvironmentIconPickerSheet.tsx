@@ -51,8 +51,22 @@ export function EnvironmentIconPickerSheet(props: {
   // kind clears the override the same way picking the detected kind does.
   const detected = props.serverConfig?.environment.platform.machine ?? "server";
   const current = resolveEnvironmentIcon(props.serverConfig);
+  // Only a plain curated pick is one of these rows. A color or a Lucide icon
+  // was set on web, and tapping its row would drop that silently.
   const selectedId =
-    current.kind === "icon" && isEnvironmentCuratedIconId(current.name) ? current.name : null;
+    current.kind === "icon" &&
+    current.color === undefined &&
+    isEnvironmentCuratedIconId(current.name)
+      ? current.name
+      : null;
+  const webOnlyIcon =
+    current.kind === "emoji"
+      ? "emoji"
+      : current.kind === "monogram"
+        ? "monogram"
+        : current.kind === "icon" && selectedId === null
+          ? "icon"
+          : null;
   const richLock = resolveEnvironmentRichIconLock(props.serverConfig);
   const choices = listMobileEnvironmentIconChoices({ serverConfig: props.serverConfig, detected });
 
@@ -229,9 +243,9 @@ export function EnvironmentIconPickerSheet(props: {
                 />
               ) : null}
             </Pressable>
-            {current.kind === "emoji" || current.kind === "monogram" ? (
+            {webOnlyIcon !== null ? (
               <Text className="px-4 pt-3 text-xs text-foreground-muted">
-                The current {current.kind} was set on web. Picking here replaces it.
+                The current {webOnlyIcon} was set on web. Picking here replaces it.
               </Text>
             ) : null}
           </ScrollView>

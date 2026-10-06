@@ -3,7 +3,11 @@ import { SymbolView } from "../../components/AppSymbol";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import { resolveEnvironmentIconLock } from "@t3tools/client-runtime/environment-icon";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
-import { type EnvironmentId, resolveEnvironmentIcon } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentId,
+  resolveEnvironmentIcon,
+} from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -19,6 +23,7 @@ import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 import { serverEnvironment } from "../../state/server";
+import { environmentSession } from "../../state/session";
 import { ConnectionFormField } from "./ConnectionFormField";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
 import { EnvironmentIconPickerSheet } from "./EnvironmentIconPickerSheet";
@@ -53,9 +58,27 @@ export function ConnectionEnvironmentRow(props: {
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(props.environment.environmentId),
   );
-  const iconLock = resolveEnvironmentIconLock(serverConfig);
+  const session = useAtomValue(
+    environmentSession.sessionStateValueAtom(props.environment.environmentId),
+  );
   const unsupported = props.environment.connectionState === "unsupported";
   const enabled = props.environment.isEnabled && !unsupported;
+  // A switched-off or dropped environment can keep its last config, so the
+  // connection itself gates the picker before the server's capabilities do.
+  const iconLock = resolveEnvironmentIconLock({
+    serverConfig:
+      props.environment.isEnabled && props.environment.connectionState === "connected"
+        ? serverConfig
+        : null,
+    // As on web, a server from before scopes grants every authenticated session.
+    operateAccess:
+      session === null
+        ? "pending"
+        : session.authenticated &&
+            (session.scopes === undefined || session.scopes.includes(AuthOrchestrationOperateScope))
+          ? "granted"
+          : "denied",
+  });
   const statusLabel = connectionStatusLabel(props.environment);
   const statusTraceId = enabled ? props.environment.connectionErrorTraceId : null;
   // Unsupported is a compatibility note, not a failure, so it stays muted.

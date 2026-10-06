@@ -9,7 +9,6 @@ import {
   filterEnvironmentLucideIconIds,
   resolveEnvironmentIconChoiceLock,
   resolveEnvironmentIconDialogWrite,
-  resolveEnvironmentIconPickerLock,
 } from "./EnvironmentIconPicker.logic";
 
 const config = (environmentIcon: boolean | undefined, environmentIconOverride?: boolean) =>
@@ -21,38 +20,6 @@ const config = (environmentIcon: boolean | undefined, environmentIconOverride?: 
       },
     },
   }) as unknown as ServerConfig;
-
-describe("resolveEnvironmentIconPickerLock", () => {
-  it("locks until the environment is connected", () => {
-    expect(
-      resolveEnvironmentIconPickerLock({ serverConfig: null, operateAccess: "granted" }),
-    ).toMatch(/Connect/);
-  });
-
-  it("locks on servers that predate the setting, before looking at permissions", () => {
-    expect(
-      resolveEnvironmentIconPickerLock({
-        serverConfig: config(undefined),
-        operateAccess: "denied",
-      }),
-    ).toMatch(/too old/);
-  });
-
-  it("locks when the session cannot operate the environment", () => {
-    expect(
-      resolveEnvironmentIconPickerLock({ serverConfig: config(true), operateAccess: "denied" }),
-    ).toMatch(/cannot change/);
-  });
-
-  it("waits for a settings grant before allowing changes", () => {
-    expect(
-      resolveEnvironmentIconPickerLock({ serverConfig: config(true), operateAccess: "pending" }),
-    ).toMatch(/cannot change/);
-    expect(
-      resolveEnvironmentIconPickerLock({ serverConfig: config(true), operateAccess: "granted" }),
-    ).toBeNull();
-  });
-});
 
 describe("resolveEnvironmentIconChoiceLock", () => {
   it("never locks a machine kind, which every server stores as a string", () => {
