@@ -78,6 +78,7 @@ describe("machineKindFromAppleProductName", () => {
   it("looks up Apple silicon model identifiers, which carry no product family", () => {
     expect(machineKindFromAppleProductName("Mac16,10")).toBe("mac-mini");
     expect(machineKindFromAppleProductName("Mac14,13")).toBe("mac-studio");
+    expect(machineKindFromAppleProductName("Mac15,14")).toBe("mac-studio");
     expect(machineKindFromAppleProductName("Mac15,3")).toBe("laptop");
     expect(machineKindFromAppleProductName("Mac16,2")).toBe("desktop");
     expect(machineKindFromAppleProductName("Mac99,1")).toBeNull();

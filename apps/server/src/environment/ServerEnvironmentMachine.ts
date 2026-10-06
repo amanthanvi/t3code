@@ -142,7 +142,8 @@ const APPLE_SILICON_MODELS: Readonly<Record<string, EnvironmentMachineKind>> = {
   "mac16,13": "laptop",
   "mac16,2": "desktop", // iMac (2024)
   "mac16,3": "desktop",
-  "mac16,9": "mac-studio", // Mac Studio (2025)
+  "mac16,9": "mac-studio", // Mac Studio (2025, M4 Max)
+  "mac15,14": "mac-studio", // Mac Studio (2025, M3 Ultra)
 };
 
 /**
@@ -166,8 +167,8 @@ export function machineKindFromWindowsComputerSystem(input: {
 }
 
 /**
- * A container has no DMI to read; PID 1's cgroup or a runtime marker file says
- * so. Only a named runtime counts. Under cgroup v2 a container with a private
+ * A container usually sees its host's DMI, so PID 1's cgroup or a runtime
+ * marker file is what says it is one. Only a named runtime counts. Under cgroup v2 a container with a private
  * namespace reads a bare `0::/`, but so does any host whose init leaves PID 1
  * in the root cgroup, which covers WSL 2 and every non-systemd distribution,
  * so that value says nothing on its own.
