@@ -22,7 +22,7 @@ const config = (environmentIcon: boolean | undefined, environmentIconOverride?: 
   }) as unknown as ServerConfig;
 
 describe("resolveEnvironmentIconChoiceLock", () => {
-  it("never locks a machine kind, which every server stores as a string", () => {
+  it("never locks a legacy machine kind, which every server stores as a string", () => {
     expect(
       resolveEnvironmentIconChoiceLock({ serverConfig: config(true), id: "laptop" }),
     ).toBeNull();

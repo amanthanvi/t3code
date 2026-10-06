@@ -78,9 +78,10 @@ export const isEnvironmentMachineKind = Schema.is(EnvironmentMachineKind);
  * Named glyphs every client draws: the machine kinds a server can detect,
  * plus roles a machine is given but never detected as. Both renderers hold an
  * exhaustive map over this list, so a new id fails typecheck until each
- * surface can draw it. Only the machine kinds have a bare-string form on the
- * wire; a role always travels as the object, which is why picking one needs
- * the `environmentIconOverride` capability.
+ * surface can draw it. Only the legacy machine kinds have a bare-string form
+ * on the wire; a role, or a kind detected later such as `container`, always
+ * travels as the object, which is why picking one needs the
+ * `environmentIconOverride` capability.
  */
 export const ENVIRONMENT_CURATED_ICON_IDS = [
   ...ENVIRONMENT_MACHINE_KINDS,
