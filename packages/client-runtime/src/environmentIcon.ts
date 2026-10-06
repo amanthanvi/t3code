@@ -25,7 +25,11 @@ export function resolveEnvironmentIconLock(input: {
   return null;
 }
 
-/** Why anything beyond a plain machine kind cannot be written to this server; null when it can. */
+/**
+ * Why anything beyond a plain legacy machine kind (a role, `container`, a
+ * color, an emoji, a monogram, or an image) cannot be written to this server;
+ * null when it can.
+ */
 export function resolveEnvironmentRichIconLock(serverConfig: ServerConfig | null): string | null {
   return serverConfig?.environment.capabilities.environmentIconOverride === true
     ? null

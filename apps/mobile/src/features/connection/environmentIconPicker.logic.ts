@@ -17,7 +17,10 @@ export interface MobileEnvironmentIconChoice {
   readonly enabled: boolean;
 }
 
-/** The curated list as rows, with the detected kind marked and roles gated. */
+/**
+ * The curated list as rows, with the detected kind marked. Anything without a
+ * legacy string form, a role or `container`, is gated on the object form.
+ */
 export function listMobileEnvironmentIconChoices(input: {
   readonly serverConfig: ServerConfig | null;
   readonly detected: EnvironmentMachineKind;
