@@ -7,6 +7,7 @@ import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
   resolveEnvironmentIcon,
+  type ServerConfig,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
@@ -54,31 +55,11 @@ export function ConnectionEnvironmentRow(props: {
 }) {
   const [label, setLabel] = useState(props.environment.environmentLabel);
   const [url, setUrl] = useState(props.environment.displayUrl);
-  const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(props.environment.environmentId),
   );
-  const session = useAtomValue(
-    environmentSession.sessionStateValueAtom(props.environment.environmentId),
-  );
   const unsupported = props.environment.connectionState === "unsupported";
   const enabled = props.environment.isEnabled && !unsupported;
-  // A switched-off or dropped environment can keep its last config, so the
-  // connection itself gates the picker before the server's capabilities do.
-  const iconLock = resolveEnvironmentIconLock({
-    serverConfig:
-      props.environment.isEnabled && props.environment.connectionState === "connected"
-        ? serverConfig
-        : null,
-    // As on web, a server from before scopes grants every authenticated session.
-    operateAccess:
-      session === null
-        ? "pending"
-        : session.authenticated &&
-            (session.scopes === undefined || session.scopes.includes(AuthOrchestrationOperateScope))
-          ? "granted"
-          : "denied",
-  });
   const statusLabel = connectionStatusLabel(props.environment);
   const statusTraceId = enabled ? props.environment.connectionErrorTraceId : null;
   // Unsupported is a compatibility note, not a failure, so it stays muted.
@@ -208,47 +189,7 @@ export function ConnectionEnvironmentRow(props: {
             </>
           )}
 
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Change environment icon"
-            accessibilityState={{ disabled: iconLock !== null }}
-            disabled={iconLock !== null}
-            onPress={() => setIconPickerOpen(true)}
-            className={cn(
-              "flex-row items-center gap-3 rounded-[14px] border border-input-border bg-input px-4 py-3 active:opacity-70",
-              iconLock !== null && "opacity-60",
-            )}
-          >
-            <EnvironmentMachineSymbol
-              icon={resolveEnvironmentIcon(serverConfig)}
-              size={18}
-              tintColorClassName="accent-icon"
-            />
-            <View className="min-w-0 flex-1">
-              <Text className="text-2xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
-                Icon
-              </Text>
-              <Text className="text-sm text-foreground" numberOfLines={2}>
-                {iconLock ?? "Every device that connects sees this icon."}
-              </Text>
-            </View>
-            {iconLock === null ? (
-              <SymbolView
-                name="chevron.right"
-                size={12}
-                tintColorClassName="accent-chevron"
-                type="monochrome"
-              />
-            ) : null}
-          </Pressable>
-          {iconPickerOpen ? (
-            <EnvironmentIconPickerSheet
-              environmentId={props.environment.environmentId}
-              environmentLabel={props.environment.environmentLabel}
-              serverConfig={serverConfig}
-              onClose={() => setIconPickerOpen(false)}
-            />
-          ) : null}
+          <EnvironmentIconControl environment={props.environment} serverConfig={serverConfig} />
 
           {Platform.OS === "android" ? (
             <View className="flex-row items-center justify-end gap-2">
@@ -326,5 +267,80 @@ export function ConnectionEnvironmentRow(props: {
         </Animated.View>
       ) : null}
     </Animated.View>
+  );
+}
+
+/**
+ * The Icon field and its picker. It lives inside the expanded row so only an
+ * open row subscribes to the session it checks.
+ */
+function EnvironmentIconControl(props: {
+  readonly environment: ConnectedEnvironmentSummary;
+  readonly serverConfig: ServerConfig | null;
+}) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const session = useAtomValue(
+    environmentSession.sessionStateValueAtom(props.environment.environmentId),
+  );
+  // A switched-off or dropped environment can keep its last config, so the
+  // connection itself gates the picker before the server's capabilities do.
+  const lock = resolveEnvironmentIconLock({
+    serverConfig:
+      props.environment.isEnabled && props.environment.connectionState === "connected"
+        ? props.serverConfig
+        : null,
+    // As on web, a server from before scopes grants every authenticated session.
+    operateAccess:
+      session === null
+        ? "pending"
+        : session.authenticated &&
+            (session.scopes === undefined || session.scopes.includes(AuthOrchestrationOperateScope))
+          ? "granted"
+          : "denied",
+  });
+  return (
+    <>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Change environment icon"
+        accessibilityState={{ disabled: lock !== null }}
+        disabled={lock !== null}
+        onPress={() => setPickerOpen(true)}
+        className={cn(
+          "flex-row items-center gap-3 rounded-[14px] border border-input-border bg-input px-4 py-3 active:opacity-70",
+          lock !== null && "opacity-60",
+        )}
+      >
+        <EnvironmentMachineSymbol
+          icon={resolveEnvironmentIcon(props.serverConfig)}
+          size={18}
+          tintColorClassName="accent-icon"
+        />
+        <View className="min-w-0 flex-1">
+          <Text className="text-2xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
+            Icon
+          </Text>
+          <Text className="text-sm text-foreground" numberOfLines={2}>
+            {lock ?? "Every device that connects sees this icon."}
+          </Text>
+        </View>
+        {lock === null ? (
+          <SymbolView
+            name="chevron.right"
+            size={12}
+            tintColorClassName="accent-chevron"
+            type="monochrome"
+          />
+        ) : null}
+      </Pressable>
+      {pickerOpen ? (
+        <EnvironmentIconPickerSheet
+          environmentId={props.environment.environmentId}
+          environmentLabel={props.environment.environmentLabel}
+          serverConfig={props.serverConfig}
+          onClose={() => setPickerOpen(false)}
+        />
+      ) : null}
+    </>
   );
 }

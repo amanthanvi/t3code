@@ -29,16 +29,23 @@ const EnvironmentIconPickerDialog = lazy(() =>
 export function EnvironmentIconMenuItem({
   environmentId,
   serverConfig,
+  connected,
   onOpen,
 }: {
   readonly environmentId: EnvironmentId;
   readonly serverConfig: ServerConfig | null;
+  readonly connected: boolean;
   readonly onOpen: () => void;
 }) {
   const operateAccess = useEnvironmentScope(environmentId, AuthSettingsWriteScope)
     ? "granted"
     : "denied";
-  const lock = resolveEnvironmentIconLock({ serverConfig, operateAccess });
+  // A switched-off or dropped environment keeps its cached config, so the
+  // connection gates the picker before the server's capabilities do.
+  const lock = resolveEnvironmentIconLock({
+    serverConfig: connected ? serverConfig : null,
+    operateAccess,
+  });
   return (
     <>
       <MenuItem disabled={lock !== null} onClick={onOpen}>
