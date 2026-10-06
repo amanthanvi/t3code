@@ -124,6 +124,11 @@ export function CloudEnvironmentConnectRows({
       .filter((environment) => environment.relayManaged)
       .map((environment) => [environment.environmentId, environment]),
   );
+  // Every saved machine's config, for the icon: one saved over another route
+  // still carries the user's pick.
+  const savedConfigById = new Map(
+    savedEnvironments.map((environment) => [environment.environmentId, environment.serverConfig]),
+  );
   // Saved over another route only: T3 Connect would be an added fallback.
   const savedWithoutRelay = new Set(
     savedEnvironments
@@ -341,7 +346,7 @@ export function CloudEnvironmentConnectRows({
         ? relayOfflineReasonMessage(relayStatus)
         : null;
     const machineKind = resolveEnvironmentIcon(
-      savedEnvironment?.serverConfig ??
+      savedConfigById.get(environment.environmentId) ??
         (descriptor === undefined ? null : { environment: descriptor }),
     );
     const dotClassName = savedConnection

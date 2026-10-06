@@ -253,6 +253,11 @@ function CloudEnvironmentRow(props: {
   readonly onConnect: () => void;
   readonly onToggleError: () => void;
 }) {
+  // A machine already saved over another route has its own config, with the
+  // user's icon pick.
+  const serverConfig = useAtomValue(
+    serverEnvironment.configValueAtom(props.environment.environment.environmentId),
+  );
   const presentation = availableCloudEnvironmentPresentation({
     isStatusPending: props.environment.availability === "checking",
     status: props.environment.status,
@@ -269,9 +274,10 @@ function CloudEnvironmentRow(props: {
       errorExpanded={props.errorExpanded}
       label={props.environment.environment.label}
       machine={resolveEnvironmentIcon(
-        props.environment.status?.descriptor === undefined
-          ? null
-          : { environment: props.environment.status.descriptor },
+        serverConfig ??
+          (props.environment.status?.descriptor === undefined
+            ? null
+            : { environment: props.environment.status.descriptor }),
       )}
       onValueChange={(enabled) => {
         if (enabled) {
