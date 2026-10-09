@@ -16,12 +16,8 @@ import * as ProcessRunner from "../processRunner.ts";
 
 const DMI_ROOT = "/sys/class/dmi/id";
 const KERNEL_RELEASE_PATH = "/proc/sys/kernel/osrelease";
-// Docker and Podman each leave a marker file at the root of a container, and a
-// runtime sharing the host's cgroup namespace names itself in PID 1's cgroup
-// path. Those two are the whole signal. A private cgroup namespace, which is
-// the default for containerd, Kubernetes, LXC, and nspawn, reports a bare
-// `0::/`, and so does a host whose init leaves PID 1 in the root cgroup, so a
-// container with neither a marker file nor a named cgroup reads as a host.
+// Docker and Podman each leave a marker file at the root of a container. A
+// container with neither that file nor a named cgroup reads as a host.
 const CONTAINER_MARKER_PATHS = ["/.dockerenv", "/run/.containerenv"];
 const INIT_CGROUP_PATH = "/proc/1/cgroup";
 const CGROUP_CONTAINER_MARKERS = ["docker", "containerd", "podman", "lxc", "kubepods", "libpod"];
@@ -147,31 +143,10 @@ const APPLE_SILICON_MODELS: Readonly<Record<string, EnvironmentMachineKind>> = {
 };
 
 /**
- * Windows reports the same SMBIOS enclosure table Linux exposes through DMI,
- * plus the same hypervisor strings in the manufacturer and model fields.
- */
-export function machineKindFromWindowsComputerSystem(input: {
-  readonly chassisTypes: ReadonlyArray<string>;
-  readonly manufacturer: string | null;
-  readonly model: string | null;
-}): EnvironmentMachineKind | null {
-  const vendorAndProduct = `${input.manufacturer ?? ""} ${input.model ?? ""}`.toLowerCase();
-  if (VIRTUALIZATION_MARKERS.some((marker) => vendorAndProduct.includes(marker))) {
-    return "cloud";
-  }
-  for (const chassisType of input.chassisTypes) {
-    const kind = DMI_CHASSIS_KINDS[chassisType];
-    if (kind !== undefined) return kind;
-  }
-  return null;
-}
-
-/**
- * A container usually sees its host's DMI, so PID 1's cgroup or a runtime
- * marker file is what says it is one. Only a named runtime counts. Under cgroup v2 a container with a private
- * namespace reads a bare `0::/`, but so does any host whose init leaves PID 1
- * in the root cgroup, which covers WSL 2 and every non-systemd distribution,
- * so that value says nothing on its own.
+ * A container usually sees its host's DMI, so a runtime naming itself in PID
+ * 1's cgroup is one of the two signals that it is one. A bare `0::/` says
+ * nothing: a private cgroup namespace reads that way, and so does any host
+ * whose init leaves PID 1 in the root cgroup, including WSL 2.
  */
 export function isContainerCgroup(cgroup: string): boolean {
   const lowered = cgroup.trim().toLowerCase();
@@ -253,14 +228,17 @@ const fileExists = Effect.fn("fileExists")(function* (path: string) {
 
 const detectLinuxMachineKind = Effect.fn("detectLinuxMachineKind")(function* () {
   const [kernelRelease, chassisType, sysVendor, productName, initCgroup, ...markers] =
-    yield* Effect.all([
-      readOptionalFile(KERNEL_RELEASE_PATH),
-      readOptionalFile(`${DMI_ROOT}/chassis_type`),
-      readOptionalFile(`${DMI_ROOT}/sys_vendor`),
-      readOptionalFile(`${DMI_ROOT}/product_name`),
-      readOptionalFile(INIT_CGROUP_PATH),
-      ...CONTAINER_MARKER_PATHS.map(fileExists),
-    ]);
+    yield* Effect.all(
+      [
+        readOptionalFile(KERNEL_RELEASE_PATH),
+        readOptionalFile(`${DMI_ROOT}/chassis_type`),
+        readOptionalFile(`${DMI_ROOT}/sys_vendor`),
+        readOptionalFile(`${DMI_ROOT}/product_name`),
+        readOptionalFile(INIT_CGROUP_PATH),
+        ...CONTAINER_MARKER_PATHS.map(fileExists),
+      ],
+      { concurrency: "unbounded" },
+    );
   // A container shares its host's kernel and inherits its DMI when it can
   // read it at all, so the runtime marker is checked first. A Docker Desktop
   // container runs on a WSL 2 kernel and would otherwise read as WSL.
@@ -291,9 +269,16 @@ const detectWindowsMachineKind = Effect.fn("detectWindowsMachineKind")(function*
     // probe budgets the same, and a miss draws a server.
     timeout: "1500 millis",
   });
-  if (output === null) return null;
-  const decoded = decodeWindowsProbe(output);
-  return decoded === null ? null : machineKindFromWindowsComputerSystem(decoded);
+  const probe = output === null ? null : Option.getOrNull(decodeWindowsProbe(output));
+  if (probe === null) return null;
+  // Windows reports the same SMBIOS fields Linux reads through DMI. Some
+  // firmware lists an unmapped enclosure first, so take the first mapped one.
+  return machineKindFromDmi({
+    chassisType:
+      probe.chassisTypes.map(String).find((type) => Object.hasOwn(DMI_CHASSIS_KINDS, type)) ?? null,
+    sysVendor: probe.manufacturer,
+    productName: probe.model,
+  });
 });
 
 // A missing enclosure serializes as `[null]`; keep the vendor fields usable.
@@ -302,26 +287,7 @@ const WindowsProbeOutput = Schema.Struct({
   manufacturer: Schema.NullOr(Schema.String),
   model: Schema.NullOr(Schema.String),
 });
-const decodeWindowsProbeJson = Schema.decodeUnknownOption(
-  Schema.fromJsonString(WindowsProbeOutput),
-);
-
-/** The probe's JSON as strings the chassis table can index; null when the output is not the probe's. */
-function decodeWindowsProbe(output: string): {
-  readonly chassisTypes: ReadonlyArray<string>;
-  readonly manufacturer: string | null;
-  readonly model: string | null;
-} | null {
-  const decoded = decodeWindowsProbeJson(output);
-  if (Option.isNone(decoded)) return null;
-  return {
-    chassisTypes: decoded.value.chassisTypes.flatMap((value) =>
-      value === null ? [] : [String(value)],
-    ),
-    manufacturer: normalize(decoded.value.manufacturer),
-    model: normalize(decoded.value.model),
-  };
-}
+const decodeWindowsProbe = Schema.decodeUnknownOption(Schema.fromJsonString(WindowsProbeOutput));
 
 export const detectServerEnvironmentMachineKind = Effect.fn("detectServerEnvironmentMachineKind")(
   function* () {

@@ -13,7 +13,6 @@ import {
   isContainerCgroup,
   machineKindFromAppleProductName,
   machineKindFromDmi,
-  machineKindFromWindowsComputerSystem,
 } from "./ServerEnvironmentMachine.ts";
 
 const runMock = vi.fn<ProcessRunner.ProcessRunner["Service"]["run"]>();
@@ -135,36 +134,6 @@ describe("machineKindFromDmi", () => {
   });
 });
 
-describe("machineKindFromWindowsComputerSystem", () => {
-  it("prefers virtualization markers, then the first mapped enclosure type", () => {
-    expect(
-      machineKindFromWindowsComputerSystem({
-        chassisTypes: ["3"],
-        manufacturer: "Microsoft Corporation",
-        model: "Virtual Machine",
-      }),
-    ).toBe("cloud");
-    expect(
-      machineKindFromWindowsComputerSystem({
-        chassisTypes: ["10"],
-        manufacturer: "LENOVO",
-        model: "ThinkPad X1",
-      }),
-    ).toBe("laptop");
-    // Some firmware lists an unmapped shape first; the mapped one still counts.
-    expect(
-      machineKindFromWindowsComputerSystem({
-        chassisTypes: ["1", "23"],
-        manufacturer: "Dell",
-        model: "PowerEdge",
-      }),
-    ).toBe("server");
-    expect(
-      machineKindFromWindowsComputerSystem({ chassisTypes: [], manufacturer: null, model: null }),
-    ).toBeNull();
-  });
-});
-
 describe("isContainerCgroup", () => {
   it("recognizes the runtimes that name themselves in PID 1's cgroup", () => {
     expect(isContainerCgroup("0::/system.slice/docker-abc123.scope\n")).toBe(true);
@@ -175,10 +144,6 @@ describe("isContainerCgroup", () => {
   });
 
   it("does not read a bare root cgroup as a container", () => {
-    // WSL 2 and any non-systemd init leave PID 1 in the root cgroup and read
-    // the same as a container with a private cgroup namespace. Reporting every
-    // Alpine and Void host as a container costs more than the runtimes this
-    // would catch, all of which either drop a marker file or name themselves.
     expect(isContainerCgroup("0::/\n")).toBe(false);
   });
 });
@@ -387,6 +352,14 @@ describe("detectServerEnvironmentMachineKind", () => {
       // The script must wrap the enclosure list, or a single type unwraps to a scalar.
       expect(call?.args[3]).toContain("@($e.ChassisTypes)");
       expect(call?.args[3]).toContain("ConvertTo-Json -Compress");
+
+      // Some firmware lists an unmapped shape first; the mapped one still counts.
+      runMock.mockReturnValueOnce(
+        processOutput('{"chassisTypes":[1,23],"manufacturer":"Dell","model":"PowerEdge"}\n'),
+      );
+      expect(
+        yield* detectServerEnvironmentMachineKind().pipe(Effect.provide(withPlatform("win32"))),
+      ).toBe("server");
     }),
   );
 

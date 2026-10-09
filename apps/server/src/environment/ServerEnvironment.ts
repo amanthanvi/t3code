@@ -190,9 +190,15 @@ export const make = Effect.gen(function* () {
   const hostArchitecture = yield* HostProcessArchitecture;
   const environmentId = yield* identity.getEnvironmentId;
   const cwdBaseName = path.basename(serverConfig.cwd).trim();
-  const label = yield* resolveServerEnvironmentLabel({ cwdBaseName });
-  const machine = yield* detectServerEnvironmentMachineKind();
-  const launcher = yield* resolveServiceLauncherMode();
+  // Independent probes; on Windows the machine probe starts PowerShell.
+  const [label, machine, launcher] = yield* Effect.all(
+    [
+      resolveServerEnvironmentLabel({ cwdBaseName }),
+      detectServerEnvironmentMachineKind(),
+      resolveServiceLauncherMode(),
+    ],
+    { concurrency: "unbounded" },
+  );
   const serverSelfUpdate = resolveServerSelfUpdateCapability({
     desktopManaged: serverConfig.mode === "desktop",
     launcherManaged: launcher.managed,
