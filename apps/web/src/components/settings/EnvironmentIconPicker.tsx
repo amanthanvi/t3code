@@ -1,3 +1,4 @@
+import { resolveEnvironmentIconLock } from "@t3tools/client-runtime/environment-icon";
 import {
   AuthSettingsWriteScope,
   resolveEnvironmentIcon,
@@ -10,7 +11,6 @@ import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { useEnvironmentScope } from "../../state/session";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { MenuItem } from "../ui/menu";
-import { resolveEnvironmentIconPickerLock } from "./EnvironmentIconPicker.logic";
 
 const EnvironmentIconPickerDialog = lazy(() =>
   import("./EnvironmentIconPickerDialog").then((module) => ({
@@ -29,16 +29,16 @@ const EnvironmentIconPickerDialog = lazy(() =>
 export function EnvironmentIconMenuItem({
   environmentId,
   serverConfig,
+  connected,
   onOpen,
 }: {
   readonly environmentId: EnvironmentId;
   readonly serverConfig: ServerConfig | null;
+  readonly connected: boolean;
   readonly onOpen: () => void;
 }) {
-  const operateAccess = useEnvironmentScope(environmentId, AuthSettingsWriteScope)
-    ? "granted"
-    : "denied";
-  const lock = resolveEnvironmentIconPickerLock({ serverConfig, operateAccess });
+  const canWriteSettings = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
+  const lock = resolveEnvironmentIconLock({ serverConfig, connected, canWriteSettings });
   return (
     <>
       <MenuItem disabled={lock !== null} onClick={onOpen}>

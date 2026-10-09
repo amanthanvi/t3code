@@ -1773,6 +1773,7 @@ function SavedBackendListRow({
           <EnvironmentIconMenuItem
             environmentId={environmentId}
             serverConfig={environment.serverConfig}
+            connected={isConnected}
             onOpen={() => setIconPickerOpen(true)}
           />
           <MenuItem onClick={() => setRoutesOpen((open) => !open)}>
@@ -3656,6 +3657,7 @@ export function ConnectionsSettings() {
                     <EnvironmentIconMenuItem
                       environmentId={primaryEnvironmentId}
                       serverConfig={primaryServerConfig}
+                      connected={primaryEnvironment?.connection.phase === "connected"}
                       onOpen={() => setPrimaryIconPickerOpen(true)}
                     />
                   </MenuPopup>

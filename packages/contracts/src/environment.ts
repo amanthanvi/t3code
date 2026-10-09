@@ -39,8 +39,9 @@ export type ExecutionEnvironmentPlatformArch = typeof ExecutionEnvironmentPlatfo
  * The kinds a released server accepts as a bare string. Only these have that
  * wire form. A server without `environmentIconOverride` takes them and
  * nothing else, and an older client decodes them from a snapshot. A kind
- * added later travels as the object, because an older peer decodes a string
- * it does not know as null and loses the icon. The list is frozen.
+ * added later, such as `container`, travels as the object, because an older
+ * peer decodes a string it does not know as null and loses the icon. The
+ * list is frozen.
  *
  * `linux` joined the set a few days after the `environmentIcon` capability
  * shipped, so some nightly builds advertise the capability and reject it. No
@@ -65,7 +66,10 @@ export const isLegacyEnvironmentMachineKind = Schema.is(
  * the `environmentIcon` server setting lets a user pick one instead. This list
  * grows as detection improves, which is why the wire form above does not.
  */
-export const ENVIRONMENT_MACHINE_KINDS = [...LEGACY_ENVIRONMENT_MACHINE_KINDS] as const;
+export const ENVIRONMENT_MACHINE_KINDS = [
+  ...LEGACY_ENVIRONMENT_MACHINE_KINDS,
+  "container",
+] as const;
 export const EnvironmentMachineKind = Schema.Literals(ENVIRONMENT_MACHINE_KINDS);
 export type EnvironmentMachineKind = typeof EnvironmentMachineKind.Type;
 export const isEnvironmentMachineKind = Schema.is(EnvironmentMachineKind);
@@ -74,15 +78,15 @@ export const isEnvironmentMachineKind = Schema.is(EnvironmentMachineKind);
  * Named glyphs every client draws: the machine kinds a server can detect,
  * plus roles a machine is given but never detected as. Both renderers hold an
  * exhaustive map over this list, so a new id fails typecheck until each
- * surface can draw it. Only the machine kinds have a bare-string form on the
- * wire; a role always travels as the object, which is why picking one needs
- * the `environmentIconOverride` capability.
+ * surface can draw it. Only the legacy machine kinds have a bare-string form
+ * on the wire; a role, or a kind detected later such as `container`, always
+ * travels as the object, which is why picking one needs the
+ * `environmentIconOverride` capability.
  */
 export const ENVIRONMENT_CURATED_ICON_IDS = [
   ...ENVIRONMENT_MACHINE_KINDS,
   "terminal",
   "database",
-  "container",
   "globe",
   "home",
   "gpu",
@@ -345,8 +349,8 @@ export const ExecutionEnvironmentPlatform = Schema.Struct({
   os: ExecutionEnvironmentPlatformOs,
   arch: ExecutionEnvironmentPlatformArch,
   /** Hardware shape detected at startup. Absent when the host gives no usable
-      signal (containers, Windows, unknown DMI), on servers that predate it, or
-      when a newer server names a kind this build cannot draw. */
+      signal (a board without DMI, a probe that timed out), on servers that
+      predate it, or when a newer server names a kind this build cannot draw. */
   machine: ForwardCompatibleOptional(EnvironmentMachineKind),
 });
 

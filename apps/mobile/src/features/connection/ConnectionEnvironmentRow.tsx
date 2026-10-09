@@ -1,8 +1,14 @@
 import { ConnectionTraceId } from "./ConnectionTraceId";
 import { SymbolView } from "../../components/AppSymbol";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
+import { resolveEnvironmentIconLock } from "@t3tools/client-runtime/environment-icon";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
-import { type EnvironmentId, resolveEnvironmentIcon } from "@t3tools/contracts";
+import {
+  AuthSettingsWriteScope,
+  type EnvironmentId,
+  resolveEnvironmentIcon,
+  type ServerConfig,
+} from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -18,8 +24,10 @@ import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 import { serverEnvironment } from "../../state/server";
+import { useEnvironmentScope } from "../../state/session";
 import { ConnectionFormField } from "./ConnectionFormField";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
+import { EnvironmentIconPickerSheet } from "./EnvironmentIconPickerSheet";
 
 function connectionStatusLabel(environment: ConnectedEnvironmentSummary): string | null {
   if (!environment.isEnabled && environment.connectionState !== "unsupported") {
@@ -181,6 +189,8 @@ export function ConnectionEnvironmentRow(props: {
             </>
           )}
 
+          <EnvironmentIconControl environment={props.environment} serverConfig={serverConfig} />
+
           {Platform.OS === "android" ? (
             <View className="flex-row items-center justify-end gap-2">
               {props.environment.isRelayManaged ? null : (
@@ -257,5 +267,70 @@ export function ConnectionEnvironmentRow(props: {
         </Animated.View>
       ) : null}
     </Animated.View>
+  );
+}
+
+/**
+ * The Icon field and its picker. It lives inside the expanded row so only an
+ * open row subscribes to the session it checks.
+ */
+function EnvironmentIconControl(props: {
+  readonly environment: ConnectedEnvironmentSummary;
+  readonly serverConfig: ServerConfig | null;
+}) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const canWriteSettings = useEnvironmentScope(
+    props.environment.environmentId,
+    AuthSettingsWriteScope,
+  );
+  const lock = resolveEnvironmentIconLock({
+    serverConfig: props.serverConfig,
+    connected: props.environment.isEnabled && props.environment.connectionState === "connected",
+    canWriteSettings,
+  });
+  return (
+    <>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Change environment icon"
+        accessibilityState={{ disabled: lock !== null }}
+        disabled={lock !== null}
+        onPress={() => setPickerOpen(true)}
+        className={cn(
+          "flex-row items-center gap-3 rounded-[14px] border border-input-border bg-input px-4 py-3 active:opacity-70",
+          lock !== null && "opacity-60",
+        )}
+      >
+        <EnvironmentMachineSymbol
+          icon={resolveEnvironmentIcon(props.serverConfig)}
+          size={18}
+          tintColorClassName="accent-icon"
+        />
+        <View className="min-w-0 flex-1">
+          <Text className="text-2xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
+            Icon
+          </Text>
+          <Text className="text-sm text-foreground" numberOfLines={2}>
+            {lock ?? "Every device that connects sees this icon."}
+          </Text>
+        </View>
+        {lock === null ? (
+          <SymbolView
+            name="chevron.right"
+            size={12}
+            tintColorClassName="accent-chevron"
+            type="monochrome"
+          />
+        ) : null}
+      </Pressable>
+      {pickerOpen ? (
+        <EnvironmentIconPickerSheet
+          environmentId={props.environment.environmentId}
+          environmentLabel={props.environment.environmentLabel}
+          serverConfig={props.serverConfig}
+          onClose={() => setPickerOpen(false)}
+        />
+      ) : null}
+    </>
   );
 }

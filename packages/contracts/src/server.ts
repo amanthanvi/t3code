@@ -739,8 +739,8 @@ export function environmentIconForMachineKind(kind: EnvironmentMachineKind): Env
 /**
  * The icon a pick from the curated grid stores. A machine kind goes through
  * the shared reference above, so the pick draws with the object detection
- * would have produced, and it encodes to the bare string an older server
- * accepts. A role has no detected form and stays a named icon. Every picker
+ * would have produced; a legacy kind also encodes to the bare string an older
+ * server accepts. A role has no detected form and stays a named icon. Every picker
  * and preview calls this, so neither half of that rule can drift in one copy.
  */
 export function environmentIconForCuratedId(id: EnvironmentCuratedIconId): EnvironmentIcon {

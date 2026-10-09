@@ -9,7 +9,6 @@ import {
   filterEnvironmentLucideIconIds,
   resolveEnvironmentIconChoiceLock,
   resolveEnvironmentIconDialogWrite,
-  resolveEnvironmentIconPickerLock,
 } from "./EnvironmentIconPicker.logic";
 
 const config = (environmentIcon: boolean | undefined, environmentIconOverride?: boolean) =>
@@ -22,44 +21,21 @@ const config = (environmentIcon: boolean | undefined, environmentIconOverride?: 
     },
   }) as unknown as ServerConfig;
 
-describe("resolveEnvironmentIconPickerLock", () => {
-  it("locks until the environment is connected", () => {
-    expect(
-      resolveEnvironmentIconPickerLock({ serverConfig: null, operateAccess: "granted" }),
-    ).toMatch(/Connect/);
-  });
-
-  it("locks on servers that predate the setting, before looking at permissions", () => {
-    expect(
-      resolveEnvironmentIconPickerLock({
-        serverConfig: config(undefined),
-        operateAccess: "denied",
-      }),
-    ).toMatch(/too old/);
-  });
-
-  it("locks when the session cannot operate the environment", () => {
-    expect(
-      resolveEnvironmentIconPickerLock({ serverConfig: config(true), operateAccess: "denied" }),
-    ).toMatch(/cannot change/);
-  });
-
-  it("waits for a settings grant before allowing changes", () => {
-    expect(
-      resolveEnvironmentIconPickerLock({ serverConfig: config(true), operateAccess: "pending" }),
-    ).toMatch(/cannot change/);
-    expect(
-      resolveEnvironmentIconPickerLock({ serverConfig: config(true), operateAccess: "granted" }),
-    ).toBeNull();
-  });
-});
-
 describe("resolveEnvironmentIconChoiceLock", () => {
-  it("never locks a machine kind, which every server stores as a string", () => {
+  it("never locks a legacy machine kind, which every server stores as a string", () => {
     expect(
       resolveEnvironmentIconChoiceLock({ serverConfig: config(true), id: "laptop" }),
     ).toBeNull();
     expect(resolveEnvironmentIconChoiceLock({ serverConfig: null, id: "laptop" })).toBeNull();
+  });
+
+  it("locks a detected-only kind like a role, since it has no string form", () => {
+    expect(
+      resolveEnvironmentIconChoiceLock({ serverConfig: config(true), id: "container" }),
+    ).toMatch(/Update/);
+    expect(
+      resolveEnvironmentIconChoiceLock({ serverConfig: config(true, true), id: "container" }),
+    ).toBeNull();
   });
 
   it("locks a role until the server stores the object form", () => {
@@ -77,6 +53,7 @@ describe("resolveEnvironmentIconDialogWrite", () => {
     iconId: "laptop",
     lucideId: null,
     color: null,
+    imageDataUrl: null,
     emoji: "🚀",
     monogram: "K8",
     detected: "server",
@@ -140,6 +117,38 @@ describe("resolveEnvironmentIconDialogWrite", () => {
     ).toBe("invalid");
     expect(
       resolveEnvironmentIconDialogWrite({ ...base, mode: "monogram", monogram: "" }).kind,
+    ).toBe("invalid");
+  });
+});
+
+describe("resolveEnvironmentIconDialogWrite image mode", () => {
+  const base = {
+    iconId: "laptop",
+    lucideId: null,
+    color: null,
+    imageDataUrl: null,
+    emoji: "🚀",
+    monogram: "K8",
+    detected: "server",
+  } as const;
+
+  it("writes only a data URL the contract accepts", () => {
+    // A complete one by one transparent PNG.
+    const png =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNgAAIAAAUAAen63NgAAAAASUVORK5CYII=";
+    expect(
+      resolveEnvironmentIconDialogWrite({ ...base, mode: "image", imageDataUrl: png }),
+    ).toEqual({ kind: "write", icon: { kind: "image", dataUrl: png } });
+    expect(
+      resolveEnvironmentIconDialogWrite({ ...base, mode: "image", imageDataUrl: null }).kind,
+    ).toBe("invalid");
+    // An SVG can script, so the encoder never produces one and the write refuses it.
+    expect(
+      resolveEnvironmentIconDialogWrite({
+        ...base,
+        mode: "image",
+        imageDataUrl: "data:image/svg+xml;base64,PHN2Zz4=",
+      }).kind,
     ).toBe("invalid");
   });
 });

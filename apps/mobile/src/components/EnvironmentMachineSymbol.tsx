@@ -5,6 +5,7 @@ import {
   type EnvironmentCuratedIconId,
   type EnvironmentIcon,
 } from "@t3tools/contracts";
+import { Image } from "expo-image";
 
 import { projectIconColorClassNames } from "../lib/projectIcon";
 import { SymbolView, type AppSymbolName } from "./AppSymbol";
@@ -65,6 +66,20 @@ export function EnvironmentMachineSymbol(props: {
   if (icon.kind === "emoji") {
     return <ProjectIconGlyphView glyph={icon} size={size} />;
   }
+  if (icon.kind === "image") {
+    // Inline bytes need no disk cache. They carry no name, so the label names
+    // the kind.
+    return (
+      <Image
+        accessible
+        accessibilityLabel="Custom icon"
+        source={{ uri: icon.dataUrl }}
+        cachePolicy="memory"
+        contentFit="cover"
+        style={{ width: size, height: size, borderRadius: size * 0.25 }}
+      />
+    );
+  }
   if (icon.kind === "monogram") {
     return (
       <ProjectIconGlyphView
@@ -74,16 +89,12 @@ export function EnvironmentMachineSymbol(props: {
     );
   }
   const tintColorClassName =
-    icon.kind === "icon" && icon.color !== undefined
-      ? projectIconColorClassNames(icon.color).tint
-      : props.tintColorClassName;
+    icon.color === undefined
+      ? props.tintColorClassName
+      : projectIconColorClassNames(icon.color).tint;
   // Curated first, then the shared Lucide list; the generated module holds
   // path data for exactly those ids, so anything else is the generic server.
-  if (
-    icon.kind === "icon" &&
-    !isEnvironmentCuratedIconId(icon.name) &&
-    isEnvironmentLucideIconId(icon.name)
-  ) {
+  if (!isEnvironmentCuratedIconId(icon.name) && isEnvironmentLucideIconId(icon.name)) {
     return (
       <EnvironmentLucideIcon
         id={icon.name}
