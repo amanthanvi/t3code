@@ -155,7 +155,7 @@ export type EnvironmentIcon = typeof EnvironmentIcon.Type;
  * Whether an icon travels as a bare machine kind: a plain pick of a legacy
  * kind, which every stable server with `environmentIcon` stores.
  */
-function hasLegacyEnvironmentIconForm(icon: EnvironmentIcon): icon is Extract<
+export function hasLegacyEnvironmentIconForm(icon: EnvironmentIcon): icon is Extract<
   EnvironmentIcon,
   { readonly kind: "icon" }
 > & {

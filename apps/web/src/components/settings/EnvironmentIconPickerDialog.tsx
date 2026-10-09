@@ -4,7 +4,7 @@ import {
   environmentIconForCuratedId,
   environmentIconForMachineKind,
   isEnvironmentCuratedIconId,
-  isEnvironmentMachineKind,
+  hasLegacyEnvironmentIconForm,
   type EnvironmentCuratedIconId,
   type EnvironmentIcon,
   type EnvironmentMachineKind,
@@ -105,11 +105,11 @@ export function EnvironmentIconPickerDialog({
   });
   // Anything beyond a plain machine kind travels as the object form, which
   // only a server with the override capability stores.
-  const writeLocked =
-    richLock !== null && (mode !== "icon" || color !== null || !isEnvironmentMachineKind(iconId));
-  const canSave = write.kind === "write" && !writeLocked;
+  const canSave =
+    write.kind === "write" &&
+    (richLock === null || write.icon === null || hasLegacyEnvironmentIconForm(write.icon));
   const save = () => {
-    if (write.kind !== "write" || writeLocked) return;
+    if (!canSave || write.kind !== "write") return;
     onSelect(write.icon);
     onOpenChange(false);
   };

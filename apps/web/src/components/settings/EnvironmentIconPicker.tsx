@@ -68,8 +68,29 @@ export function EnvironmentIconPickerHost({
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
 }) {
+  return open ? (
+    <OpenEnvironmentIconPicker
+      environmentId={environmentId}
+      environmentLabel={environmentLabel}
+      serverConfig={serverConfig}
+      onOpenChange={onOpenChange}
+    />
+  ) : null;
+}
+
+// Split out so a closed row subscribes to nothing.
+function OpenEnvironmentIconPicker({
+  environmentId,
+  environmentLabel,
+  serverConfig,
+  onOpenChange,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly environmentLabel: string;
+  readonly serverConfig: ServerConfig | null;
+  readonly onOpenChange: (open: boolean) => void;
+}) {
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
-  if (!open) return null;
   return (
     <Suspense fallback={null}>
       <EnvironmentIconPickerDialog

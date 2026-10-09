@@ -29,7 +29,7 @@ export function resolveEnvironmentIconPickerLock(input: {
   if (input.serverConfig.environment.capabilities.environmentIcon !== true) {
     return "This environment's server is too old to keep an icon. Update it to choose one.";
   }
-  if (input.operateAccess === "denied") {
+  if (input.operateAccess !== "granted") {
     return "Your session on this environment cannot change its settings.";
   }
   return null;
