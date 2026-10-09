@@ -139,9 +139,9 @@ export function EnvironmentMachineIcon({
   const color = icon.kind === "icon" && icon.color !== undefined ? icon.color : undefined;
   const coloredClassName =
     color === undefined ? className : cn(className, projectIconColorClassName(color));
-  // Curated first, then the shared Lucide list, else the generic server. The
-  // chunk loads once per icon; until then the slot holds the server glyph at
-  // the same size so the row does not shift.
+  // Curated first, then the shared Lucide list, else the generic server. While
+  // a Lucide glyph loads, the slot holds the server glyph at the same size so
+  // the row does not shift.
   if (
     icon.kind === "icon" &&
     !isEnvironmentCuratedIconId(icon.name) &&

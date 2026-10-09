@@ -90,7 +90,7 @@ export function resolveEnvironmentIconDialogWrite(input: {
   readonly mode: EnvironmentIconDialogMode;
   readonly iconId: EnvironmentCuratedIconId;
   /** A pick from the shared Lucide list, which takes precedence over `iconId`. */
-  readonly lucideId?: EnvironmentLucideIconId | null;
+  readonly lucideId: EnvironmentLucideIconId | null;
   readonly color: IconColor | null;
   readonly emoji: string;
   readonly monogram: string;
@@ -98,22 +98,19 @@ export function resolveEnvironmentIconDialogWrite(input: {
 }): EnvironmentIconDialogWrite {
   switch (input.mode) {
     case "icon": {
-      const lucideId = input.lucideId ?? null;
-      if (lucideId !== null) {
+      if (input.lucideId === null && input.color === null) {
         return {
           kind: "write",
-          icon:
-            input.color === null
-              ? { kind: "icon", name: lucideId }
-              : { kind: "icon", name: lucideId, color: input.color },
+          icon: resolveNamedIconWrite({ next: input.iconId, detected: input.detected }),
         };
       }
+      const name = input.lucideId ?? input.iconId;
       return {
         kind: "write",
         icon:
           input.color === null
-            ? resolveNamedIconWrite({ next: input.iconId, detected: input.detected })
-            : { kind: "icon", name: input.iconId, color: input.color },
+            ? { kind: "icon", name }
+            : { kind: "icon", name, color: input.color },
       };
     }
     case "emoji":

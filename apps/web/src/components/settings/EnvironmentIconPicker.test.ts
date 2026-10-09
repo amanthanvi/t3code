@@ -75,6 +75,7 @@ describe("resolveEnvironmentIconChoiceLock", () => {
 describe("resolveEnvironmentIconDialogWrite", () => {
   const base = {
     iconId: "laptop",
+    lucideId: null,
     color: null,
     emoji: "🚀",
     monogram: "K8",

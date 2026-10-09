@@ -1,4 +1,5 @@
 import type { EnvironmentLucideIconId } from "@t3tools/contracts";
+import { memo } from "react";
 import Svg, { Circle, Ellipse, Line, Path, Polygon, Polyline, Rect } from "react-native-svg";
 import { withUniwind } from "uniwind";
 
@@ -15,9 +16,8 @@ const ThemedSvg = withUniwind(Svg);
  * ships are handled, and the generator emits only those kinds.
  */
 function renderNode(node: LucideIconNode) {
-  return node.map(([element, attributes]) => {
-    // Nodes carry no id; the element plus its geometry is unique within one icon.
-    const key = `${element}:${Object.values(attributes).join(",")}`;
+  // The node lists are static, so position is a stable key.
+  return node.map(([element, attributes], key) => {
     // A handful of icons fill a dot with currentColor; everything else strokes.
     const fill = attributes.fill === "currentColor" ? "currentColor" : "none";
     switch (element) {
@@ -71,7 +71,7 @@ function renderNode(node: LucideIconNode) {
   });
 }
 
-export function EnvironmentLucideIcon(props: {
+export const EnvironmentLucideIcon = memo(function EnvironmentLucideIcon(props: {
   readonly id: EnvironmentLucideIconId;
   readonly size: number;
   readonly colorClassName: string;
@@ -93,4 +93,4 @@ export function EnvironmentLucideIcon(props: {
       {renderNode(ENVIRONMENT_LUCIDE_ICON_NODES[props.id])}
     </ThemedSvg>
   );
-}
+});
