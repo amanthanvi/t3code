@@ -1,10 +1,12 @@
 import {
+  ENVIRONMENT_LUCIDE_ICON_IDS,
   environmentIconForCuratedId,
   isEnvironmentMachineKind,
   isMonogramLength,
   MonogramText,
   type EnvironmentCuratedIconId,
   type EnvironmentIcon,
+  type EnvironmentLucideIconId,
   type EnvironmentMachineKind,
   type IconColor,
   type ServerConfig,
@@ -87,20 +89,30 @@ function normalizeMonogram(value: string): string {
 export function resolveEnvironmentIconDialogWrite(input: {
   readonly mode: EnvironmentIconDialogMode;
   readonly iconId: EnvironmentCuratedIconId;
+  /** A pick from the shared Lucide list, which takes precedence over `iconId`. */
+  readonly lucideId: EnvironmentLucideIconId | null;
   readonly color: IconColor | null;
   readonly emoji: string;
   readonly monogram: string;
   readonly detected: EnvironmentMachineKind;
 }): EnvironmentIconDialogWrite {
   switch (input.mode) {
-    case "icon":
+    case "icon": {
+      if (input.lucideId === null && input.color === null) {
+        return {
+          kind: "write",
+          icon: resolveNamedIconWrite({ next: input.iconId, detected: input.detected }),
+        };
+      }
+      const name = input.lucideId ?? input.iconId;
       return {
         kind: "write",
         icon:
           input.color === null
-            ? resolveNamedIconWrite({ next: input.iconId, detected: input.detected })
-            : { kind: "icon", name: input.iconId, color: input.color },
+            ? { kind: "icon", name }
+            : { kind: "icon", name, color: input.color },
       };
+    }
     case "emoji":
       return firstEmoji(input.emoji) === input.emoji
         ? { kind: "write", icon: { kind: "emoji", emoji: input.emoji } }
@@ -119,4 +131,17 @@ export function resolveEnvironmentIconDialogWrite(input: {
       };
     }
   }
+}
+
+/** The shared Lucide ids whose name contains every word of `query`. */
+export function filterEnvironmentLucideIconIds(
+  query: string,
+): ReadonlyArray<EnvironmentLucideIconId> {
+  const words = query
+    .trim()
+    .toLowerCase()
+    .split(/\s+/u)
+    .filter((word) => word.length > 0);
+  if (words.length === 0) return ENVIRONMENT_LUCIDE_ICON_IDS;
+  return ENVIRONMENT_LUCIDE_ICON_IDS.filter((id) => words.every((word) => id.includes(word)));
 }
