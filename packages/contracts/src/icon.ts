@@ -78,7 +78,7 @@ export const ICON_IMAGE_DATA_URL_MAX_LENGTH = 32_768;
  * 64; the cap leaves room for an encoder working at a display scale while
  * holding a decoded icon to 256 KiB on every client that draws it.
  */
-export const ICON_IMAGE_MAX_EDGE = 256;
+const ICON_IMAGE_MAX_EDGE = 256;
 
 const PNG_DATA_URL_PREFIX = "data:image/png;base64,";
 // The eight byte signature, then the first chunk: length 13, type "IHDR".
@@ -113,12 +113,9 @@ function hasIconPngHeader(dataUrl: string): boolean {
  * and loose padding. That refuses the three in four truncations that stop
  * mid-quartet.
  *
- * The header check is the evidence behind the declared type: the PNG
- * signature, then an IHDR chunk with bounded dimensions. The encoded length cap
- * says nothing about pixels, since a large flat image compresses to almost
- * nothing, and this value is broadcast to every connected client. Nothing past
- * IHDR is read, so this says nothing about frame count. APNG carries the same
- * header and animates.
+ * The header check backs the declared type and bounds the pixels, which the
+ * length cap cannot, since a large flat image compresses to almost nothing.
+ * It reads nothing past IHDR, so an animated PNG passes.
  */
 export const IconImageDataUrl = Schema.String.check(
   Schema.isMaxLength(ICON_IMAGE_DATA_URL_MAX_LENGTH),

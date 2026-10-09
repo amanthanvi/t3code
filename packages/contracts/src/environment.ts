@@ -42,12 +42,9 @@ export type ExecutionEnvironmentPlatformArch = typeof ExecutionEnvironmentPlatfo
  * added later travels as the object, because an older peer decodes a string
  * it does not know as null and loses the icon. The list is frozen.
  *
- * `linux` has one gap. The `environmentIcon` capability shipped on
- * 2026-09-02 and `linux` joined the set on 2026-09-06, so 25 nightly builds
- * in between advertise the capability and reject the string, and picking the
- * Linux glyph against one of those fails the whole settings patch. No stable
- * release sits in that window. Dropping `linux` here would instead lock the
- * glyph on every stable server shipping today, which is the larger loss.
+ * `linux` joined the set a few days after the `environmentIcon` capability
+ * shipped, so some nightly builds advertise the capability and reject it. No
+ * stable release does.
  */
 export const LEGACY_ENVIRONMENT_MACHINE_KINDS = [
   "server",
@@ -73,18 +70,11 @@ export const EnvironmentMachineKind = Schema.Literals(ENVIRONMENT_MACHINE_KINDS)
 export type EnvironmentMachineKind = typeof EnvironmentMachineKind.Type;
 export const isEnvironmentMachineKind = Schema.is(EnvironmentMachineKind);
 
-/**
- * A named glyph: one of the curated ids above, an id the clients add on top
- * of them, or a Lucide id. One field rather than one variant per source,
- * because renderers resolve the curated map first and fall through, so the
- * name alone says which map answers.
- */
-export const EnvironmentIconName = LucideIconName;
-export type EnvironmentIconName = typeof EnvironmentIconName.Type;
-
 const EnvironmentNamedIcon = Schema.Struct({
   kind: Schema.Literal("icon"),
-  name: EnvironmentIconName,
+  // A curated id or a Lucide id. Renderers try the curated map first, so the
+  // name alone says which map draws it.
+  name: LucideIconName,
   color: Schema.optionalKey(IconColor),
 });
 const EnvironmentEmojiIcon = Schema.Struct({
@@ -117,6 +107,21 @@ const EnvironmentIcon = Schema.Union([
 export type EnvironmentIcon = typeof EnvironmentIcon.Type;
 
 /**
+ * Whether an icon travels as a bare machine kind: a plain pick of a legacy
+ * kind, which every stable server with `environmentIcon` stores.
+ */
+function hasLegacyEnvironmentIconForm(icon: EnvironmentIcon): icon is Extract<
+  EnvironmentIcon,
+  { readonly kind: "icon" }
+> & {
+  readonly name: (typeof LEGACY_ENVIRONMENT_MACHINE_KINDS)[number];
+} {
+  return (
+    icon.kind === "icon" && icon.color === undefined && isLegacyEnvironmentMachineKind(icon.name)
+  );
+}
+
+/**
  * What a user picked for an environment's icon. Servers that predate the
  * override stored a bare machine kind, and that string form stays on the
  * wire and on disk for a plain pick of one of the seven kinds. That string is
@@ -134,12 +139,7 @@ export const EnvironmentIconOverride = Schema.Union([EnvironmentMachineKind, Env
     SchemaTransformation.transform({
       decode: (icon): EnvironmentIcon =>
         typeof icon === "string" ? { kind: "icon", name: icon } : icon,
-      encode: (icon) =>
-        icon.kind === "icon" &&
-        icon.color === undefined &&
-        isLegacyEnvironmentMachineKind(icon.name)
-          ? icon.name
-          : icon,
+      encode: (icon) => (hasLegacyEnvironmentIconForm(icon) ? icon.name : icon),
     }),
   ),
 );
