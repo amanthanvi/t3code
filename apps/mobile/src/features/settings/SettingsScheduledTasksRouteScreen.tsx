@@ -7,10 +7,7 @@ import type {
   ScheduledTask,
   ScheduledTaskUpsertInput,
 } from "@t3tools/contracts";
-import {
-  MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
-  resolveEnvironmentMachineKind,
-} from "@t3tools/contracts";
+import { MAX_WEBHOOK_DELIVERY_AGE_MINUTES, resolveEnvironmentIcon } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 import { DateTimePicker } from "@expo/ui/community/datetime-picker";
 import {
@@ -40,7 +37,7 @@ import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
 import {
   EnvironmentMachineSymbol,
-  ENVIRONMENT_MACHINE_SYMBOLS,
+  environmentMachineSymbolName,
 } from "../../components/EnvironmentMachineSymbol";
 import { ControlPillMenu } from "../../components/ControlPill";
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
@@ -710,7 +707,7 @@ function TaskForm({
           value={environmentLabel}
           valueIcon={
             <EnvironmentMachineSymbol
-              kind={resolveEnvironmentMachineKind(config)}
+              icon={resolveEnvironmentIcon(config)}
               size={18}
               tintColorClassName="accent-foreground-muted"
             />
@@ -721,8 +718,7 @@ function TaskForm({
               : availableTargets.map((target) => ({
                   id: target.environmentId,
                   title: target.label,
-                  image:
-                    ENVIRONMENT_MACHINE_SYMBOLS[resolveEnvironmentMachineKind(target.serverConfig)],
+                  image: environmentMachineSymbolName(resolveEnvironmentIcon(target.serverConfig)),
                   state: target.environmentId === environmentId ? "on" : undefined,
                 }))
           }
@@ -1164,7 +1160,7 @@ function EnvironmentTasks({
       title={environment.label}
       titleIcon={
         <EnvironmentMachineSymbol
-          kind={resolveEnvironmentMachineKind(environment.serverConfig)}
+          icon={resolveEnvironmentIcon(environment.serverConfig)}
           size={16}
           tintColorClassName={
             Platform.OS === "android" ? "accent-primary" : "accent-foreground-muted"

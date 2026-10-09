@@ -31,7 +31,7 @@ import {
   AuthOrchestrationOperateScope,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
-  resolveEnvironmentMachineKind,
+  resolveEnvironmentIcon,
 } from "@t3tools/contracts";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 
@@ -1508,7 +1508,7 @@ export function NewTaskDraftScreen(props: {
       disabled={isComposerInteractionLocked || voiceInput.isBusy}
       renderIcon={(size) => (
         <EnvironmentMachineSymbol
-          kind={resolveEnvironmentMachineKind(selectedEnvironmentServerConfig)}
+          icon={resolveEnvironmentIcon(selectedEnvironmentServerConfig)}
           size={size}
           tintColorClassName="accent-icon-muted"
         />

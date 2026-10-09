@@ -2,7 +2,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   PROJECT_FILE_BACKED_SETTINGS,
   type ProjectFileBackedSettingKey,
-  resolveEnvironmentMachineKind,
+  resolveEnvironmentIcon,
   type ServerSettings,
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
@@ -192,7 +192,7 @@ export function SettingInheritance({
       {
         target,
         environment: { ...environment, serverConfig: environment.serverConfig },
-        machine: resolveEnvironmentMachineKind(environment.serverConfig),
+        machine: resolveEnvironmentIcon(environment.serverConfig),
         layers: settingInheritanceLayers(target, environment.serverConfig.settings, key),
       },
     ];
@@ -231,7 +231,7 @@ export function SettingInheritance({
               className="px-3 py-2.5"
             >
               <h4 className="flex items-center gap-1.5 pb-1.5 text-xs font-medium text-muted-foreground">
-                <EnvironmentMachineIcon aria-hidden kind={machine} className="size-3.5 shrink-0" />
+                <EnvironmentMachineIcon aria-hidden icon={machine} className="size-3.5 shrink-0" />
                 <span className="min-w-0 truncate">{target.label}</span>
               </h4>
               <ol role="list" className="text-sm">

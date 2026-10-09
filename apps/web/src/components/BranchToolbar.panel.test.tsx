@@ -1,6 +1,11 @@
 // @vitest-environment jsdom
 
-import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  environmentIconForMachineKind,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
@@ -60,7 +65,7 @@ it("keeps machine choices usable when the combined row's workspace is locked", a
             projectId: ProjectId.make("project"),
             label: id,
             isPrimary: id === "local",
-            machine: "server",
+            machine: environmentIconForMachineKind("server"),
           }))}
         />,
       );

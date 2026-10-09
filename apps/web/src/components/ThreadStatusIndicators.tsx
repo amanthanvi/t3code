@@ -7,7 +7,7 @@ import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePull
 
 import { pullRequestDetailToVcsStatus } from "@t3tools/client-runtime/state/pull-requests";
 import {
-  resolveEnvironmentMachineKind,
+  resolveEnvironmentIcon,
   type EnvironmentId,
   type ThreadLinkedPullRequest,
   type ThreadPullRequestLink,
@@ -993,7 +993,7 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
   const isRemoteThread = thread.environmentId !== primaryEnvironmentId;
   const remoteEnvLabel = environment?.label ?? null;
   const threadEnvironmentLabel = isRemoteThread ? (remoteEnvLabel ?? "Remote") : null;
-  const remoteMachine = resolveEnvironmentMachineKind(environment?.serverConfig ?? null);
+  const remoteMachine = resolveEnvironmentIcon(environment?.serverConfig ?? null);
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
 
   if (!terminalStatus && !isRemoteThread) {
@@ -1032,7 +1032,7 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
             }
           >
             <EnvironmentMachineIcon
-              kind={remoteMachine}
+              icon={remoteMachine}
               className="size-3 text-muted-foreground/60"
             />
           </TooltipTrigger>

@@ -5,7 +5,7 @@ import type { PullRequestSpeedActionResult } from "~/components/pullRequest/Pull
 import { usePullRequestCloseBatch } from "~/components/pullRequest/usePullRequestActions";
 import { SidebarPointerSensor } from "~/components/Sidebar.pointer";
 import { resolveSidebarSweepKeys } from "~/components/Sidebar.logic";
-import { pullRequestHostOf, resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import { pullRequestHostOf, resolveEnvironmentIcon } from "@t3tools/contracts";
 import type {
   EnvironmentId,
   ProjectId,
@@ -2012,7 +2012,7 @@ function PullRequestsRouteView() {
     ...capableEnvironments.map((environment) => ({
       value: environment.environmentId,
       label: environment.label,
-      Icon: environmentMachineIcon(resolveEnvironmentMachineKind(environment.serverConfig)),
+      Icon: environmentMachineIcon(resolveEnvironmentIcon(environment.serverConfig)),
     })),
   ];
   const sortMenu = (

@@ -35,14 +35,15 @@ import {
   AuthFilesystemReadScope,
   type DesktopWslState,
   type EnvironmentId,
-  type EnvironmentMachineKind,
+  type EnvironmentIcon,
   type FilesystemBrowseResult,
   type ProjectId,
   type SourceControlDiscoveryResult,
   type SourceControlProviderKind,
   type SourceControlRepositoryInfo,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
-  resolveEnvironmentMachineKind,
+  environmentIconForMachineKind,
+  resolveEnvironmentIcon,
 } from "@t3tools/contracts";
 import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import * as Option from "effect/Option";
@@ -244,7 +245,7 @@ function getEnvironmentBrowsePlatform(os: string | null | undefined): string {
 interface AddProjectEnvironmentOption {
   readonly environmentId: EnvironmentId;
   readonly label: string;
-  readonly machine: EnvironmentMachineKind;
+  readonly machine: EnvironmentIcon;
   readonly isPrimary: boolean;
   readonly isConnected: boolean;
   readonly status: string;
@@ -915,7 +916,7 @@ function OpenCommandPaletteDialog(props: {
                 : isLocal
                   ? `${environment.label} (Local)`
                   : environment.label,
-              machine: resolveEnvironmentMachineKind(environment.serverConfig),
+              machine: resolveEnvironmentIcon(environment.serverConfig),
             },
           ] as const;
         }),
@@ -1011,7 +1012,7 @@ function OpenCommandPaletteDialog(props: {
             runtimeLabel: environment.label,
           }),
           isPrimary,
-          machine: resolveEnvironmentMachineKind(environment.serverConfig),
+          machine: resolveEnvironmentIcon(environment.serverConfig),
           isConnected: canCreateProjectInEnvironment(environment.connection.phase),
           status: connectionStatusText(environment.connection),
         };
@@ -1307,7 +1308,7 @@ function OpenCommandPaletteDialog(props: {
           const location = projectEnvironmentLocationById.get(project.environmentId) ?? {
             kind: "remote" as const,
             label: "Remote",
-            machine: "server" as const,
+            machine: environmentIconForMachineKind("server"),
           };
           return (
             <ProjectSearchDescription
@@ -1350,7 +1351,7 @@ function OpenCommandPaletteDialog(props: {
           const location = projectEnvironmentLocationById.get(project.environmentId) ?? {
             kind: "remote",
             label: "Remote",
-            machine: "server" as const,
+            machine: environmentIconForMachineKind("server"),
           };
           return (
             <span className="flex min-w-0 items-center gap-1">
@@ -1358,7 +1359,7 @@ function OpenCommandPaletteDialog(props: {
                 {location.kind === "remote" ? (
                   <EnvironmentMachineIcon
                     aria-hidden
-                    kind={location.machine}
+                    icon={location.machine}
                     className={COMMAND_PALETTE_META_ICON_CLASS}
                   />
                 ) : null}
@@ -1779,7 +1780,7 @@ function OpenCommandPaletteDialog(props: {
         : option.environmentId
       : option.status,
     disabled: !option.isConnected,
-    icon: <EnvironmentMachineIcon kind={option.machine} className={ITEM_ICON_CLASS} />,
+    icon: <EnvironmentMachineIcon icon={option.machine} className={ITEM_ICON_CLASS} />,
     keepOpen: true,
     run: async () => {
       run(option.environmentId);
@@ -3596,7 +3597,7 @@ function ProjectSearchDescription(props: {
   readonly location: {
     readonly kind: "local" | "remote";
     readonly label: string;
-    readonly machine: EnvironmentMachineKind;
+    readonly machine: EnvironmentIcon;
   };
   readonly workspaceRoot: string;
 }) {
@@ -3607,7 +3608,7 @@ function ProjectSearchDescription(props: {
           {props.location.kind === "remote" ? (
             <EnvironmentMachineIcon
               aria-hidden
-              kind={props.location.machine}
+              icon={props.location.machine}
               className={COMMAND_PALETTE_META_ICON_CLASS}
             />
           ) : null}

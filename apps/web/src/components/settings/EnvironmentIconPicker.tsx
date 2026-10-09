@@ -1,8 +1,9 @@
 import {
   AuthSettingsWriteScope,
   ENVIRONMENT_MACHINE_KINDS,
+  environmentIconForMachineKind,
   isEnvironmentMachineKind,
-  resolveEnvironmentMachineKind,
+  resolveEnvironmentIcon,
   type EnvironmentId,
   type ServerConfig,
 } from "@t3tools/contracts";
@@ -62,12 +63,15 @@ export function EnvironmentIconMenu({
   // With no detection the server falls back to "server", so picking that
   // kind clears the override the same way picking the detected kind does.
   const detected = serverConfig?.environment.platform.machine ?? "server";
-  const resolved = resolveEnvironmentMachineKind(serverConfig);
+  const resolved = resolveEnvironmentIcon(serverConfig);
+  // The radio list only knows the seven kinds; a richer pick checks nothing.
+  const resolvedKind =
+    resolved.kind === "icon" && isEnvironmentMachineKind(resolved.name) ? resolved.name : null;
 
   return (
     <MenuSub>
       <MenuSubTrigger>
-        <EnvironmentMachineIcon kind={resolved} />
+        <EnvironmentMachineIcon icon={resolved} />
         Icon
       </MenuSubTrigger>
       <MenuSubPopup>
@@ -80,7 +84,7 @@ export function EnvironmentIconMenu({
           </>
         ) : null}
         <MenuRadioGroup
-          value={resolved}
+          value={resolvedKind}
           onValueChange={(next) => {
             if (lock !== null || !isEnvironmentMachineKind(next)) return;
             // A plain machine kind encodes to the bare string on the wire, so a
@@ -93,7 +97,10 @@ export function EnvironmentIconMenu({
           {ENVIRONMENT_MACHINE_KINDS.map((kind) => (
             <MenuRadioItem key={kind} value={kind} disabled={lock !== null}>
               <span className="flex min-w-0 items-center gap-2">
-                <EnvironmentMachineIcon kind={kind} className="size-3.5 shrink-0" />
+                <EnvironmentMachineIcon
+                  icon={environmentIconForMachineKind(kind)}
+                  className="size-3.5 shrink-0"
+                />
                 <span className="min-w-0 flex-1 truncate">
                   {ENVIRONMENT_MACHINE_KIND_LABELS[kind]}
                 </span>

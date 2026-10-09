@@ -45,9 +45,9 @@ import {
   AuthFilesystemReadScope,
   CommandId,
   type EnvironmentId,
-  type EnvironmentMachineKind,
+  type EnvironmentIcon,
   ProjectId,
-  resolveEnvironmentMachineKind,
+  resolveEnvironmentIcon,
 } from "@t3tools/contracts";
 import { CommonActions, StackActions, useNavigation } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
@@ -85,7 +85,7 @@ interface EnvironmentOption {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly platform: string;
-  readonly machine: EnvironmentMachineKind;
+  readonly machine: EnvironmentIcon;
   readonly baseDirectory: string | null;
   /** Folder for projects started from just a name; null on servers without it. */
   readonly newProjectsRoot: string | null;
@@ -414,7 +414,7 @@ function useEnvironmentOptions(): ReadonlyArray<EnvironmentOption> {
         environmentId: connection.environmentId,
         label: connection.environmentLabel,
         platform: platformFromOs(config?.environment.platform.os ?? null),
-        machine: resolveEnvironmentMachineKind(config ?? null),
+        machine: resolveEnvironmentIcon(config ?? null),
         baseDirectory: config?.settings.addProjectBaseDirectory ?? null,
         newProjectsRoot: config?.newProjectsRoot ?? null,
         connectionState: runtime?.connectionState ?? "available",
@@ -577,7 +577,7 @@ export function AddProjectSourceScreen() {
                 }
                 icon={
                   <EnvironmentMachineSymbol
-                    kind={environment.machine}
+                    icon={environment.machine}
                     size={Platform.OS === "android" ? 24 : 17}
                     tintColorClassName="accent-icon"
                   />
@@ -1028,7 +1028,7 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
             title={option.label}
             icon={
               <EnvironmentMachineSymbol
-                kind={option.machine}
+                icon={option.machine}
                 size={Platform.OS === "android" ? 24 : 17}
                 tintColorClassName="accent-icon"
               />

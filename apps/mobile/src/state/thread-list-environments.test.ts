@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  environmentIconForMachineKind,
   ProviderInstanceId,
   ProviderDriverKind,
   type ServerConfig,
@@ -193,14 +194,14 @@ describe("thread list environment projection", () => {
   it("restores detected machine kind after removing an override", () => {
     const h = harness();
     try {
-      expect(h.read().machineByEnvironmentId.get(ID)).toBe("laptop");
+      expect(h.read().machineByEnvironmentId.get(ID)).toBe(environmentIconForMachineKind("laptop"));
       h.write({
         ...config,
         settings: { ...config.settings, environmentIcon: { kind: "icon", name: "server" } },
       });
-      expect(h.read().machineByEnvironmentId.get(ID)).toBe("server");
+      expect(h.read().machineByEnvironmentId.get(ID)).toBe(environmentIconForMachineKind("server"));
       h.write(config);
-      expect(h.read().machineByEnvironmentId.get(ID)).toBe("laptop");
+      expect(h.read().machineByEnvironmentId.get(ID)).toBe(environmentIconForMachineKind("laptop"));
       const detected = h.read();
       h.write({
         ...config,

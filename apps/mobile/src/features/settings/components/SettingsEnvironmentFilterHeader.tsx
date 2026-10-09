@@ -1,11 +1,11 @@
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackHeaderItem } from "@react-navigation/native-stack";
-import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import { resolveEnvironmentIcon } from "@t3tools/contracts";
 import { Platform, Pressable } from "react-native";
 
 import { ControlPillMenu } from "../../../components/ControlPill";
 import { SymbolView } from "../../../components/AppSymbol";
-import { ENVIRONMENT_MACHINE_SYMBOLS } from "../../../components/EnvironmentMachineSymbol";
+import { environmentMachineSymbolName } from "../../../components/EnvironmentMachineSymbol";
 import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { withNativeGlassHeaderItem } from "../../layout/native-glass-header-items";
 import { useAdaptiveWorkspaceLayout } from "../../layout/AdaptiveWorkspaceLayout";
@@ -41,7 +41,7 @@ export function SettingsEnvironmentFilterHeader(props: {
       entry.environmentId,
       entry.label,
       entry.displayUrl,
-      resolveEnvironmentMachineKind(entry.serverConfig),
+      environmentMachineSymbolName(resolveEnvironmentIcon(entry.serverConfig)),
     ]),
     project: selectedProjectKey,
     projects: selectableProjectGroups.map((group) => [group.key, group.label]),
@@ -79,9 +79,9 @@ export function SettingsEnvironmentFilterHeader(props: {
                       label: entry.label,
                       icon: {
                         type: "sfSymbol" as const,
-                        name: ENVIRONMENT_MACHINE_SYMBOLS[
-                          resolveEnvironmentMachineKind(entry.serverConfig)
-                        ],
+                        name: environmentMachineSymbolName(
+                          resolveEnvironmentIcon(entry.serverConfig),
+                        ),
                       },
                       description: entry.displayUrl ?? undefined,
                       state:
@@ -165,7 +165,7 @@ export function AndroidSettingsEnvironmentFilter() {
         ...availableTargets.map((entry) => ({
           id: `environment:${entry.environmentId}`,
           title: `Environment · ${entry.label}`,
-          image: ENVIRONMENT_MACHINE_SYMBOLS[resolveEnvironmentMachineKind(entry.serverConfig)],
+          image: environmentMachineSymbolName(resolveEnvironmentIcon(entry.serverConfig)),
           subtitle: entry.displayUrl ?? undefined,
           state:
             selectedIds === null || selectedIds.has(entry.environmentId)

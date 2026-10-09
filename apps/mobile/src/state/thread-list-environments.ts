@@ -1,7 +1,7 @@
 import {
-  resolveEnvironmentMachineKind,
+  resolveEnvironmentIcon,
+  type EnvironmentIcon,
   type EnvironmentId,
-  type EnvironmentMachineKind,
   type ServerConfig,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -33,7 +33,7 @@ function selectEnvironment(config: ServerConfig) {
         iconUrl,
       }),
     ),
-    machineKind: resolveEnvironmentMachineKind(config),
+    icon: resolveEnvironmentIcon(config),
     capabilities: config.environment.capabilities,
   };
 }
@@ -61,7 +61,7 @@ function sameProviders(
 
 function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnvironment>) {
   const providersByEnvironmentId = new Map<EnvironmentId, ReadonlyArray<ThreadListProvider>>();
-  const machineByEnvironmentId = new Map<EnvironmentId, EnvironmentMachineKind>();
+  const machineByEnvironmentId = new Map<EnvironmentId, EnvironmentIcon>();
   const settlementEnvironmentIds = new Set<EnvironmentId>();
   const snoozeEnvironmentIds = new Set<EnvironmentId>();
   const pinningEnvironmentIds = new Set<EnvironmentId>();
@@ -69,9 +69,9 @@ function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnviro
   const pinReorderEnvironmentIds = new Set<EnvironmentId>();
   const activeReorderEnvironmentIds = new Set<EnvironmentId>();
   const titleRegenerationEnvironmentIds = new Set<EnvironmentId>();
-  for (const [id, { providers, machineKind, capabilities }] of environments) {
+  for (const [id, { providers, icon, capabilities }] of environments) {
     providersByEnvironmentId.set(id, providers);
-    machineByEnvironmentId.set(id, machineKind);
+    machineByEnvironmentId.set(id, icon);
     if (capabilities.threadSettlement === true) settlementEnvironmentIds.add(id);
     if (capabilities.threadSnooze === true) snoozeEnvironmentIds.add(id);
     if (capabilities.threadAutoSettleOptOut === true) autoSettleOptOutEnvironmentIds.add(id);
@@ -112,7 +112,7 @@ export function createThreadListEnvironmentsAtom(
       const unchanged =
         prior &&
         prior.providers === selected.providers &&
-        prior.machineKind === selected.machineKind &&
+        prior.icon === selected.icon &&
         capabilityKeys.every(
           (key) => (prior.capabilities[key] === true) === (selected.capabilities[key] === true),
         );
