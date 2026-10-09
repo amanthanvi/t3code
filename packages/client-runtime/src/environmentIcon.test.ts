@@ -18,31 +18,30 @@ const config = (environmentIcon: boolean | undefined, environmentIconOverride?: 
   }) as unknown as ServerConfig;
 
 describe("resolveEnvironmentIconLock", () => {
-  it("locks until the environment is connected", () => {
-    expect(resolveEnvironmentIconLock({ serverConfig: null, operateAccess: "granted" })).toMatch(
-      /Connect/,
-    );
+  const open = { connected: true, canWriteSettings: true } as const;
+
+  it("locks until the environment is connected, even with a cached config", () => {
+    expect(resolveEnvironmentIconLock({ ...open, serverConfig: null })).toMatch(/Connect/);
+    expect(
+      resolveEnvironmentIconLock({ ...open, serverConfig: config(true), connected: false }),
+    ).toMatch(/Connect/);
   });
 
   it("locks on servers that predate the setting, before looking at permissions", () => {
     expect(
-      resolveEnvironmentIconLock({ serverConfig: config(undefined), operateAccess: "denied" }),
+      resolveEnvironmentIconLock({
+        serverConfig: config(undefined),
+        connected: true,
+        canWriteSettings: false,
+      }),
     ).toMatch(/too old/);
   });
 
-  it("locks when the session cannot operate the environment", () => {
+  it("locks without a settings grant", () => {
     expect(
-      resolveEnvironmentIconLock({ serverConfig: config(true), operateAccess: "denied" }),
+      resolveEnvironmentIconLock({ ...open, serverConfig: config(true), canWriteSettings: false }),
     ).toMatch(/cannot change/);
-  });
-
-  it("stays open while access is still resolving so a slow session does not flicker", () => {
-    expect(
-      resolveEnvironmentIconLock({ serverConfig: config(true), operateAccess: "pending" }),
-    ).toBeNull();
-    expect(
-      resolveEnvironmentIconLock({ serverConfig: config(true), operateAccess: "granted" }),
-    ).toBeNull();
+    expect(resolveEnvironmentIconLock({ ...open, serverConfig: config(true) })).toBeNull();
   });
 });
 

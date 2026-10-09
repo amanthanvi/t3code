@@ -4,7 +4,7 @@ import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import { resolveEnvironmentIconLock } from "@t3tools/client-runtime/environment-icon";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import {
-  AuthOrchestrationOperateScope,
+  AuthSettingsWriteScope,
   type EnvironmentId,
   resolveEnvironmentIcon,
   type ServerConfig,
@@ -24,7 +24,7 @@ import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 import { serverEnvironment } from "../../state/server";
-import { environmentSession } from "../../state/session";
+import { useEnvironmentScope } from "../../state/session";
 import { ConnectionFormField } from "./ConnectionFormField";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
 import { EnvironmentIconPickerSheet } from "./EnvironmentIconPickerSheet";
@@ -279,24 +279,14 @@ function EnvironmentIconControl(props: {
   readonly serverConfig: ServerConfig | null;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
-  const session = useAtomValue(
-    environmentSession.sessionStateValueAtom(props.environment.environmentId),
+  const canWriteSettings = useEnvironmentScope(
+    props.environment.environmentId,
+    AuthSettingsWriteScope,
   );
-  // A switched-off or dropped environment can keep its last config, so the
-  // connection itself gates the picker before the server's capabilities do.
   const lock = resolveEnvironmentIconLock({
-    serverConfig:
-      props.environment.isEnabled && props.environment.connectionState === "connected"
-        ? props.serverConfig
-        : null,
-    // As on web, a server from before scopes grants every authenticated session.
-    operateAccess:
-      session === null
-        ? "pending"
-        : session.authenticated &&
-            (session.scopes === undefined || session.scopes.includes(AuthOrchestrationOperateScope))
-          ? "granted"
-          : "denied",
+    serverConfig: props.serverConfig,
+    connected: props.environment.isEnabled && props.environment.connectionState === "connected",
+    canWriteSettings,
   });
   return (
     <>

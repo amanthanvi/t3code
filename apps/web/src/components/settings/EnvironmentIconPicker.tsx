@@ -37,15 +37,8 @@ export function EnvironmentIconMenuItem({
   readonly connected: boolean;
   readonly onOpen: () => void;
 }) {
-  const operateAccess = useEnvironmentScope(environmentId, AuthSettingsWriteScope)
-    ? "granted"
-    : "denied";
-  // A switched-off or dropped environment keeps its cached config, so the
-  // connection gates the picker before the server's capabilities do.
-  const lock = resolveEnvironmentIconLock({
-    serverConfig: connected ? serverConfig : null,
-    operateAccess,
-  });
+  const canWriteSettings = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
+  const lock = resolveEnvironmentIconLock({ serverConfig, connected, canWriteSettings });
   return (
     <>
       <MenuItem disabled={lock !== null} onClick={onOpen}>
