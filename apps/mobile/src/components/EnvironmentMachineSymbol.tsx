@@ -4,12 +4,10 @@ import {
   type EnvironmentCuratedIconId,
   type EnvironmentIcon,
 } from "@t3tools/contracts";
-import { Platform, Text, View } from "react-native";
 
-import { cn } from "../lib/cn";
+import { projectIconColorClassNames } from "../lib/projectIcon";
 import { SymbolView, type AppSymbolName } from "./AppSymbol";
-import { ENVIRONMENT_ICON_COLOR_CLASSES } from "./environmentIconColors";
-import { monogramCharacters } from "./environmentMonogram";
+import { ProjectIconGlyphView } from "./ProjectFavicon";
 
 // Every SF name here is already a key of the Android fallback map, so a new
 // id adds nothing to the Metro bundle; only iOS needs a check that the glyph
@@ -53,9 +51,8 @@ export function environmentMachineSymbolName(icon: EnvironmentIcon) {
  * The glyph an environment wears in lists; SF Symbols on iOS, Tabler on
  * Android. `tintColorClassName` is the caller's resting tint; a chosen color
  * replaces it. Rows draw connection state beside the glyph, never on it, so a
- * red icon never reads as a failed one. Emoji and monograms get an explicit
- * width, because emoji advance widths vary per glyph and platform and these
- * sit in flex rows.
+ * red icon never reads as a failed one. Emoji and monograms draw as project
+ * icons do.
  */
 export function EnvironmentMachineSymbol(props: {
   readonly icon: EnvironmentIcon;
@@ -64,59 +61,27 @@ export function EnvironmentMachineSymbol(props: {
 }) {
   const { icon, size } = props;
   if (icon.kind === "emoji") {
-    return (
-      <Text
-        accessibilityLabel={icon.emoji}
-        allowFontScaling={false}
-        numberOfLines={1}
-        style={{
-          width: size,
-          fontSize: size * 0.8,
-          lineHeight: size,
-          textAlign: "center",
-          ...(Platform.OS === "android" ? { includeFontPadding: false } : {}),
-        }}
-      >
-        {icon.emoji}
-      </Text>
-    );
+    return <ProjectIconGlyphView glyph={icon} size={size} />;
   }
   if (icon.kind === "monogram") {
-    const color = ENVIRONMENT_ICON_COLOR_CLASSES[icon.color ?? "gray"];
-    const characters = monogramCharacters(icon.text);
     return (
-      <View
-        accessible
-        accessibilityLabel={icon.text}
-        className={cn("items-center justify-center", color.tile)}
-        style={{ width: size, height: size, borderRadius: size * 0.25 }}
-      >
-        <Text
-          allowFontScaling={false}
-          numberOfLines={1}
-          className={cn("font-t3-bold", color.text)}
-          style={{
-            fontSize: size * (characters.length > 1 ? 0.5 : 0.62),
-            lineHeight: size,
-            ...(Platform.OS === "android" ? { includeFontPadding: false } : {}),
-          }}
-        >
-          {characters.join("")}
-        </Text>
-      </View>
+      <ProjectIconGlyphView
+        glyph={{ kind: "monogram", text: icon.text, color: icon.color ?? "gray" }}
+        size={size}
+      />
     );
   }
   const id = symbolId(icon);
-  const tintColorClassName =
-    icon.kind === "icon" && icon.color !== undefined
-      ? ENVIRONMENT_ICON_COLOR_CLASSES[icon.color].tint
-      : props.tintColorClassName;
   return (
     <SymbolView
       accessibilityLabel={ENVIRONMENT_ICON_LABELS[id]}
       name={SYMBOL_BY_ID[id]}
       size={size}
-      tintColorClassName={tintColorClassName}
+      tintColorClassName={
+        icon.kind === "icon" && icon.color !== undefined
+          ? projectIconColorClassNames(icon.color).tint
+          : props.tintColorClassName
+      }
       type="monochrome"
     />
   );
