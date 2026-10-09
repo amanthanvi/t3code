@@ -4,7 +4,10 @@ import {
   type EnvironmentCuratedIconId,
   type EnvironmentIcon,
 } from "@t3tools/contracts";
+
+import { projectIconColorClassNames } from "../lib/projectIcon";
 import { SymbolView, type AppSymbolName } from "./AppSymbol";
+import { ProjectIconGlyphView } from "./ProjectFavicon";
 
 // Every SF name here is already a key of the Android fallback map, so a new
 // id adds nothing to the Metro bundle; only iOS needs a check that the glyph
@@ -35,24 +38,50 @@ function symbolId(icon: EnvironmentIcon): EnvironmentCuratedIconId {
   return icon.kind === "icon" && isEnvironmentCuratedIconId(icon.name) ? icon.name : "server";
 }
 
-/** The symbol name for places that only take one, such as native menu items. */
+/**
+ * The symbol name for places that only take one, such as native menu items.
+ * Anything other than a curated icon has no symbol, so it gets the generic
+ * server there.
+ */
 export function environmentMachineSymbolName(icon: EnvironmentIcon) {
   return SYMBOL_BY_ID[symbolId(icon)];
 }
 
-/** The glyph an environment wears in lists; SF Symbols on iOS, Tabler on Android. */
+/**
+ * The glyph an environment wears in lists; SF Symbols on iOS, Tabler on
+ * Android. `tintColorClassName` is the caller's resting tint; a chosen color
+ * replaces it. Rows draw connection state beside the glyph, never on it, so a
+ * red icon never reads as a failed one. Emoji and monograms draw as project
+ * icons do.
+ */
 export function EnvironmentMachineSymbol(props: {
   readonly icon: EnvironmentIcon;
   readonly size: number;
   readonly tintColorClassName: string;
 }) {
-  const id = symbolId(props.icon);
+  const { icon, size } = props;
+  if (icon.kind === "emoji") {
+    return <ProjectIconGlyphView glyph={icon} size={size} />;
+  }
+  if (icon.kind === "monogram") {
+    return (
+      <ProjectIconGlyphView
+        glyph={{ kind: "monogram", text: icon.text, color: icon.color ?? "gray" }}
+        size={size}
+      />
+    );
+  }
+  const id = symbolId(icon);
   return (
     <SymbolView
       accessibilityLabel={ENVIRONMENT_ICON_LABELS[id]}
       name={SYMBOL_BY_ID[id]}
-      size={props.size}
-      tintColorClassName={props.tintColorClassName}
+      size={size}
+      tintColorClassName={
+        icon.kind === "icon" && icon.color !== undefined
+          ? projectIconColorClassNames(icon.color).tint
+          : props.tintColorClassName
+      }
       type="monochrome"
     />
   );
