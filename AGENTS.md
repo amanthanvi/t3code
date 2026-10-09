@@ -84,6 +84,16 @@ The most common defect in this repo is a change that works on the path you teste
 - To reuse web dev auth across worktrees, configure one fixed `T3CODE_DEV_AUTH_TOKEN` in the main checkout's gitignored `.env`. The `t3.json` setup links that file into worktrees. Never commit or publish the token or a startup URL. See [Reusable dev credential](docs/operations/development.md#reusable-dev-credential).
 - Stop what you started, by the PID you tracked. See rule 1.
 
+## Worktree hygiene
+
+Every worktree gets its own multi-GB `node_modules` (`t3.json` runs `scripts/setup-worktree.ts` -> `vp i` on create), plus `.t3`, `dist`, and `.vite-plus` output. Finished worktrees pile up under `~/.t3/worktrees/` and `~/t3code-wt/` (about 45 GB each when left alone).
+
+- Reuse the worktree you were given. Do not create extra worktrees or fresh clones for experiments, reviews, or verification.
+- When the task is done and its work is pushed or handed off, remove your worktree with `git worktree remove <path>` (never `rm -rf` around git, never `--force`; if it refuses over uncommitted changes, commit or hand off the work first). If you must keep it, run `vp run clean` to drop `node_modules`, `dist`, and `.vite-plus`.
+- Delete scratch you created: `/tmp` seed files, logs, the seeded `.t3` from `migrate-dev-db`, screenshots, and Playwright output. Write them outside the worktree.
+- Before finishing, run `du -sh <worktree>`. Anything over 3 GB means you left artifacts behind; clean it.
+- Only remove worktrees you created. Do not touch others' or the main checkout.
+
 ## Test data
 
 An empty database is a bad test. Seed your worktree's `.t3` with a copy of real data instead of pointing at live state:
