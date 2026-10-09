@@ -84,10 +84,10 @@ function initialState(input: {
 }
 
 /**
- * Picks an environment's icon: a curated glyph with an optional color, an
- * emoji, or a monogram. Every decision about what to write lives in
- * `EnvironmentIconPicker.logic.ts`; this component only holds the form state.
- * The host mounts it only while open, so that state starts fresh every time.
+ * Picks an environment's icon: a curated or Lucide glyph with an optional
+ * color, an emoji, a monogram, or an image. What a pick stores is decided in
+ * `EnvironmentIconPicker.logic.ts`. The host mounts this only while open, so
+ * the form starts fresh every time.
  */
 export function EnvironmentIconPickerDialog({
   current,
@@ -148,10 +148,10 @@ export function EnvironmentIconPickerDialog({
       setImageError(describeEnvironmentIconImageFailure(result.reason));
     }
   };
-  // Anything beyond a plain machine kind travels as the object form, which
-  // only a server with the override capability stores.
   // Saving mid-encode would write the previous image and drop the new pick.
   const imagePending = mode === "image" && imageEncoding;
+  // Anything beyond a plain legacy machine kind travels as the object form,
+  // which only a server with the override capability stores.
   const canSave =
     write.kind === "write" &&
     !imagePending &&

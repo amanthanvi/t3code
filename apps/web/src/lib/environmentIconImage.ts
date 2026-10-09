@@ -33,10 +33,6 @@ export async function encodeEnvironmentIconImage(file: Blob): Promise<Environmen
   let bitmap: ImageBitmap | undefined;
   try {
     bitmap = await createImageBitmap(file);
-  } catch {
-    return { ok: false, reason: "unreadable" };
-  }
-  try {
     const side = Math.min(bitmap.width, bitmap.height);
     if (side <= 0) return { ok: false, reason: "unreadable" };
     const canvas = document.createElement("canvas");
@@ -58,21 +54,16 @@ export async function encodeEnvironmentIconImage(file: Blob): Promise<Environmen
       ENVIRONMENT_ICON_IMAGE_EDGE,
       ENVIRONMENT_ICON_IMAGE_EDGE,
     );
-    // Failure reaches the caller through the result, and the caller awaits
-    // without a catch. toDataURL is the last call here that reports by
-    // throwing, so the catch turns its throw into a result.
-    let png: string;
-    try {
-      png = canvas.toDataURL("image/png");
-    } catch {
-      return { ok: false, reason: "unreadable" };
-    }
+    const png = canvas.toDataURL("image/png");
     // Incompressible noise at this edge encodes to about 22 KB against a 32 KB
     // cap, so the guard is for a future change to either number, not for input.
     if (isIconImageDataUrl(png)) return { ok: true, dataUrl: png };
     return { ok: false, reason: "too-large" };
+  } catch {
+    // The caller awaits without a catch, so a decode or encode throw is a result.
+    return { ok: false, reason: "unreadable" };
   } finally {
-    bitmap.close();
+    bitmap?.close();
   }
 }
 

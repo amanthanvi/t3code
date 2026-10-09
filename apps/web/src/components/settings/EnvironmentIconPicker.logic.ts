@@ -61,7 +61,7 @@ export function resolveEnvironmentIconDialogWrite(input: {
   readonly emoji: string;
   readonly monogram: string;
   /** Already downscaled and validated by the encoder; null until a file is chosen. */
-  readonly imageDataUrl?: string | null;
+  readonly imageDataUrl: string | null;
   readonly detected: EnvironmentMachineKind;
 }): EnvironmentIconDialogWrite {
   switch (input.mode) {
@@ -86,7 +86,7 @@ export function resolveEnvironmentIconDialogWrite(input: {
         ? { kind: "write", icon: { kind: "emoji", emoji: input.emoji } }
         : { kind: "invalid", reason: "Pick an emoji." };
     case "image": {
-      const dataUrl = input.imageDataUrl ?? null;
+      const dataUrl = input.imageDataUrl;
       return dataUrl !== null && isIconImageDataUrl(dataUrl)
         ? { kind: "write", icon: { kind: "image", dataUrl } }
         : { kind: "invalid", reason: "Choose an image." };

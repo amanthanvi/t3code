@@ -89,15 +89,6 @@ const ICON_BY_ID: Record<EnvironmentCuratedIconId, FunctionComponent<LucideProps
   network: NetworkIcon,
 };
 
-/**
- * Which curated glyph draws a named icon. A name this build cannot draw
- * (picked on a newer client) gets the generic server so the row still reads
- * as a machine.
- */
-function curatedIconId(icon: EnvironmentIcon): EnvironmentCuratedIconId {
-  return icon.kind === "icon" && isEnvironmentCuratedIconId(icon.name) ? icon.name : "server";
-}
-
 export interface EnvironmentMachineIconProps {
   readonly className?: string | undefined;
   readonly "aria-hidden"?: boolean | "true" | "false" | undefined;
@@ -137,11 +128,8 @@ export function EnvironmentMachineIcon({
     return <ProjectMonogram text={icon.text} color={icon.color ?? "gray"} className={className} />;
   }
   if (icon.kind === "image") {
-    // Self-contained, so there is no network state to show. The bytes can
-    // still fail to decode. The schema checks the PNG header and not the
-    // pixels, so a value a peer wrote by hand can draw as an empty box. An
-    // onError fallback would put state in a component that renders once per
-    // row at 12 pixels, which costs more than the case is worth.
+    // No onError fallback: only a hand-written value can fail to decode, and
+    // that draws an empty box.
     return (
       <img
         aria-hidden="true"
@@ -152,17 +140,12 @@ export function EnvironmentMachineIcon({
       />
     );
   }
-  const color = icon.kind === "icon" && icon.color !== undefined ? icon.color : undefined;
   const coloredClassName =
-    color === undefined ? className : cn(className, projectIconColorClassName(color));
+    icon.color === undefined ? className : cn(className, projectIconColorClassName(icon.color));
   // Curated first, then the shared Lucide list, else the generic server. While
   // a Lucide glyph loads, the slot holds the server glyph at the same size so
   // the row does not shift.
-  if (
-    icon.kind === "icon" &&
-    !isEnvironmentCuratedIconId(icon.name) &&
-    isEnvironmentLucideIconId(icon.name)
-  ) {
+  if (!isEnvironmentCuratedIconId(icon.name) && isEnvironmentLucideIconId(icon.name)) {
     const placeholder = <ServerIcon {...props} className={coloredClassName} />;
     return (
       <Suspense fallback={placeholder}>
@@ -179,7 +162,8 @@ export function EnvironmentMachineIcon({
       </Suspense>
     );
   }
-  const Icon = ICON_BY_ID[curatedIconId(icon)];
+  // A name this build cannot draw (picked on a newer client) still reads as a machine.
+  const Icon = ICON_BY_ID[isEnvironmentCuratedIconId(icon.name) ? icon.name : "server"];
   return <Icon {...props} className={coloredClassName} />;
 }
 

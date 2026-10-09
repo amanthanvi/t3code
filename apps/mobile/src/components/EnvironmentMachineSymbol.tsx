@@ -67,10 +67,8 @@ export function EnvironmentMachineSymbol(props: {
     return <ProjectIconGlyphView glyph={icon} size={size} />;
   }
   if (icon.kind === "image") {
-    // Inline bytes need no disk cache, and the URL itself is the cache key.
-    // The bytes carry no name to read out, so the label names the kind. Every
-    // other branch here labels itself, and `accessible` is what makes a label
-    // on a non-text element reachable.
+    // Inline bytes need no disk cache. They carry no name, so the label names
+    // the kind.
     return (
       <Image
         accessible
@@ -91,16 +89,12 @@ export function EnvironmentMachineSymbol(props: {
     );
   }
   const tintColorClassName =
-    icon.kind === "icon" && icon.color !== undefined
-      ? projectIconColorClassNames(icon.color).tint
-      : props.tintColorClassName;
+    icon.color === undefined
+      ? props.tintColorClassName
+      : projectIconColorClassNames(icon.color).tint;
   // Curated first, then the shared Lucide list; the generated module holds
   // path data for exactly those ids, so anything else is the generic server.
-  if (
-    icon.kind === "icon" &&
-    !isEnvironmentCuratedIconId(icon.name) &&
-    isEnvironmentLucideIconId(icon.name)
-  ) {
+  if (!isEnvironmentCuratedIconId(icon.name) && isEnvironmentLucideIconId(icon.name)) {
     return (
       <EnvironmentLucideIcon
         id={icon.name}
