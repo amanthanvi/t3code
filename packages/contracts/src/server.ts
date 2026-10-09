@@ -724,12 +724,8 @@ const ICON_BY_MACHINE_KIND = new Map<EnvironmentMachineKind, EnvironmentIcon>();
  * the same object for the same plain kind across renders and across settings
  * snapshots. Without it every thread row would repaint on any settings
  * change, because each snapshot decodes to a fresh object.
- *
- * The cache only covers plain kinds, which is every row until a user picks
- * something richer. An emoji, monogram, or image icon is returned as the
- * decoded value, so those rows do repaint once per settings change. Settings
- * change on user action, not on a timer, so a content-keyed cache would save
- * a repaint nobody sees while keeping image bytes in memory.
+ * Richer icons are returned as decoded, so those rows repaint once per
+ * settings change.
  */
 export function environmentIconForMachineKind(kind: EnvironmentMachineKind): EnvironmentIcon {
   const cached = ICON_BY_MACHINE_KIND.get(kind);
