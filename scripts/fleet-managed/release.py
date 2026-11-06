@@ -377,7 +377,9 @@ def publish(directory, source):
     # Actions variable. Actual acceptance below still requires immutable=true + attestations.
     require(os.environ.get("AMAN_MANAGED_IMMUTABILITY_VERIFIED") == "true",
             "operator must verify repository immutable releases and record the setup prerequisite")
-    require(api(f"repos/{REPOSITORY}/releases/tags/v{version}") is None,
+    tag_name = f"v{version}"
+    title = f"Aman managed T3 {version} (Linux x64)"
+    require(not any(r.get("tag_name") == tag_name for r in list_releases(REPOSITORY)),
             "release already exists; no replacement or overwrite")
     require(git(source, "rev-parse", "HEAD") == provenance["sourceCommit"], "source HEAD differs from archive")
     require(not git(source, "status", "--porcelain", "--untracked-files=no"), "build changed tracked source after sealing")
@@ -403,26 +405,44 @@ def publish(directory, source):
     notes_path = Path(directory).parent / "managed-release-notes.md"
     notes_path.write_text(notes)
     run("gh", "release", "create", f"v{version}", "--repo", REPOSITORY, "--target", publisher, "--draft", "--prerelease",
-        "--title", f"Aman managed T3 {version} (Linux x64)", "--notes-file", str(notes_path),
+        "--title", title, "--notes-file", str(notes_path),
         *[str(path) for path in sorted(Path(directory).iterdir())])
     # A partial upload remains a draft requiring review. Never --clobber, delete, or overwrite.
-    remote_release = json.loads(run("gh", "api", f"repos/{REPOSITORY}/releases/tags/v{version}"))
+    # The tag route exposes published releases; a new draft may not have a Git tag yet.
+    drafts = [r for r in list_releases(REPOSITORY) if r.get("tag_name") == tag_name]
+    require(len(drafts) == 1 and type(drafts[0].get("id")) is int and drafts[0]["id"] > 0,
+            "created draft cannot be identified uniquely; leave it for review")
+    release_id = drafts[0]["id"]
+    release_path = f"repos/{REPOSITORY}/releases/{release_id}"
+    remote_release = api(release_path)
+    require(isinstance(remote_release, dict) and remote_release.get("id") == release_id
+            and remote_release.get("draft") is True and remote_release.get("tag_name") == tag_name
+            and remote_release.get("name") == title and remote_release.get("target_commitish") == publisher,
+            "created draft identity differs; leave it for review")
     require({a["name"] for a in remote_release["assets"]} == {p.name for p in Path(directory).iterdir()},
             "draft upload is incomplete")
     for asset in remote_release["assets"]:
         local = Path(directory) / asset["name"]
         require(asset["size"] == local.stat().st_size and asset.get("digest") == "sha256:" + digest(local),
                 "uploaded asset digest differs; draft requires review")
+    current_main = api(f"repos/{REPOSITORY}/commits/main")
+    require(isinstance(current_main, dict) and current_main.get("sha") == publisher,
+            "publisher main advanced during draft upload; leave draft for review")
+    require(api(f"repos/{REPOSITORY}/git/ref/tags/v{version}") is None,
+            "canonical tag changed during draft creation; leave draft for review")
+    run("gh", "api", "--method", "PATCH", release_path, "-F", "draft=false")
+    published = api(release_path)
+    require(isinstance(published, dict) and published.get("id") == release_id
+            and published.get("tag_name") == tag_name and published.get("target_commitish") == publisher,
+            "published release identity differs; operator review required")
     tag = api(f"repos/{REPOSITORY}/git/ref/tags/v{version}")
     require(isinstance(tag, dict) and tag.get("object", {}).get("type") == "commit"
             and tag["object"].get("sha") == publisher,
-            "canonical tag changed during draft creation; leave draft for review")
-    run("gh", "release", "edit", f"v{version}", "--repo", REPOSITORY, "--draft=false")
-    published = json.loads(run("gh", "api", f"repos/{REPOSITORY}/releases/tags/v{version}"))
+            "published canonical tag differs from the pinned publisher; operator review required")
     if published.get("immutable") is not True or published.get("draft"):
         if not published.get("draft"):
             try:
-                run("gh", "release", "edit", f"v{version}", "--repo", REPOSITORY, "--draft=true")
+                run("gh", "api", "--method", "PATCH", release_path, "-F", "draft=true")
             except subprocess.CalledProcessError as error:
                 raise ValueError("release is mutable and retraction failed; operator must retract it") from error
         raise ValueError("release did not become immutable; retracted to draft for operator review")

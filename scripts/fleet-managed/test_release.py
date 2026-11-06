@@ -265,7 +265,7 @@ class ArchiveTests(unittest.TestCase):
     def test_publish_refuses_existing_release_before_any_mutation(self):
         output = self.make_package()
         with patch.dict(os.environ, {"GITHUB_REPOSITORY": release.REPOSITORY, "AMAN_MANAGED_IMMUTABILITY_VERIFIED": "true"}), \
-                patch.object(release, "api", return_value={"draft": True}), \
+                patch.object(release, "list_releases", return_value=[{"tag_name": "v" + VERSION, "draft": True}]), \
                 patch.object(release, "run") as run:
             with self.assertRaisesRegex(ValueError, "already exists"):
                 release.publish(output, self.root)
@@ -287,7 +287,8 @@ class ArchiveTests(unittest.TestCase):
         output = self.make_package()
         publisher = self.context["publisherCommit"]
         with patch.dict(os.environ, {"GITHUB_REPOSITORY": release.REPOSITORY, "GITHUB_SHA": publisher, "AMAN_MANAGED_IMMUTABILITY_VERIFIED": "true"}), \
-                patch.object(release, "api", side_effect=[None, {"sha": publisher}, {"ref": "already exists"}]), \
+                patch.object(release, "list_releases", return_value=[]), \
+                patch.object(release, "api", side_effect=[{"sha": publisher}, {"ref": "already exists"}]), \
                 patch.object(release, "run", wraps=release.run) as run:
             with self.assertRaisesRegex(ValueError, "canonical tag already exists"):
                 release.publish(output, self.source)
@@ -298,21 +299,41 @@ class ArchiveTests(unittest.TestCase):
         publisher = self.context["publisherCommit"]
         assets = [{"name": p.name, "size": p.stat().st_size, "digest": "sha256:" + release.digest(p)}
                   for p in output.iterdir()]
+        draft = {"id": 42, "tag_name": "v" + VERSION, "name": f"Aman managed T3 {VERSION} (Linux x64)",
+                 "target_commitish": publisher, "draft": True, "assets": assets}
         actual_run = release.run
+        state = {"created": False, "published": False}
+        def fake_api(endpoint):
+            if endpoint.endswith("/commits/main"):
+                return {"sha": publisher}
+            if "/git/ref/tags/" in endpoint:
+                return {"object": {"type": "commit", "sha": publisher}} if state["published"] else None
+            if endpoint.endswith("/releases/42"):
+                return dict(draft, draft=not state["published"], immutable=state["published"])
+            if "/releases/tags/" in endpoint:
+                return None
+            self.fail("unexpected release API read")
         def fake_run(*args, **kwargs):
             if args[0] == "git":
                 return actual_run(*args, **kwargs)
+            if args[:3] == ("gh", "release", "create"):
+                state["created"] = True
             if args[:2] == ("gh", "api"):
-                return json.dumps({"assets": assets, "immutable": True, "draft": False}).encode()
+                if args[2:5] == ("--method", "PATCH", f"repos/{release.REPOSITORY}/releases/42"):
+                    state["published"] = "draft=false" in args
+                else:
+                    # GitHub's tag route exposes published releases, not newly created drafts.
+                    raise subprocess.CalledProcessError(1, args, stderr=b"HTTP 404: Not Found")
             return b""
         with patch.dict(os.environ, {"GITHUB_REPOSITORY": release.REPOSITORY, "GITHUB_SHA": publisher, "AMAN_MANAGED_IMMUTABILITY_VERIFIED": "true"}), \
-                patch.object(release, "api", side_effect=[None, {"sha": publisher}, None,
-                                                        {"object": {"type": "commit", "sha": publisher}}]), \
+                patch.object(release, "api", side_effect=fake_api), \
+                patch.object(release, "list_releases", side_effect=lambda _: [draft] if state["created"] else []), \
                 patch.object(release, "run", side_effect=fake_run) as run:
             release.publish(output, self.source)
             commands = [call.args[:3] for call in run.call_args_list if call.args[0] == "gh"]
             self.assertIn(("gh", "release", "create"), commands)
-            self.assertIn(("gh", "release", "edit"), commands)
+            self.assertTrue(state["published"])
+            self.assertIn(("gh", "api", "--method"), commands)
             self.assertIn(("gh", "release", "verify"), commands)
             self.assertEqual(sum(call.args[:3] == ("gh", "release", "verify-asset") and "--help" not in call.args
                                  for call in run.call_args_list), len(assets))
@@ -322,6 +343,8 @@ class ArchiveTests(unittest.TestCase):
         publisher = self.context["publisherCommit"]
         assets = [{"name": p.name, "size": p.stat().st_size, "digest": "sha256:" + release.digest(p)}
                   for p in output.iterdir()]
+        draft = {"id": 42, "tag_name": "v" + VERSION, "name": f"Aman managed T3 {VERSION} (Linux x64)",
+                 "target_commitish": publisher, "draft": True, "assets": assets}
         actual_run = release.run
         def fake_run(*args, **kwargs):
             if args[0] == "git":
@@ -330,18 +353,21 @@ class ArchiveTests(unittest.TestCase):
                 return json.dumps({"assets": assets}).encode()
             return b""
         with patch.dict(os.environ, {"GITHUB_REPOSITORY": release.REPOSITORY, "GITHUB_SHA": publisher, "AMAN_MANAGED_IMMUTABILITY_VERIFIED": "true"}), \
-                patch.object(release, "api", side_effect=[None, {"sha": publisher}, None,
+                patch.object(release, "list_releases", side_effect=[[], [draft]]), \
+                patch.object(release, "api", side_effect=[{"sha": publisher}, None, draft, {"sha": publisher},
                                                         {"object": {"type": "commit", "sha": "f" * 40}}]), \
                 patch.object(release, "run", side_effect=fake_run) as run:
             with self.assertRaisesRegex(ValueError, "changed during draft"):
                 release.publish(output, self.source)
-            self.assertFalse(any(call.args[:3] == ("gh", "release", "edit") for call in run.call_args_list))
+            self.assertFalse(any(call.args[:3] == ("gh", "api", "--method") for call in run.call_args_list))
 
     def test_mutable_publication_is_immediately_retracted_and_never_attested(self):
         output = self.make_package()
         publisher = self.context["publisherCommit"]
         assets = [{"name": p.name, "size": p.stat().st_size, "digest": "sha256:" + release.digest(p)}
                   for p in output.iterdir()]
+        draft = {"id": 42, "tag_name": "v" + VERSION, "name": f"Aman managed T3 {VERSION} (Linux x64)",
+                 "target_commitish": publisher, "draft": True, "assets": assets}
         actual_run = release.run
         def fake_run(*args, **kwargs):
             if args[0] == "git":
@@ -350,13 +376,73 @@ class ArchiveTests(unittest.TestCase):
                 return json.dumps({"assets": assets, "immutable": False, "draft": False}).encode()
             return b""
         with patch.dict(os.environ, {"GITHUB_REPOSITORY": release.REPOSITORY, "GITHUB_SHA": publisher, "AMAN_MANAGED_IMMUTABILITY_VERIFIED": "true"}), \
-                patch.object(release, "api", side_effect=[None, {"sha": publisher}, None,
+                patch.object(release, "list_releases", side_effect=[[], [draft]]), \
+                patch.object(release, "api", side_effect=[{"sha": publisher}, None, draft, {"sha": publisher}, None,
+                                                        dict(draft, draft=False, immutable=False),
                                                         {"object": {"type": "commit", "sha": publisher}}]), \
                 patch.object(release, "run", side_effect=fake_run) as run:
             with self.assertRaisesRegex(ValueError, "retracted to draft"):
                 release.publish(output, self.source)
-            edits = [call.args for call in run.call_args_list if call.args[:3] == ("gh", "release", "edit")]
-            self.assertEqual(edits[-1][-1], "--draft=true")
+            edits = [call.args for call in run.call_args_list if call.args[:3] == ("gh", "api", "--method")]
+            self.assertEqual(edits[-1][-1], "draft=true")
+            self.assertFalse(any(call.args[:3] == ("gh", "release", "verify") and "--help" not in call.args
+                                 for call in run.call_args_list))
+
+    def test_wrong_draft_identity_or_asset_digest_never_reaches_publication(self):
+        output = self.make_package()
+        publisher = self.context["publisherCommit"]
+        assets = [{"name": p.name, "size": p.stat().st_size, "digest": "sha256:" + release.digest(p)}
+                  for p in output.iterdir()]
+        draft = {"id": 42, "tag_name": "v" + VERSION, "name": f"Aman managed T3 {VERSION} (Linux x64)",
+                 "target_commitish": publisher, "draft": True, "assets": assets}
+        actual_run = release.run
+        def fake_run(*args, **kwargs):
+            return actual_run(*args, **kwargs) if args[0] == "git" else b""
+        for changes, message in (({"target_commitish": "f" * 40}, "draft identity differs"),
+                                 ({"draft": False}, "draft identity differs"),
+                                 ({"assets": []}, "draft upload is incomplete"),
+                                 ({"assets": [dict(assets[0], digest="sha256:" + "0" * 64), *assets[1:]]}, "asset digest differs")):
+            with self.subTest(changes=list(changes)), \
+                    patch.dict(os.environ, {"GITHUB_REPOSITORY": release.REPOSITORY, "GITHUB_SHA": publisher, "AMAN_MANAGED_IMMUTABILITY_VERIFIED": "true"}), \
+                    patch.object(release, "list_releases", side_effect=[[], [draft]]), \
+                    patch.object(release, "api", side_effect=[{"sha": publisher}, None, dict(draft, **changes)]), \
+                    patch.object(release, "run", side_effect=fake_run) as run:
+                with self.assertRaisesRegex(ValueError, message):
+                    release.publish(output, self.source)
+                self.assertFalse(any(call.args[:3] == ("gh", "api", "--method") for call in run.call_args_list))
+
+    def test_main_advancing_after_upload_leaves_the_draft_unpublished(self):
+        output = self.make_package()
+        publisher = self.context["publisherCommit"]
+        assets = [{"name": p.name, "size": p.stat().st_size, "digest": "sha256:" + release.digest(p)}
+                  for p in output.iterdir()]
+        draft = {"id": 42, "tag_name": "v" + VERSION, "name": f"Aman managed T3 {VERSION} (Linux x64)",
+                 "target_commitish": publisher, "draft": True, "assets": assets}
+        actual_run = release.run
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": release.REPOSITORY, "GITHUB_SHA": publisher, "AMAN_MANAGED_IMMUTABILITY_VERIFIED": "true"}), \
+                patch.object(release, "list_releases", side_effect=[[], [draft]]), \
+                patch.object(release, "api", side_effect=[{"sha": publisher}, None, draft, {"sha": "f" * 40}]), \
+                patch.object(release, "run", side_effect=lambda *args, **kwargs: actual_run(*args, **kwargs) if args[0] == "git" else b"") as run:
+            with self.assertRaisesRegex(ValueError, "main advanced during draft upload"):
+                release.publish(output, self.source)
+            self.assertFalse(any(call.args[:3] == ("gh", "api", "--method") for call in run.call_args_list))
+
+    def test_wrong_created_tag_fails_before_any_release_attestation(self):
+        output = self.make_package()
+        publisher = self.context["publisherCommit"]
+        assets = [{"name": p.name, "size": p.stat().st_size, "digest": "sha256:" + release.digest(p)}
+                  for p in output.iterdir()]
+        draft = {"id": 42, "tag_name": "v" + VERSION, "name": f"Aman managed T3 {VERSION} (Linux x64)",
+                 "target_commitish": publisher, "draft": True, "assets": assets}
+        actual_run = release.run
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": release.REPOSITORY, "GITHUB_SHA": publisher, "AMAN_MANAGED_IMMUTABILITY_VERIFIED": "true"}), \
+                patch.object(release, "list_releases", side_effect=[[], [draft]]), \
+                patch.object(release, "api", side_effect=[{"sha": publisher}, None, draft, {"sha": publisher}, None,
+                                                        dict(draft, draft=False, immutable=True),
+                                                        {"object": {"type": "commit", "sha": "f" * 40}}]), \
+                patch.object(release, "run", side_effect=lambda *args, **kwargs: actual_run(*args, **kwargs) if args[0] == "git" else b"") as run:
+            with self.assertRaisesRegex(ValueError, "published canonical tag differs"):
+                release.publish(output, self.source)
             self.assertFalse(any(call.args[:3] == ("gh", "release", "verify") and "--help" not in call.args
                                  for call in run.call_args_list))
 
