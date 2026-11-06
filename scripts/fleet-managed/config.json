@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "distribution": "aman-t3-managed",
+  "upstreamRepository": "pingdotgg/t3code",
+  "releaseRepository": "amanthanvi/t3code",
+  "patchRef": "fix/service-ssh-update-coordination",
+  "patchBaseCommit": "e136e8e3d4cb85a56463d449f1d3835313737e43",
+  "minimumVersion": "0.1.8-nightly.20261106.4247"
+}
