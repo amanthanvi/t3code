@@ -1,10 +1,10 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off - observes the children the launcher spawns with Node built-ins.
-import type * as NodeChildProcess from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - the free-space probe is a plain Promise callback.
 import * as NodeFS from "node:fs";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, it, live } from "@effect/vitest";
 import { SERVER_EXIT_CODE_STATE_DIR_OWNED } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
@@ -23,20 +23,25 @@ import {
 } from "./serviceLauncher.ts";
 import {
   compareExactServiceVersions,
+  decodeManagedRuntimeBuild,
   decodeServiceState,
   isExactServiceVersion,
   SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_RESTART_PENDING_FILE,
 } from "./cloud/serviceProtocol.ts";
+import { acquireOwnershipLock, SERVER_WRITER_FILE } from "./serverOwnershipLock.ts";
+import { acquireServiceInstallerLease } from "./cloud/serviceHandoff.ts";
 
 const spawnedChildren = vi.hoisted((): Array<NodeChildProcess.ChildProcess> => []);
+const spawnListeners = vi.hoisted(() => new Set<(child: NodeChildProcess.ChildProcess) => void>());
 
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeChildProcess>();
   const spawn = (...args: Parameters<typeof actual.spawn>) => {
     const child = actual.spawn(...args);
     spawnedChildren.push(child);
+    for (const listener of spawnListeners) listener(child);
     return child;
   };
   return { ...actual, spawn: spawn as typeof actual.spawn };
@@ -66,6 +71,36 @@ it("orders exact semantic versions without treating build metadata as precedence
   assert.equal(compareExactServiceVersions("2.0.0-alpha-beta", "2.0.0-alpha-alpha"), 1);
   assert.equal(compareExactServiceVersions("2.0.0", "2.0.0-rc.1"), 1);
   assert.equal(compareExactServiceVersions("2.0.0+one", "2.0.0+two"), 0);
+});
+
+it("validates managed build provenance and runtime source namespaces", () => {
+  const build = {
+    schemaVersion: 1,
+    distribution: "aman-t3-managed",
+    buildId: "fleet.1",
+    upstreamVersion: "1.2.3",
+    upstreamSourceCommit: "a".repeat(40),
+    sourceCommit: "b".repeat(40),
+  };
+  assert.deepEqual(decodeManagedRuntimeBuild(build), build);
+  for (const invalid of [
+    { sourceCommit: "../unverified" },
+    { upstreamVersion: "latest" },
+    { distribution: "bad\nlog" },
+    { schemaVersion: 2 },
+    { buildId: "" },
+  ]) {
+    assert.isUndefined(decodeManagedRuntimeBuild({ ...build, ...invalid }));
+  }
+  const state = {
+    protocol: SERVICE_LAUNCHER_PROTOCOL,
+    activeVersion: "1.2.3",
+    runtimeSource: "c".repeat(64),
+  };
+  assert.deepEqual(decodeServiceState(state), state);
+  for (const runtimeSource of ["../versions", "C".repeat(64), "short", 3]) {
+    assert.isUndefined(decodeServiceState({ ...state, runtimeSource }));
+  }
 });
 
 it("rejects contradictory service state", () => {
@@ -125,6 +160,10 @@ const writeFakeRuntime = (
     yield* fs.writeFileString(
       path.join(versionDir, ".install-complete"),
       `${path.basename(versionDir)}\n`,
+    );
+    yield* fs.writeFileString(
+      path.join(versionDir, "package.json"),
+      JSON.stringify({ serviceOwnershipProtocol: 1 }),
     );
     return entryPath;
   });
@@ -216,44 +255,92 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
     }),
   );
 
-  it.effect("stays idle instead of exiting when another server owns the T3 home", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-refused-" });
-      const statePath = path.join(root, "runtime", "service-state.json");
-      yield* writeFakeRuntime(
-        fs,
-        path,
-        path.join(root, "runtime", "versions", "1.0.0"),
-        `process.exit(${SERVER_EXIT_CODE_STATE_DIR_OWNED});\n`,
-      );
-      yield* Effect.promise(() =>
-        writeServiceState(statePath, {
-          protocol: SERVICE_LAUNCHER_PROTOCOL,
-          activeVersion: "1.0.0",
-        }),
-      );
-      const refused = Promise.withResolvers<void>();
-      yield* Effect.acquireRelease(
-        Effect.sync(() =>
-          vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
-            if (String(chunk).includes("owns this T3 home")) refused.resolve();
-            return true;
+  live.each(["child-exit", "exclusive-lease"] as const)(
+    "stays idle when another server owns the T3 home (%s)",
+    (conflict) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-refused-" });
+        const statePath = path.join(root, "runtime", "service-state.json");
+        yield* writeFakeRuntime(
+          fs,
+          path,
+          path.join(root, "runtime", "versions", "1.0.0"),
+          `process.exit(${SERVER_EXIT_CODE_STATE_DIR_OWNED});\n`,
+        );
+        yield* Effect.promise(() =>
+          writeServiceState(statePath, {
+            protocol: SERVICE_LAUNCHER_PROTOCOL,
+            activeVersion: "1.0.0",
           }),
-        ),
-        (spy) => Effect.sync(() => spy.mockRestore()),
-      );
-      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
-      let completed = false;
-      const running = launcher.run().finally(() => {
-        completed = true;
-      });
-      yield* Effect.promise(() => refused.promise);
-      assert.isFalse(completed);
-      yield* Effect.promise(() => launcher.stop("SIGTERM"));
-      yield* Effect.promise(() => running);
-    }),
+        );
+        const refused = Promise.withResolvers<void>();
+        yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+              if (String(chunk).includes("owns this T3 home")) refused.resolve();
+              return true;
+            }),
+          ),
+          (spy) => Effect.sync(() => spy.mockRestore()),
+        );
+        if (conflict === "exclusive-lease") {
+          const lockPath = path.join(root, "userdata", "server-owner.sqlite");
+          yield* fs.makeDirectory(path.dirname(lockPath), { recursive: true });
+          yield* Effect.acquireRelease(
+            Effect.promise(async () => {
+              const holder = NodeChildProcess.spawn(
+                process.execPath,
+                [
+                  "--input-type=module",
+                  "-e",
+                  `
+import { DatabaseSync } from "node:sqlite";
+const db = new DatabaseSync(${JSON.stringify(lockPath)});
+db.exec("BEGIN EXCLUSIVE");
+process.send("ready");
+process.on("message", () => {});
+`,
+                ],
+                { stdio: ["ignore", "ignore", "ignore", "ipc"] },
+              );
+              await new Promise<void>((resolve, reject) => {
+                holder.once("message", () => resolve());
+                holder.once("error", reject);
+                holder.once("exit", () =>
+                  reject(new Error("Exclusive holder exited before readiness")),
+                );
+              });
+              return holder;
+            }),
+            (holder) =>
+              Effect.promise(
+                () =>
+                  new Promise<void>((resolve) => {
+                    if (holder.exitCode !== null || holder.signalCode !== null) {
+                      resolve();
+                      return;
+                    }
+                    holder.once("exit", () => resolve());
+                    holder.kill("SIGTERM");
+                  }),
+              ),
+          );
+        }
+        const launcher = new Launcher(
+          root,
+          yield* Effect.promise(() => readServiceState(statePath)),
+        );
+        let completed = false;
+        const running = launcher.run().finally(() => {
+          completed = true;
+        });
+        yield* Effect.promise(() => refused.promise);
+        assert.isFalse(completed);
+        yield* Effect.promise(() => launcher.stop("SIGTERM"));
+        yield* Effect.promise(() => running);
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("commits only after the trial reports prepared", () =>
@@ -307,6 +394,128 @@ if (context.update?.status === "pending") {
       assert.equal(state.activeVersion, "1.1.0");
       assert.equal(state.update?.status, "committed");
     }),
+  );
+
+  live.each([undefined, "1".repeat(64)])(
+    "reserves the home while service children hand off (%s)",
+    (runtimeSource) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-ssh-race-" });
+        const statePath = path.join(root, "runtime", "service-state.json");
+        const databasePath = path.join(root, "userdata", "state.sqlite");
+        const lockPath = path.join(root, "userdata", "server-owner.sqlite");
+        yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
+        yield* fs.writeFileString(databasePath, "canonical history");
+        const helper = new URL("./serverOwnershipLock.ts", import.meta.url).href;
+        const childSource = `
+import { acquireOwnershipLock } from ${JSON.stringify(helper)};
+const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);
+const gate = acquireOwnershipLock(${JSON.stringify(lockPath)}, context.ownershipProtocol === 1 ? "shared" : "exclusive");
+const writer = acquireOwnershipLock(${JSON.stringify(path.join(root, "userdata", "server-writer.sqlite"))}, "exclusive");
+if (context.update?.status === "pending") {
+  process.on("message", (message) => {
+    if (message.type === "committed") process.exit(0);
+  });
+  process.send({ type: "prepared", updateId: context.update.id });
+} else {
+  process.once("SIGTERM", () => {
+    writer.db.close();
+    gate.db.close();
+    process.send({ type: "fixture-gap" });
+  });
+  process.on("message", (message) => {
+    if (message.type === "fixture-release") process.exit(0);
+  });
+  process.send({ type: "request-update", targetVersion: "1.1.0", dbPath: ${JSON.stringify(databasePath)} });
+}
+`;
+        const versionsDir =
+          runtimeSource === undefined
+            ? path.join(root, "runtime", "versions")
+            : path.join(root, "runtime", "sources", runtimeSource, "versions");
+        for (const version of ["1.0.0", "1.1.0"]) {
+          yield* writeFakeRuntime(fs, path, path.join(versionsDir, version), childSource);
+          if (runtimeSource !== undefined)
+            yield* writeFakeRuntime(
+              fs,
+              path,
+              path.join(root, "runtime", "versions", version),
+              "process.exit(99);",
+            );
+        }
+        yield* Effect.promise(() =>
+          writeServiceState(statePath, {
+            protocol: SERVICE_LAUNCHER_PROTOCOL,
+            activeVersion: "1.0.0",
+            ...(runtimeSource === undefined ? {} : { runtimeSource }),
+          }),
+        );
+        const gap = Promise.withResolvers<NodeChildProcess.ChildProcess>();
+        const listener = (child: NodeChildProcess.ChildProcess) =>
+          child.on("message", (message) => {
+            if (
+              typeof message === "object" &&
+              message !== null &&
+              "type" in message &&
+              message.type === "fixture-gap"
+            )
+              gap.resolve(child);
+          });
+        yield* Effect.acquireRelease(
+          Effect.sync(() => spawnListeners.add(listener)),
+          () =>
+            Effect.sync(() => {
+              spawnListeners.delete(listener);
+            }),
+        );
+        const launcher = new Launcher(
+          root,
+          yield* Effect.promise(() => readServiceState(statePath)),
+        );
+        const running = launcher.run().then(
+          () => {
+            throw new Error("fixture launcher unexpectedly completed");
+          },
+          () => undefined,
+        );
+        const old = yield* Effect.promise(() => gap.promise);
+        const legacySource = `
+import { DatabaseSync } from "node:sqlite";
+const db = new DatabaseSync(${JSON.stringify(lockPath)});
+try { db.exec("PRAGMA busy_timeout=0; BEGIN EXCLUSIVE;"); process.stdout.write("acquired"); }
+catch (error) { if (error.errcode !== 5) throw error; process.stdout.write("busy"); }
+finally { db.close(); }
+`;
+        const legacyStart = () =>
+          new Promise<string>((resolve, reject) => {
+            NodeChildProcess.execFile(
+              process.execPath,
+              ["--input-type=module", "-e", legacySource],
+              (error, stdout) => {
+                if (error) reject(error);
+                else resolve(stdout);
+              },
+            );
+          });
+        const attempts = yield* Effect.promise(() =>
+          Promise.all([legacyStart(), legacyStart()]),
+        ).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              old.send({ type: "fixture-release" });
+            }),
+          ),
+        );
+        yield* Effect.promise(() => running);
+        assert.deepEqual(attempts, ["busy", "busy"]);
+        const state = yield* Effect.promise(() => readServiceState(statePath));
+        assert.equal(state.activeVersion, "1.1.0");
+        assert.equal(state.update?.status, "committed");
+        assert.equal(state.runtimeSource, runtimeSource);
+        assert.equal(yield* fs.readFileString(databasePath), "canonical history");
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("rolls back invalid trials with the startup environment", () =>
@@ -464,7 +673,11 @@ if (context.update?.status === "pending") {
       }),
   );
 
-  const requestRejectedUpdate = (backupSpaceProbe: Partial<BackupSpaceProbe>) =>
+  const requestRejectedUpdate = (
+    backupSpaceProbe: Partial<BackupSpaceProbe>,
+    legacyTarget = false,
+    serviceSelection?: "installing" | "staged",
+  ) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -502,6 +715,23 @@ if (context.update?.status === "pending") {
           path,
           path.join(root, "runtime", "versions", version),
           childSource,
+        );
+      }
+      if (legacyTarget) {
+        yield* fs.writeFileString(
+          path.join(root, "runtime", "versions", "1.1.0", "package.json"),
+          "{}",
+        );
+      }
+      if (serviceSelection === "installing") {
+        yield* Effect.acquireRelease(
+          Effect.sync(() => acquireServiceInstallerLease(root)),
+          (lease) => Effect.sync(() => lease.db.close()),
+        );
+      } else if (serviceSelection === "staged") {
+        yield* fs.writeFileString(
+          path.join(root, "runtime", SERVICE_RESTART_PENDING_FILE),
+          "1.1.0\n",
         );
       }
       yield* Effect.promise(() =>
@@ -542,6 +772,75 @@ if (context.update?.status === "pending") {
       assert.isFalse(trialStarted);
       assert.equal(state.activeVersion, "1.0.0");
       assert.isUndefined(state.update);
+    }),
+  );
+
+  it.effect("refuses an uncooperative target before stopping the current server", () =>
+    Effect.gen(function* () {
+      const { reason, trialStarted, state } = yield* requestRejectedUpdate({}, true);
+      assert.include(reason, "missing or incomplete");
+      assert.isFalse(trialStarted);
+      assert.equal(state.activeVersion, "1.0.0");
+      assert.isUndefined(state.update);
+    }),
+  );
+
+  live.each(["installing", "staged"] as const)(
+    "does not overwrite a CLI service selection (%s)",
+    (selection) =>
+      Effect.gen(function* () {
+        const { reason, trialStarted, state } = yield* requestRejectedUpdate({}, false, selection);
+        assert.include(
+          reason,
+          selection === "installing" ? "service selection" : "CLI update is staged",
+        );
+        assert.isFalse(trialStarted);
+        assert.equal(state.activeVersion, "1.0.0");
+        assert.isUndefined(state.update);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not restore a pending update beside a surviving service writer", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-orphan-" });
+      const databasePath = path.join(root, "userdata", "state.sqlite");
+      yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
+      yield* fs.writeFileString(databasePath, "surviving writer history");
+      const backup = path.join(root, "runtime", "db-backup", "interrupted");
+      yield* fs.makeDirectory(backup, { recursive: true });
+      yield* fs.writeFileString(path.join(backup, "database"), "old backup");
+      const writer = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          acquireOwnershipLock(path.join(root, "userdata", SERVER_WRITER_FILE), "exclusive"),
+        ),
+        (lease) => Effect.sync(() => lease.db.close()),
+      );
+      const state = {
+        protocol: SERVICE_LAUNCHER_PROTOCOL,
+        activeVersion: "1.0.0",
+        update: {
+          id: "interrupted",
+          status: "pending",
+          fromVersion: "1.0.0",
+          targetVersion: "1.1.0",
+          dbPath: databasePath,
+        },
+      } as const;
+      const statePath = path.join(root, "runtime", "service-state.json");
+      yield* Effect.promise(() => writeServiceState(statePath, state));
+      const failure = yield* Effect.promise(() =>
+        new Launcher(root, state).run().then(
+          () => undefined,
+          (cause: unknown) => cause,
+        ),
+      );
+      assert.instanceOf(failure, Error);
+      assert.equal(writer.db.isOpen, true);
+      assert.equal(yield* fs.readFileString(databasePath), "surviving writer history");
+      assert.equal(yield* fs.readFileString(path.join(backup, "database")), "old backup");
+      assert.deepEqual(yield* Effect.promise(() => readServiceState(statePath)), state);
     }),
   );
 

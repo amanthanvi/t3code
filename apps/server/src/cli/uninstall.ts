@@ -13,7 +13,7 @@ import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 
 import * as BootService from "../cloud/bootService.ts";
 import {
-  launcherOwnsVersionsDir,
+  launcherOwnsRuntimePath,
   pinnedRuntimeVersionsDir,
   windowsShimTarget,
 } from "../cloud/pinnedRuntime.ts";
@@ -37,10 +37,10 @@ export interface UninstallPlan {
   readonly userdataDir: string;
 }
 
-/** Delete only launchers targeting this home's runtime/versions. */
+/** Delete only launchers targeting this home's official or managed runtime cache. */
 export const findOwnedLauncher = Effect.fn("cli.uninstall.find_launcher")(function* (input: {
   readonly launchedAs: string | undefined;
-  readonly versionsDir: string;
+  readonly baseDir: string;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -51,14 +51,14 @@ export const findOwnedLauncher = Effect.fn("cli.uninstall.find_launcher")(functi
     if (shimPath === undefined) return undefined;
     const contents = yield* fs.readFileString(shimPath).pipe(Effect.option);
     const target = Option.isSome(contents) ? windowsShimTarget(contents.value) : undefined;
-    return target !== undefined && launcherOwnsVersionsDir(path, input.versionsDir, target)
+    return target !== undefined && launcherOwnsRuntimePath(path, input.baseDir, target)
       ? shimPath
       : undefined;
   }
   const linkTarget = yield* fs.readLink(input.launchedAs).pipe(Effect.option);
   if (Option.isNone(linkTarget)) return undefined;
   const resolved = path.resolve(path.dirname(input.launchedAs), linkTarget.value);
-  return launcherOwnsVersionsDir(path, input.versionsDir, resolved) ? input.launchedAs : undefined;
+  return launcherOwnsRuntimePath(path, input.baseDir, resolved) ? input.launchedAs : undefined;
 });
 
 // cmd.exe needs verbatim quoting and a literal path, with delayed expansion disabled.
@@ -97,7 +97,7 @@ const planUninstall = Effect.fn("cli.uninstall.plan")(function* (input: {
   const launchedAs = (yield* HostProcess.IsExecutable) ? yield* resolveLauncherPath : undefined;
   const plan: UninstallPlan = {
     service: status.supported && status.installed && servesThisHome,
-    launcher: yield* findOwnedLauncher({ launchedAs, versionsDir }),
+    launcher: yield* findOwnedLauncher({ launchedAs, baseDir: input.baseDir }),
     runtimeDir: (yield* fs.exists(runtimeDir).pipe(Effect.orElseSucceed(() => false)))
       ? runtimeDir
       : undefined,

@@ -10,6 +10,7 @@ import {
   decodeServiceLauncherContext,
   decodeServiceLauncherParentMessage,
   SERVICE_LAUNCHER_CONTEXT_ENV,
+  SERVICE_OWNERSHIP_PROTOCOL,
   type ServiceLauncherChildMessage,
   type ServiceLauncherParentMessage,
 } from "./serviceProtocol.ts";
@@ -132,8 +133,8 @@ const resolveStartup = Effect.fn("cloud.service_launcher_client.resolve_startup"
 
 export const resolveServiceLauncherMode = Effect.fn("cloud.service_launcher_client.resolve_mode")(
   function* () {
-    const { managed } = yield* resolveStartup();
-    return { managed };
+    const { managed, context } = yield* resolveStartup();
+    return { managed, serviceOwnership: context?.ownershipProtocol === SERVICE_OWNERSHIP_PROTOCOL };
   },
 );
 

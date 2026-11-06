@@ -1,7 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - The ownership lock is a native SQLite handle held for the server's lifetime.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
-import * as NodeSqlite from "node:sqlite";
 
 import { SERVER_EXIT_CODE_STATE_DIR_OWNED } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -28,6 +27,11 @@ import {
   serviceStateActiveVersion,
 } from "./cloud/serviceProtocol.ts";
 import * as ProcessRunner from "./processRunner.ts";
+import {
+  acquireOwnershipLock,
+  SERVER_OWNER_FILE,
+  SERVER_WRITER_FILE,
+} from "./serverOwnershipLock.ts";
 import {
   clearPersistedServerRuntimeState,
   isProcessAlive,
@@ -175,40 +179,35 @@ const olderBootServiceHome = Effect.fn("olderBootServiceHome")(
 );
 
 /**
- * Hold an exclusive lock on the state directory until the scope closes. The
- * lock is an exclusive transaction on `server-owner.sqlite`, which never holds
- * data and must never be unlinked: the OS releases it when the process exits,
- * even on SIGKILL, so a crashed owner never blocks the next start.
+ * Hold writer ownership until the scope closes. Managed children share the
+ * launcher's compatibility reservation; standalone servers exclude all peers.
+ * These empty lockfiles must never be unlinked. Native locks survive a launcher
+ * crash in its child and release automatically when the holding process exits.
  */
 export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(function* (
   statePath: string,
+  options?: { readonly serviceManaged?: boolean },
 ) {
   const stateDir = NodePath.dirname(statePath);
   const random = yield* SecureRandom.SecureRandom;
   const ownerId = yield* random
     .uuidV4()
     .pipe(Effect.mapError((cause) => new ServerOwnershipError({ stateDir, cause })));
-  const lockPath = NodePath.join(stateDir, "server-owner.sqlite");
-  const lock = yield* Effect.acquireRelease(
+  const locks = yield* Effect.acquireRelease(
     Effect.try({
       try: () => {
-        NodeFS.mkdirSync(stateDir, { recursive: true });
-        let before = NodeFS.statSync(lockPath, { bigint: true, throwIfNoEntry: false });
-        if (before === undefined) {
-          NodeFS.closeSync(NodeFS.openSync(lockPath, "a", 0o644));
-          before = NodeFS.statSync(lockPath, { bigint: true });
-        }
-        const db = new NodeSqlite.DatabaseSync(lockPath);
+        const gate = acquireOwnershipLock(
+          NodePath.join(stateDir, SERVER_OWNER_FILE),
+          options?.serviceManaged === true ? "shared" : "exclusive",
+        );
         try {
-          db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;");
-          const identity = NodeFS.statSync(lockPath, { bigint: true });
-          return {
-            db,
-            identity,
-            replacedDuringAcquire: before.dev !== identity.dev || before.ino !== identity.ino,
-          };
+          const writer = acquireOwnershipLock(
+            NodePath.join(stateDir, SERVER_WRITER_FILE),
+            "exclusive",
+          );
+          return [gate, writer] as const;
         } catch (cause) {
-          db.close();
+          gate.db.close();
           throw cause;
         }
       },
@@ -217,7 +216,7 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
           ? new ServerAlreadyRunningError({ stateDir })
           : new ServerOwnershipError({ stateDir, cause }),
     }),
-    ({ db }) =>
+    (locks) =>
       readPersistedServerRuntimeState(statePath).pipe(
         Effect.flatMap((state) =>
           Option.isSome(state) && state.value.ownerId === ownerId
@@ -225,7 +224,15 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
             : Effect.void,
         ),
         Effect.ignore({ log: true }),
-        Effect.ensuring(Effect.sync(() => db.close())),
+        Effect.ensuring(
+          Effect.sync(() => {
+            try {
+              locks[1].db.close();
+            } finally {
+              locks[0].db.close();
+            }
+          }),
+        ),
       ),
   );
 
@@ -244,38 +251,41 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
     return yield* new OlderBootServiceError({ baseDir: olderServiceHome });
   }
 
-  yield* Effect.gen(function* () {
-    let lost = lock.replacedDuringAcquire;
-    let statWarningLogged = false;
-    while (!lost) {
-      yield* Effect.sleep("5 seconds");
-      // Closing another descriptor for this inode releases SQLite's POSIX locks. Stat by path only.
-      const current = yield* Effect.sync(() => {
-        try {
-          return NodeFS.statSync(lockPath, { bigint: true, throwIfNoEntry: false });
-        } catch (cause) {
-          return cause instanceof Error && "code" in cause ? String(cause.code) : "unknown";
+  for (const lock of locks) {
+    const lockPath = lock.lockPath;
+    yield* Effect.gen(function* () {
+      let lost = lock.replacedDuringAcquire;
+      let statWarningLogged = false;
+      while (!lost) {
+        yield* Effect.sleep("5 seconds");
+        // Closing another descriptor for this inode releases SQLite's POSIX locks. Stat by path only.
+        const current = yield* Effect.sync(() => {
+          try {
+            return NodeFS.statSync(lockPath, { bigint: true, throwIfNoEntry: false });
+          } catch (cause) {
+            return cause instanceof Error && "code" in cause ? String(cause.code) : "unknown";
+          }
+        });
+        if (typeof current === "string") {
+          if (!statWarningLogged) {
+            yield* Effect.logWarning(
+              `Cannot check server ownership lock at ${lockPath} (${current}).`,
+            );
+            statWarningLogged = true;
+          }
+          continue;
         }
-      });
-      if (typeof current === "string") {
-        if (!statWarningLogged) {
-          yield* Effect.logWarning(
-            `Cannot check server ownership lock at ${lockPath} (${current}).`,
-          );
-          statWarningLogged = true;
-        }
-        continue;
+        statWarningLogged = false;
+        lost =
+          current === undefined ||
+          current.dev !== lock.identity.dev ||
+          current.ino !== lock.identity.ino;
       }
-      statWarningLogged = false;
-      lost =
-        current === undefined ||
-        current.dev !== lock.identity.dev ||
-        current.ino !== lock.identity.ino;
-    }
-    yield* Effect.logError(
-      `Server ownership lock at ${lockPath} was deleted or replaced. Another server may now share this T3 home. Stop any other server using this home, then restart this server. Do not delete server-owner.sqlite while a server is running.`,
-    );
-  }).pipe(Effect.forkScoped);
+      yield* Effect.logError(
+        `Server ownership lock at ${lockPath} was deleted or replaced. Another server may now share this T3 home. Stop any other server using this home, then restart this server. Do not delete server-owner.sqlite while a server is running.`,
+      );
+    }).pipe(Effect.forkScoped);
+  }
 
   return {
     publish: (state: PersistedServerRuntimeState) =>

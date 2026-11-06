@@ -17,7 +17,11 @@ import { afterEach, vi } from "vite-plus/test";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
-import { pinnedRuntimePaths, prunePinnedRuntimes } from "../cloud/pinnedRuntime.ts";
+import {
+  pinnedRuntimePaths,
+  prunePinnedRuntimes,
+  runtimeSourceForReleaseBaseUrl,
+} from "../cloud/pinnedRuntime.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
@@ -66,6 +70,87 @@ it.effect("authenticates each release page until the requested channel is found"
     assert.equal(version, "1.2.3");
     assert.deepStrictEqual(pages, ["1", "2"]);
   }),
+);
+
+it.effect(
+  "resolves managed GitHub releases through their repository index and skips incomplete or draft assets",
+  () =>
+    Effect.gen(function* () {
+      const version = "0.1.8-nightly.20261106.4247";
+      const assets = [
+        "managed-build.json",
+        "provenance.json",
+        "SHA256SUMS",
+        `t3-${version}-linux-x64.tar.gz`,
+      ].map((name) => ({ name }));
+      const pages: string[] = [];
+      const resolved = yield* resolveMirrorVersion(
+        { organization: "Aman", feedUrl: "https://github.com/amanthanvi/t3code/releases/download" },
+        "nightly",
+      ).pipe(
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HostProcess.Architecture, "x64"),
+        Effect.provideService(HostProcess.Environment, { GH_TOKEN: "gh-token" }),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            const url = new URL(request.url);
+            assert.equal(url.origin, "https://api.github.com");
+            assert.equal(url.pathname, "/repos/amanthanvi/t3code/releases");
+            assert.equal(request.headers.authorization, "Bearer gh-token");
+            const page = url.searchParams.get("page")!;
+            pages.push(page);
+            const releases =
+              page === "1"
+                ? [
+                    { tag_name: `v${version}`, draft: true, immutable: true, assets },
+                    { tag_name: `v${version}`, draft: false, immutable: false, assets },
+                    {
+                      tag_name: `v${version}`,
+                      draft: false,
+                      immutable: true,
+                      assets: assets.filter((asset) => asset.name !== "provenance.json"),
+                    },
+                    {
+                      tag_name: `v${version}`,
+                      draft: false,
+                      immutable: true,
+                      assets: assets.filter((asset) => !asset.name.endsWith(".tar.gz")),
+                    },
+                  ]
+                : [{ tag_name: `v${version}`, draft: false, immutable: true, assets }];
+            return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(releases)));
+          }),
+        ),
+      );
+      assert.equal(resolved, version);
+      assert.deepEqual(pages, ["1", "2"]);
+    }),
+);
+
+it.effect(
+  "does not fall back to official releases when a managed GitHub repository has no eligible archive",
+  () =>
+    Effect.gen(function* () {
+      const requests: string[] = [];
+      const error = yield* resolveMirrorVersion(
+        { organization: "Aman", feedUrl: "https://github.com/amanthanvi/t3code/releases/download" },
+        "nightly",
+      ).pipe(
+        Effect.flip,
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HostProcess.Architecture, "x64"),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            requests.push(new URL(request.url).pathname);
+            return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json([])));
+          }),
+        ),
+      );
+      assert.include(error.message, "No published managed nightly release");
+      assert.deepEqual(requests, ["/repos/amanthanvi/t3code/releases"]);
+    }),
 );
 
 it.effect("reads the newest version from the update feed file a mirror publishes", () =>
@@ -216,6 +301,41 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
 
       assert.deepStrictEqual(Option.getOrUndefined(repointed), launcher);
       assert.equal(yield* fs.readLink(launcher), newExe);
+    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+  );
+
+  it.effect("repoints across official and managed cache roots without adopting another home", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-managed-launcher-" });
+      const official = pinnedRuntimePaths(path, baseDir, "1.0.0", "linux");
+      const managed = pinnedRuntimePaths(
+        path,
+        baseDir,
+        "1.0.0",
+        "linux",
+        runtimeSourceForReleaseBaseUrl("https://managed.example/releases"),
+      );
+      for (const runtime of [official, managed]) {
+        yield* fs.makeDirectory(runtime.versionDir, { recursive: true });
+        yield* fs.writeFileString(runtime.entryPath, "");
+      }
+      const launcher = path.join(baseDir, "t3");
+      yield* fs.symlink(official.entryPath, launcher);
+      for (const target of [managed, official]) {
+        assert.equal(
+          Option.getOrUndefined(
+            yield* repointLauncher({
+              launchedAs: launcher,
+              baseDir,
+              targetEntryPath: target.entryPath,
+            }),
+          ),
+          launcher,
+        );
+        assert.equal(yield* fs.readLink(launcher), target.entryPath);
+      }
     }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
   );
 
@@ -457,6 +577,202 @@ const withoutTerminals = Effect.acquireRelease(
 );
 
 it.layer(NodeServices.layer)("t3 update with a background service", (it) => {
+  it.effect(
+    "a no-argument update resolves managed GitHub releases and bootstraps the same canonical version",
+    () =>
+      Effect.gen(function* () {
+        yield* withoutTerminals;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-same-version-source-" });
+        const version = packageJson.version;
+        const feedUrl = "https://github.com/amanthanvi/t3code/releases/download";
+        const runtimeSource = runtimeSourceForReleaseBaseUrl(feedUrl)!;
+        const runtime = pinnedRuntimePaths(path, baseDir, version, "linux", runtimeSource);
+        const provenance = {
+          schemaVersion: 1,
+          distribution: "aman-t3-managed",
+          buildId: "v1",
+          upstreamVersion: version,
+          upstreamSourceCommit: "a".repeat(40),
+          sourceCommit: "b".repeat(40),
+        };
+        const archiveSha256 = "c".repeat(64);
+        yield* fs.makeDirectory(runtime.versionDir, { recursive: true });
+        yield* fs.writeFileString(runtime.entryPath, "");
+        yield* fs.writeFileString(runtime.sentinelPath, `${version}\n`);
+        yield* fs.writeFileString(
+          path.join(runtime.versionDir, "managed-build.json"),
+          JSON.stringify(provenance),
+        );
+        yield* fs.writeFileString(
+          path.join(runtime.versionDir, ".managed-install.json"),
+          JSON.stringify({ schemaVersion: 1, runtimeSource, version, archiveSha256, provenance }),
+        );
+        const requests: string[] = [];
+        const starts: boolean[] = [];
+        const service = Layer.mock(BootService.BootService, {
+          status: Effect.succeed({
+            supported: true,
+            installed: true,
+            installedVersion: version,
+            installedBaseDir: baseDir,
+            problems: [],
+            current: false,
+            unitPath: path.join(baseDir, "unit"),
+            logPath: path.join(baseDir, "log"),
+          }),
+          install: (options) => {
+            starts.push(options?.start ?? true);
+            return Effect.succeed({
+              program: [runtime.entryPath],
+              baseDir,
+              unitPath: path.join(baseDir, "unit"),
+              logPath: path.join(baseDir, "log"),
+            });
+          },
+        });
+        vi.spyOn(BootService, "layer").mockReturnValue(service);
+        const output = yield* runUpdate({
+          baseDir,
+          logsDir: baseDir,
+          serverRuntimeStatePath: path.join(baseDir, "server-runtime.json"),
+          channel: undefined,
+          requestedVersion: undefined,
+          allowDowngrade: false,
+          assumeYes: false,
+        }).pipe(
+          Effect.andThen(TestConsole.logLines),
+          Effect.map((lines) => lines.join("\n")),
+          Effect.provide(
+            Layer.mergeAll(
+              service,
+              Layer.fresh(TestConsole.layer),
+              ManagedPolicy.layerTest({
+                schemaVersion: 1,
+                organization: "Managed",
+                limits: { updates: { mode: "auto", feedUrl } },
+              }),
+              Layer.succeed(ProcessRunner.ProcessRunner, {
+                run: (input) =>
+                  unrelatedLsof
+                    .run(input)
+                    .pipe(Effect.map((result) => ({ ...result, stdout: `t3 v${version}\n` }))),
+              }),
+              Layer.succeed(
+                HttpClient.HttpClient,
+                HttpClient.make((request) => {
+                  requests.push(request.url);
+                  return Effect.succeed(
+                    HttpClientResponse.fromWeb(
+                      request,
+                      new URL(request.url).pathname.endsWith("/releases")
+                        ? Response.json([
+                            {
+                              tag_name: `v${version}`,
+                              draft: false,
+                              immutable: true,
+                              assets: [
+                                "managed-build.json",
+                                "provenance.json",
+                                "SHA256SUMS",
+                                `t3-${version}-linux-x64.tar.gz`,
+                              ].map((name) => ({ name })),
+                            },
+                          ])
+                        : new URL(request.url).hostname === "api.github.com"
+                          ? Response.json({
+                              tag_name: `v${version}`,
+                              immutable: true,
+                              draft: false,
+                            })
+                          : new Response(`${archiveSha256}  t3-${version}-linux-x64.tar.gz\n`),
+                    ),
+                  );
+                }),
+              ),
+            ),
+          ),
+        );
+        assert.include(output, runtime.entryPath);
+        assert.deepEqual(starts, [false]);
+        assert.deepEqual(requests, [
+          "https://api.github.com/repos/amanthanvi/t3code/releases?per_page=100&page=1",
+          `https://api.github.com/repos/amanthanvi/t3code/releases/tags/v${version}`,
+          `${feedUrl}/v${version}/SHA256SUMS`,
+        ]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HostProcess.Architecture, "x64"),
+        Effect.provideService(HostProcess.IsExecutable, false),
+        Effect.provideService(HostProcess.Environment, { PATH: "" }),
+      ),
+  );
+
+  it.effect(
+    "switches a managed bootstrap from another directory back to the official same-version cache",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-public-bootstrap-" });
+        const bootstrap = yield* fs.makeTempDirectoryScoped({ prefix: "t3-managed-bootstrap-" });
+        yield* fs.writeFileString(path.join(bootstrap, "t3"), "");
+        yield* fs.writeFileString(path.join(bootstrap, "managed-build.json"), "{}");
+        const version = packageJson.version;
+        const runtime = pinnedRuntimePaths(path, baseDir, version, "linux");
+        yield* fs.makeDirectory(runtime.versionDir, { recursive: true });
+        yield* fs.writeFileString(runtime.entryPath, "");
+        yield* fs.writeFileString(runtime.sentinelPath, `${version}\n`);
+        const output = yield* runUpdate({
+          baseDir,
+          logsDir: baseDir,
+          serverRuntimeStatePath: path.join(baseDir, "server-runtime.json"),
+          channel: undefined,
+          requestedVersion: version,
+          allowDowngrade: false,
+          assumeYes: false,
+        }).pipe(
+          Effect.andThen(TestConsole.logLines),
+          Effect.map((lines) => lines.join("\n")),
+          Effect.provideService(HostProcess.ExecutablePath, path.join(bootstrap, "t3")),
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.fresh(TestConsole.layer),
+              ManagedPolicy.layerTest(),
+              Layer.mock(BootService.BootService, {
+                status: Effect.succeed({
+                  supported: true,
+                  installed: false,
+                  current: false,
+                  unitPath: path.join(baseDir, "unit"),
+                  logPath: path.join(baseDir, "log"),
+                }),
+              }),
+              Layer.succeed(ProcessRunner.ProcessRunner, {
+                run: (input) =>
+                  unrelatedLsof
+                    .run(input)
+                    .pipe(Effect.map((result) => ({ ...result, stdout: `t3 v${version}\n` }))),
+              }),
+              Layer.succeed(
+                HttpClient.HttpClient,
+                HttpClient.make(() => Effect.die("must reuse verified official cache")),
+              ),
+            ),
+          ),
+        );
+        assert.include(output, runtime.entryPath);
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HostProcess.Architecture, "x64"),
+        Effect.provideService(HostProcess.IsExecutable, false),
+        Effect.provideService(HostProcess.Environment, { PATH: "" }),
+      ),
+  );
+
   it.effect("names the version a service with a pending restart still runs", () =>
     Effect.gen(function* () {
       yield* withoutTerminals;

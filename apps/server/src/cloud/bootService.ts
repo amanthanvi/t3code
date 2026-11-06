@@ -15,12 +15,21 @@ import * as Schema from "effect/Schema";
 import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 
 import * as ProcessRunner from "../processRunner.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import { managedUpdateMirror } from "../policy/managedUpdates.ts";
+import {
+  acquireOwnershipLock,
+  SERVER_OWNER_FILE,
+  SERVER_WRITER_FILE,
+} from "../serverOwnershipLock.ts";
+import { acquireServiceInstallerLease, prepareServiceHandoff } from "./serviceHandoff.ts";
+import { decodeServicePreflightResult } from "./servicePreflight.ts";
 import {
   ensurePinnedRuntimeInstalled,
-  launcherOwnsVersionsDir,
+  launcherOwnsRuntimePath,
   pinnedRuntimeCommand,
   pinnedRuntimePaths,
-  pinnedRuntimeVersionsDir,
+  runtimeSourceForReleaseBaseUrl,
   PinnedRuntimeInstallError,
 } from "./pinnedRuntime.ts";
 import {
@@ -389,6 +398,7 @@ function selectBootServiceManager(input: {
 const decodeSystemdUnitPaths = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ data: Schema.Array(Schema.String) })),
 );
+const decodePreflightJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
 // The manager may not share the installer's environment; JSON preserves spaces in its paths.
 const readSystemdUnitDirectory = Effect.fn("cloud.boot_service.read_systemd_unit_directory")(
@@ -457,6 +467,15 @@ export class BootServiceInstallError extends Schema.TaggedError<BootServiceInsta
   }
 }
 
+export class BootServiceHandoffError extends Schema.TaggedError<BootServiceHandoffError>()(
+  "BootServiceHandoffError",
+  { reason: Schema.String, cause: Schema.optional(Schema.Defect()) },
+) {
+  override get message(): string {
+    return this.reason;
+  }
+}
+
 const BootServiceProblem = Schema.Literals([
   "user-manager-unavailable",
   "linger-unavailable",
@@ -518,6 +537,7 @@ export type BootServiceError =
   | BootServiceUnsupportedError
   | BootServiceCommandError
   | BootServiceInstallError
+  | BootServiceHandoffError
   | BootServicePrerequisiteError
   | BootServiceUpdatePendingError
   | BootServiceDowngradeRefusedError;
@@ -527,6 +547,7 @@ export interface BootServiceStatus {
   readonly installed: boolean;
   readonly current: boolean;
   readonly installedVersion?: string;
+  readonly installedRuntimeSource?: string;
   readonly installedBaseDir?: string;
   readonly problems?: ReadonlyArray<BootServiceProblem>;
   readonly unitPath: string;
@@ -575,9 +596,11 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const arch = yield* HostProcess.Architecture;
   const uid = yield* HostProcess.UserId;
   const httpClient = yield* HttpClient.HttpClient;
-  const releaseBaseUrl = Option.getOrUndefined(
-    yield* Config.String(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option),
-  );
+  const policy = yield* ManagedPolicy.ManagedPolicy;
+  const releaseBaseUrl =
+    managedUpdateMirror(policy.document)?.feedUrl ??
+    Option.getOrUndefined(yield* Config.String(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option));
+  const runtimeSource = runtimeSourceForReleaseBaseUrl(releaseBaseUrl);
   const homeDir = yield* Config.String("HOME").pipe(Config.withDefault(""));
   const xdgConfigHome = yield* Config.String("XDG_CONFIG_HOME").pipe(Config.withDefault(""));
   const installerPath = yield* Config.String("PATH").pipe(Config.withDefault(""));
@@ -588,8 +611,13 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
   const host = input.host ?? { execPath: hostExecPath };
-  const runtimePaths = pinnedRuntimePaths(path, input.baseDir, input.cliVersion, platform);
-  const versionsDir = pinnedRuntimeVersionsDir(path, input.baseDir);
+  const runtimePaths = pinnedRuntimePaths(
+    path,
+    input.baseDir,
+    input.cliVersion,
+    platform,
+    runtimeSource,
+  );
   const xmlSafeInstallerDirectories = installerPath.split(":").filter(
     (directory) =>
       directory.length > 0 &&
@@ -612,7 +640,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         "/usr/sbin",
         "/sbin",
       ].map((directory) =>
-        launcherOwnsVersionsDir(path, versionsDir, directory) ? runtimePaths.versionDir : directory,
+        launcherOwnsRuntimePath(path, input.baseDir, directory)
+          ? runtimePaths.versionDir
+          : directory,
       ),
     ),
   ).join(":");
@@ -768,6 +798,37 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     if (remaining[0]) return yield* new BootServicePrerequisiteError({ problem: remaining[0] });
   });
 
+  const handoffError = (cause: unknown) =>
+    new BootServiceHandoffError({
+      reason:
+        cause instanceof Error
+          ? cause.message
+          : "Could not coordinate service ownership replacement.",
+      cause,
+    });
+  const withHandoff = <A, E, R>(operation: Effect.Effect<A, E, R>, awaitRestart = true) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const handoff = yield* Effect.acquireRelease(
+          Effect.tryPromise({
+            try: () => prepareServiceHandoff(input.baseDir),
+            catch: handoffError,
+          }),
+          (prepared) => Effect.promise(() => prepared.close()),
+        );
+        const result = yield* Effect.exit(operation);
+        if (awaitRestart) {
+          const ready = Effect.tryPromise({
+            try: () => handoff.waitForReady(Duration.toMillis(STOP_STEP_TIMEOUT)),
+            catch: handoffError,
+          });
+          if (Exit.isFailure(result)) yield* ready.pipe(Effect.ignore);
+          else yield* ready;
+        }
+        return yield* result;
+      }),
+    );
+
   const install = Effect.fn("cloud.boot_service.install")(function* (options?: {
     readonly allowDowngrade?: boolean;
     readonly start?: boolean;
@@ -791,6 +852,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       platform,
       arch,
       releaseBaseUrl,
+      runtimeSource,
       validate: (runtime) =>
         runner
           .run({
@@ -833,6 +895,35 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           : new BootServiceInstallError({ cause: error }),
       ),
     );
+    const preflight = yield* runner
+      .run({
+        command: runtimePaths.entryPath,
+        args: [
+          "__service-preflight",
+          "--database-path",
+          path.join(input.baseDir, "userdata", "statev2.sqlite"),
+          "--launcher-protocol",
+          String(SERVICE_LAUNCHER_PROTOCOL),
+        ],
+        timeout: Duration.minutes(30),
+      })
+      .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+    const preflightResult = yield* decodePreflightJson(preflight.stdout.trim()).pipe(
+      Effect.map(decodeServicePreflightResult),
+      Effect.orElseSucceed(() => undefined),
+    );
+    if (
+      preflight.code !== 0 ||
+      preflightResult?.status !== "ready" ||
+      preflightResult.version !== input.cliVersion
+    ) {
+      return yield* new BootServiceHandoffError({
+        reason:
+          preflightResult?.status === "blocked"
+            ? preflightResult.reason
+            : "The selected runtime does not support coordinated service ownership. No server was stopped.",
+      });
+    }
     const installed = yield* fs
       .exists(unitPath)
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
@@ -861,11 +952,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       ]);
       return { ...plan, handedOff: true };
     }
-    if (installed && start) {
-      yield* runSteps(manager.stop);
-    }
-
-    yield* Effect.gen(function* () {
+    const replacement = Effect.gen(function* () {
+      if (installed && start) yield* runSteps(manager.stop);
       if (installed) {
         const previousStateText = yield* fs.readFileString(statePath).pipe(Effect.option);
         if (Option.isSome(previousStateText)) {
@@ -898,6 +986,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           {
             protocol: SERVICE_LAUNCHER_PROTOCOL,
             activeVersion: input.cliVersion,
+            ...(runtimeSource === undefined ? {} : { runtimeSource }),
           } satisfies ServiceState,
           null,
           2,
@@ -906,7 +995,10 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       if (!start && installed) {
         // A concurrent remote update can overwrite launcher state; detect it before repointing the unit.
         const written = yield* fs.readFileString(statePath);
-        if (serviceStateActiveVersion(written) !== input.cliVersion) {
+        if (
+          serviceStateActiveVersion(written) !== input.cliVersion ||
+          parseServiceState(written)?.runtimeSource !== runtimeSource
+        ) {
           return yield* new BootServiceUpdatePendingError();
         }
       }
@@ -914,7 +1006,6 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
 
       if (start) {
         yield* runSteps(manager.activate);
-        yield* fs.remove(restartPendingPath, { force: true });
       }
     }).pipe(
       Effect.mapError((cause) =>
@@ -924,6 +1015,42 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         installed && start ? runSteps(manager.restart).pipe(Effect.ignore) : Effect.void,
       ),
     );
+    yield* start
+      ? withHandoff(replacement)
+      : Effect.scoped(
+          Effect.gen(function* () {
+            yield* Effect.acquireRelease(
+              Effect.try({
+                try: () => acquireServiceInstallerLease(input.baseDir),
+                catch: handoffError,
+              }),
+              (installer) => Effect.sync(() => installer.db.close()),
+            );
+            yield* Effect.acquireRelease(
+              Effect.try({
+                try: () =>
+                  acquireOwnershipLock(
+                    path.join(input.baseDir, "userdata", SERVER_OWNER_FILE),
+                    "shared",
+                  ),
+                catch: (cause) =>
+                  cause instanceof Error && "errcode" in cause && cause.errcode === 5
+                    ? new BootServiceHandoffError({
+                        reason:
+                          "Cannot stage the service while an older or standalone server holds exclusive ownership. A coordinated ownership migration is required; no server was stopped.",
+                        cause,
+                      })
+                    : handoffError(cause),
+              }),
+              (gate) => Effect.sync(() => gate.db.close()),
+            );
+            yield* replacement;
+          }),
+        );
+    if (start)
+      yield* fs
+        .remove(restartPendingPath, { force: true })
+        .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
     return plan;
   });
 
@@ -941,12 +1068,28 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     // Writes no state, and the launcher lets an update transition in flight
     // finish before the queued stop tears it down.
     if (runningInsideService && manager.handoff !== undefined) {
-      yield* runSteps(manager.handoff);
+      yield* runStep("handing the restart to a transient unit", "systemd-run", [
+        "--user",
+        "--collect",
+        "--quiet",
+        `--property=StandardOutput=append:${logPath}`,
+        `--property=StandardError=append:${logPath}`,
+        `--setenv=${BOOT_SERVICE_UNIT_ENV}=`,
+        runtimePaths.entryPath,
+        "service",
+        "restart",
+        "--base-dir",
+        input.baseDir.replaceAll("$", () => "$$"),
+      ]);
       return "queued" as const;
     }
-    yield* runSteps(manager.stop);
-    yield* runSteps(manager.activate).pipe(
-      Effect.tapError(() => runSteps(manager.restart).pipe(Effect.ignore)),
+    yield* withHandoff(
+      Effect.gen(function* () {
+        yield* runSteps(manager.stop);
+        yield* runSteps(manager.activate).pipe(
+          Effect.tapError(() => runSteps(manager.restart).pipe(Effect.ignore)),
+        );
+      }),
     );
     yield* fs.remove(restartPendingPath, { force: true });
     return "restarted" as const;
@@ -989,20 +1132,45 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         : succeeded(
             yield* probe("launchctl", ["print", `gui/${uid}/${BOOT_SERVICE_LAUNCHD_LABEL}`]),
           );
-    return yield* Effect.acquireUseRelease(
-      // Require every stop before repair when restoring, so the server releases the database.
-      // Otherwise stops are best-effort; launchd rejects bootout of an unloaded job.
-      // A failed stop may still stop the service, so restoration runs either way.
-      runSteps(manager.stop.map((step) => ({ ...step, optional: !restore }))).pipe(Effect.exit),
-      (stopped): Effect.Effect<A, E | BootServiceError, R> =>
-        Exit.isSuccess(stopped) ? operation : Effect.failCause(stopped.cause),
-      (_, exit) => {
-        if (!restore) return Effect.void;
-        // Start only: `activate` would also enable a unit the user disabled.
-        // When the operation itself failed, its error is the one worth reporting.
-        const start = runSteps(manager.restart);
-        return Exit.isFailure(exit) ? Effect.ignore(start) : start;
-      },
+    if (runningInsideService)
+      return yield* new BootServiceHandoffError({
+        reason:
+          "Offline repairs must run outside the service's own process group; no server was stopped.",
+      });
+    return yield* withHandoff(
+      Effect.acquireUseRelease(
+        // Require every stop before repair when restoring, so the server releases the database.
+        // Otherwise stops are best-effort; launchd rejects bootout of an unloaded job.
+        // A failed stop may still stop the service, so restoration runs either way.
+        runSteps(manager.stop.map((step) => ({ ...step, optional: !restore }))).pipe(Effect.exit),
+        (stopped): Effect.Effect<A, E | BootServiceError, R> =>
+          Exit.isSuccess(stopped)
+            ? Effect.scoped(
+                Effect.gen(function* () {
+                  yield* Effect.acquireRelease(
+                    Effect.try({
+                      try: () =>
+                        acquireOwnershipLock(
+                          path.join(input.baseDir, "userdata", SERVER_WRITER_FILE),
+                          "exclusive",
+                        ),
+                      catch: handoffError,
+                    }),
+                    (writer) => Effect.sync(() => writer.db.close()),
+                  );
+                  return yield* operation;
+                }),
+              )
+            : Effect.failCause(stopped.cause),
+        (_, exit) => {
+          if (!restore) return Effect.void;
+          // Start only: `activate` would also enable a unit the user disabled.
+          // When the operation itself failed, its error is the one worth reporting.
+          const start = runSteps(manager.restart);
+          return Exit.isFailure(exit) ? Effect.ignore(start) : start;
+        },
+      ),
+      restore,
     );
   });
 
@@ -1051,6 +1219,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       supported: true,
       installed: true,
       ...(installedVersion === undefined ? {} : { installedVersion }),
+      ...(state?.runtimeSource === undefined
+        ? {}
+        : { installedRuntimeSource: state.runtimeSource }),
       ...(installedBaseDir === undefined ? {} : { installedBaseDir }),
       problems,
       current:
@@ -1060,6 +1231,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         Option.isSome(runtimeSentinel) &&
         runtimeSentinel.value.trim() === input.cliVersion &&
         state?.activeVersion === input.cliVersion &&
+        state?.runtimeSource === runtimeSource &&
         state?.update?.status !== "pending",
       unitPath,
       logPath,
@@ -1077,4 +1249,4 @@ export const layer = (input: {
   readonly logsDir: string;
   readonly cliVersion: string;
   readonly host?: BootServiceHost;
-}) => Layer.effect(BootService, make(input));
+}) => Layer.effect(BootService, make(input)).pipe(Layer.provide(ManagedPolicy.layer));

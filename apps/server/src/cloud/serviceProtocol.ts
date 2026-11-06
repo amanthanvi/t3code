@@ -1,4 +1,11 @@
 import type { ServerSelfUpdateOutcome } from "@t3tools/contracts";
+import { isExactServiceVersion, SERVICE_OWNERSHIP_PROTOCOL } from "@t3tools/shared/serviceRuntime";
+export {
+  decodeManagedRuntimeBuild,
+  isExactServiceVersion,
+  SERVICE_OWNERSHIP_PROTOCOL,
+  type ManagedRuntimeBuild,
+} from "@t3tools/shared/serviceRuntime";
 
 // Bump for incompatible runtime layout changes; launchers survive self-updates. Protocol 3 requires standalone executables.
 export const SERVICE_LAUNCHER_PROTOCOL = 3 as const;
@@ -23,12 +30,15 @@ export type ServiceUpdateRecord = PendingServiceUpdate | ServerSelfUpdateOutcome
 export interface ServiceState {
   readonly protocol: typeof SERVICE_LAUNCHER_PROTOCOL;
   readonly activeVersion: string;
+  /** Release-origin hash; custom mirrors never share the official SSH download cache. */
+  readonly runtimeSource?: string;
   readonly update?: ServiceUpdateRecord;
 }
 
 export interface ServiceLauncherContext {
   readonly protocol: typeof SERVICE_LAUNCHER_PROTOCOL;
   readonly childVersion: string;
+  readonly ownershipProtocol?: typeof SERVICE_OWNERSHIP_PROTOCOL;
   readonly update?: ServiceUpdateRecord;
 }
 
@@ -56,15 +66,6 @@ export type ServiceLauncherParentMessage =
       readonly type: "committed";
       readonly updateId: string;
     };
-
-const SEMVER_NUMBER = "(?:0|[1-9]\\d*)";
-const SEMVER_PRERELEASE = `(?:${SEMVER_NUMBER}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)`;
-const EXACT_SERVICE_VERSION = new RegExp(
-  `^${SEMVER_NUMBER}\\.${SEMVER_NUMBER}\\.${SEMVER_NUMBER}(?:-${SEMVER_PRERELEASE}(?:\\.${SEMVER_PRERELEASE})*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$`,
-);
-
-export const isExactServiceVersion = (version: string): boolean =>
-  EXACT_SERVICE_VERSION.test(version);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -146,6 +147,8 @@ export function decodeServiceState(value: unknown): ServiceState | undefined {
     value.protocol !== SERVICE_LAUNCHER_PROTOCOL ||
     typeof value.activeVersion !== "string" ||
     !isExactServiceVersion(value.activeVersion) ||
+    (value.runtimeSource !== undefined &&
+      (typeof value.runtimeSource !== "string" || !/^[a-f0-9]{64}$/.test(value.runtimeSource))) ||
     (value.update !== undefined && update === undefined) ||
     (update !== undefined &&
       compareExactServiceVersions(update.targetVersion, update.fromVersion) <= 0) ||
@@ -159,6 +162,7 @@ export function decodeServiceState(value: unknown): ServiceState | undefined {
   return {
     protocol: SERVICE_LAUNCHER_PROTOCOL,
     activeVersion: value.activeVersion,
+    ...(typeof value.runtimeSource === "string" ? { runtimeSource: value.runtimeSource } : {}),
     ...(update === undefined ? {} : { update }),
   };
 }
@@ -204,7 +208,9 @@ export function decodeServiceLauncherContext(value: string): ServiceLauncherCont
     !isRecord(parsed) ||
     parsed.protocol !== SERVICE_LAUNCHER_PROTOCOL ||
     typeof parsed.childVersion !== "string" ||
-    !isExactServiceVersion(parsed.childVersion)
+    !isExactServiceVersion(parsed.childVersion) ||
+    (parsed.ownershipProtocol !== undefined &&
+      parsed.ownershipProtocol !== SERVICE_OWNERSHIP_PROTOCOL)
   ) {
     return undefined;
   }
@@ -222,6 +228,9 @@ export function decodeServiceLauncherContext(value: string): ServiceLauncherCont
   return {
     protocol: SERVICE_LAUNCHER_PROTOCOL,
     childVersion: parsed.childVersion,
+    ...(parsed.ownershipProtocol === undefined
+      ? {}
+      : { ownershipProtocol: SERVICE_OWNERSHIP_PROTOCOL }),
     ...(update === undefined ? {} : { update }),
   };
 }

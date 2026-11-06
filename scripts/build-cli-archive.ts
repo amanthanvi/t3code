@@ -19,6 +19,10 @@ import { fromYaml } from "@t3tools/shared/schemaYaml";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import rootPackageJson from "../package.json" with { type: "json" };
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
+import {
+  decodeManagedRuntimeBuild,
+  SERVICE_OWNERSHIP_PROTOCOL,
+} from "@t3tools/shared/serviceRuntime";
 
 import {
   createStagePatchedDependencies,
@@ -45,6 +49,7 @@ const WorkspaceConfig = Schema.Struct({
 });
 const decodeWorkspaceConfig = Schema.decodeEffect(fromYaml(WorkspaceConfig));
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeJsonString = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 const StageWorkspaceConfig = Schema.Struct({
   supportedArchitectures: Schema.Struct({
     os: Schema.Array(Schema.String),
@@ -170,11 +175,27 @@ const stageRuntimeExternals = Effect.fn("stageRuntimeExternals")(function* (inpu
     `${yield* encodeJsonString({
       name: "t3-runtime",
       version: input.version,
+      serviceOwnershipProtocol: SERVICE_OWNERSHIP_PROTOCOL,
       private: true,
       packageManager: rootPackageJson.packageManager,
       dependencies,
     })}\n`,
   );
+  const provenanceText = yield* Config.String("T3CODE_BUILD_PROVENANCE").pipe(Config.option);
+  if (Option.isSome(provenanceText)) {
+    const decoded = yield* decodeJsonString(provenanceText.value);
+    const provenance = decodeManagedRuntimeBuild(decoded);
+    if (provenance === undefined || provenance.upstreamVersion !== input.version) {
+      return yield* new CliArchiveInputMissingError({
+        inputPath: "T3CODE_BUILD_PROVENANCE",
+        hint: "Supply valid source provenance for this compatibility version.",
+      });
+    }
+    yield* fs.writeFileString(
+      path.join(input.stageDir, "managed-build.json"),
+      `${yield* encodeJsonString(provenance)}\n`,
+    );
+  }
   yield* fs.writeFileString(
     path.join(input.stageDir, "pnpm-workspace.yaml"),
     yield* encodeStageWorkspaceConfig({
@@ -223,6 +244,11 @@ const stageRuntimeExternals = Effect.fn("stageRuntimeExternals")(function* (inpu
   ]) {
     yield* fs.remove(path.join(input.stageDir, entry), { recursive: true, force: true });
   }
+  // Keep runtime identity after removing dependency-install inputs.
+  yield* fs.writeFileString(
+    path.join(input.stageDir, "package.json"),
+    `${yield* encodeJsonString({ name: "t3-runtime", version: input.version, serviceOwnershipProtocol: SERVICE_OWNERSHIP_PROTOCOL })}\n`,
+  );
   // Nested .bin shims are unused symlinks, which the npm registry rejects in tarballs.
   yield* removeNestedBinDirectories(fs, path, path.join(input.stageDir, "node_modules"));
 });

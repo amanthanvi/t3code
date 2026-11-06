@@ -19,6 +19,9 @@ import {
   isUnpublishedRelease,
   pinnedRuntimeCommand,
   pinnedRuntimePaths,
+  pinnedRuntimeVersionsDir,
+  launcherOwnsRuntimePath,
+  runtimeSourceForReleaseBaseUrl,
   PinnedRuntimeInstallError,
   type PinnedRuntimeProgress,
   prunePinnedRuntimes,
@@ -26,6 +29,14 @@ import {
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
 
 const version = "1.2.3";
+const managedBuild = {
+  schemaVersion: 1,
+  distribution: "aman-t3-managed",
+  buildId: "ssh-race-v1",
+  upstreamVersion: version,
+  upstreamSourceCommit: "a".repeat(40),
+  sourceCommit: "b".repeat(40),
+};
 const archiveName = `t3-${version}-linux-x64.tar.gz`;
 const archiveBytes = new TextEncoder().encode("not really a tarball");
 const archiveHex = (bytes: Uint8Array) =>
@@ -54,6 +65,12 @@ const extractingRunner = (fs: FileSystem.FileSystem, path: Path.Path, commands: 
           return yield* Effect.die(`unexpected command ${input.command}`);
         }
         yield* fs.writeFileString(path.join(stagingDir, "t3"), "#!/bin/sh\n").pipe(Effect.orDie);
+        yield* fs
+          .writeFileString(
+            path.join(stagingDir, "managed-build.json"),
+            JSON.stringify(managedBuild),
+          )
+          .pipe(Effect.orDie);
         return {
           stdout: "",
           stderr: "",
@@ -91,6 +108,10 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
             Effect.orDie,
           ),
       });
+      assert.notEqual(
+        paths.versionDir,
+        pinnedRuntimePaths(path, baseDir, version, "linux").versionDir,
+      );
       assert.equal(paths.entryPath, path.join(paths.versionDir, "t3"));
       assert.deepEqual(pinnedRuntimeCommand(paths), { command: paths.entryPath, args: [] });
       assert.deepEqual(requests, [
@@ -208,7 +229,10 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         validate: () => Effect.die("must not validate an unverified archive"),
       }).pipe(Effect.flip);
       assert.instanceOf(error, PinnedRuntimeInstallError);
-      assert.equal(error.step, "verifying the t3 release archive checksum");
+      assert.equal(
+        error._tag === "PinnedRuntimeInstallError" ? error.step : undefined,
+        "verifying the t3 release archive checksum",
+      );
       assert.deepEqual(commands, []);
       assert.deepEqual(yield* fs.readDirectory(path.join(baseDir, "runtime", "versions")), []);
     }),
@@ -307,10 +331,6 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-runtime-mirror-" });
-      const cached = pinnedRuntimePaths(path, baseDir, version, "linux");
-      yield* fs.makeDirectory(path.dirname(cached.entryPath), { recursive: true });
-      yield* fs.writeFileString(cached.entryPath, "#!/bin/sh\n");
-      yield* fs.writeFileString(cached.sentinelPath, `${version}\n`);
       const install = (checksums: string, requests: string[]) =>
         ensurePinnedRuntimeInstalled({
           baseDir,
@@ -329,6 +349,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
 
       const withdrawn = yield* install("", []).pipe(Effect.flip);
       assert.include(withdrawn.message, `finding ${archiveName} in the t3 release checksums`);
+      const cached = yield* install(yield* validChecksums, []);
       const requests: string[] = [];
       assert.equal((yield* install(yield* validChecksums, requests)).entryPath, cached.entryPath);
       // Listed, so the cached runtime is used without downloading it again.
@@ -336,6 +357,227 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         `https://updates.example.com/t3code/v${version}/SHA256SUMS?token=abc`,
       ]);
     }),
+  );
+
+  it.effect(
+    "never adopts the official cache and rejects changed managed provenance or checksums",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-source-isolation-" });
+        const official = pinnedRuntimePaths(path, baseDir, version, "linux");
+        yield* fs.makeDirectory(official.versionDir, { recursive: true });
+        yield* fs.writeFileString(official.entryPath, "official original");
+        yield* fs.writeFileString(official.sentinelPath, `${version}\n`);
+        const releaseBaseUrl = "https://managed.example/releases";
+        const install = (checksums: string) =>
+          ensurePinnedRuntimeInstalled({
+            baseDir,
+            version,
+            fs,
+            path,
+            platform: "linux",
+            arch: "x64",
+            releaseBaseUrl,
+            httpClient: releaseHttpClient(checksums),
+            runner: extractingRunner(fs, path),
+            validate: () => Effect.void,
+          });
+        const managed = yield* install(yield* validChecksums);
+        assert.notEqual(managed.versionDir, official.versionDir);
+        assert.equal(yield* fs.readFileString(official.entryPath), "official original");
+        const changed = yield* install(`${"0".repeat(64)}  ${archiveName}\n`).pipe(Effect.flip);
+        assert.equal(
+          changed._tag === "PinnedRuntimeInstallError" ? changed.step : undefined,
+          "verifying the managed runtime receipt",
+        );
+        yield* fs.writeFileString(
+          path.join(managed.versionDir, "managed-build.json"),
+          JSON.stringify({ ...managedBuild, buildId: "changed-v2" }),
+        );
+        const altered = yield* install(yield* validChecksums).pipe(Effect.flip);
+        assert.equal(
+          altered._tag === "PinnedRuntimeInstallError" ? altered.step : undefined,
+          "verifying the managed runtime receipt",
+        );
+        yield* fs.remove(path.join(managed.versionDir, ".managed-install.json"));
+        const unreceipted = yield* install(yield* validChecksums).pipe(Effect.flip);
+        assert.equal(
+          unreceipted._tag === "PinnedRuntimeInstallError" ? unreceipted.step : undefined,
+          "verifying the managed runtime receipt",
+        );
+        assert.isTrue(yield* fs.exists(managed.entryPath));
+      }),
+  );
+
+  it.effect(
+    "requires an immutable GitHub release before installing or adopting a managed cache",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-github-immutable-" });
+        const commands: string[] = [];
+        const requests: string[] = [];
+        const checksums = yield* validChecksums;
+        let release: { immutable?: boolean; tag_name: string; draft?: boolean } | undefined = {
+          immutable: false,
+          tag_name: `v${version}`,
+        };
+        let validations = 0;
+        const install = () =>
+          ensurePinnedRuntimeInstalled({
+            baseDir,
+            version,
+            fs,
+            path,
+            platform: "linux",
+            arch: "x64",
+            releaseBaseUrl: "https://github.com/amanthanvi/t3code/releases/download",
+            runner: extractingRunner(fs, path, commands),
+            validate: () =>
+              Effect.sync(() => {
+                validations += 1;
+              }),
+            httpClient: HttpClient.make((request) => {
+              const url = new URL(request.url);
+              requests.push(url.pathname);
+              const response =
+                url.hostname === "api.github.com"
+                  ? release === undefined
+                    ? new Response("", { status: 404 })
+                    : Response.json(release)
+                  : new Response(url.pathname.endsWith("/SHA256SUMS") ? checksums : archiveBytes);
+              return Effect.succeed(HttpClientResponse.fromWeb(request, response));
+            }),
+          });
+        for (const metadata of [
+          { immutable: false, tag_name: `v${version}` },
+          { tag_name: `v${version}` },
+        ]) {
+          release = metadata;
+          const error = yield* install().pipe(Effect.flip);
+          assert.equal(
+            error._tag === "PinnedRuntimeInstallError" ? error.step : undefined,
+            "verifying managed release immutability",
+          );
+        }
+        release = undefined;
+        assert.isTrue(isUnpublishedRelease(yield* install().pipe(Effect.flip)));
+        assert.deepEqual(commands, []);
+        assert.equal(validations, 0);
+        assert.isTrue(
+          requests.every(
+            (request) => request === `/repos/amanthanvi/t3code/releases/tags/v${version}`,
+          ),
+        );
+        release = { immutable: true, tag_name: `v${version}`, draft: false };
+        const installed = yield* install();
+        assert.deepEqual(commands, ["tar"]);
+        assert.equal(validations, 1);
+        release = { immutable: false, tag_name: `v${version}` };
+        const cachedError = yield* install().pipe(Effect.flip);
+        assert.equal(
+          cachedError._tag === "PinnedRuntimeInstallError" ? cachedError.step : undefined,
+          "verifying managed release immutability",
+        );
+        assert.equal(validations, 1);
+        assert.isTrue(yield* fs.exists(installed.entryPath));
+        assert.equal(yield* fs.readFileString(installed.sentinelPath), `${version}\n`);
+      }),
+  );
+
+  it.effect("refuses linked cache roots for install and pruning", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-source-link-" });
+      const external = yield* fs.makeTempDirectoryScoped({ prefix: "t3-external-cache-" });
+      const releaseBaseUrl = "https://managed.example/releases";
+      const source = runtimeSourceForReleaseBaseUrl(releaseBaseUrl)!;
+      const root = pinnedRuntimeVersionsDir(path, baseDir, source);
+      yield* fs.makeDirectory(path.dirname(root), { recursive: true });
+      yield* fs.makeDirectory(path.join(external, version));
+      yield* fs.writeFileString(path.join(external, version, "t3"), "external");
+      yield* fs.writeFileString(path.join(external, version, ".install-complete"), `${version}\n`);
+      yield* fs.utimes(path.join(external, version, ".install-complete"), 0, 0);
+      yield* fs.symlink(external, root);
+      const error = yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version,
+        fs,
+        path,
+        platform: "linux",
+        arch: "x64",
+        releaseBaseUrl,
+        httpClient: releaseHttpClient(yield* validChecksums),
+        runner: extractingRunner(fs, path),
+        validate: () => Effect.die("must not validate linked cache"),
+      }).pipe(Effect.flip);
+      assert.equal(
+        error._tag === "PinnedRuntimeInstallError" ? error.step : undefined,
+        "refusing a linked runtime cache directory",
+      );
+      assert.deepEqual(
+        yield* prunePinnedRuntimes({ baseDir, keep: [], runtimeSource: source }),
+        [],
+      );
+      assert.equal(yield* fs.readFileString(path.join(external, version, "t3")), "external");
+    }).pipe(
+      Effect.provideService(
+        ProcessRunner.ProcessRunner,
+        ProcessRunner.ProcessRunner.of({
+          run: () => Effect.die("must not inspect processes for linked cache"),
+        }),
+      ),
+    ),
+  );
+
+  it.effect(
+    "rejects a managed archive without valid matching provenance before publishing it",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-source-provenance-" });
+        const releaseBaseUrl = "https://managed.example/releases";
+        const source = runtimeSourceForReleaseBaseUrl(releaseBaseUrl);
+        const runner = extractingRunner(fs, path);
+        const error = yield* ensurePinnedRuntimeInstalled({
+          baseDir,
+          version,
+          fs,
+          path,
+          platform: "linux",
+          arch: "x64",
+          releaseBaseUrl,
+          httpClient: releaseHttpClient(yield* validChecksums),
+          runner: {
+            ...runner,
+            run: (input) =>
+              runner
+                .run(input)
+                .pipe(
+                  Effect.tap(() =>
+                    fs
+                      .remove(
+                        path.join(input.args[input.args.indexOf("-C") + 1]!, "managed-build.json"),
+                      )
+                      .pipe(Effect.orDie),
+                  ),
+                ),
+          },
+          validate: () => Effect.die("must not validate unprovenanced build"),
+        }).pipe(Effect.flip);
+        assert.equal(
+          error._tag === "PinnedRuntimeInstallError" ? error.step : undefined,
+          "verifying managed build provenance",
+        );
+        assert.isFalse(
+          yield* fs.exists(pinnedRuntimePaths(path, baseDir, version, "linux", source).versionDir),
+        );
+      }),
   );
 
   it.effect("preserves a completed runtime when validation fails", () =>
@@ -415,6 +657,61 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
     for (const version of versions) yield* install(version);
     return { baseDir, versionsDir, install };
   });
+
+  it.effect(
+    "prunes only the selected source while protecting global service state and markers",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { baseDir, versionsDir } = yield* setup(["1.0.0"]);
+        const runtimeSource = runtimeSourceForReleaseBaseUrl("https://managed.example/releases")!;
+        const otherSource = runtimeSourceForReleaseBaseUrl("https://other.example/releases")!;
+        for (const [source, version] of [
+          [runtimeSource, "1.0.0"],
+          [runtimeSource, "2.0.0"],
+          [otherSource, "1.0.0"],
+        ] as const) {
+          const runtime = pinnedRuntimePaths(path, baseDir, version, "linux", source);
+          yield* fs.makeDirectory(runtime.versionDir, { recursive: true });
+          yield* fs.writeFileString(runtime.entryPath, "");
+          yield* fs.writeFileString(runtime.sentinelPath, `${version}\n`);
+          yield* fs.utimes(runtime.sentinelPath, 0, 0);
+        }
+        const statePath = path.join(baseDir, "runtime/service-state.json");
+        const state = JSON.stringify({
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "2.0.0",
+          runtimeSource,
+        });
+        yield* fs.writeFileString(statePath, state);
+        const marker = path.join(baseDir, "runtime/.service-stopping");
+        yield* fs.writeFileString(marker, "keep");
+        const removed = yield* prunePinnedRuntimes({ baseDir, keep: [], runtimeSource }).pipe(
+          Effect.provideService(
+            ProcessRunner.ProcessRunner,
+            lsofRunner("p1\nftxt\nn/usr/bin/true\n"),
+          ),
+          Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provideService(HostProcess.Environment, { PATH: "" }),
+          Effect.provideService(HostProcess.HomeDirectory, baseDir),
+        );
+        assert.deepEqual(removed, ["1.0.0"]);
+        assert.isTrue(yield* fs.exists(path.join(versionsDir, "1.0.0/t3")));
+        assert.isTrue(
+          yield* fs.exists(
+            pinnedRuntimePaths(path, baseDir, "1.0.0", "linux", otherSource).entryPath,
+          ),
+        );
+        assert.isTrue(
+          yield* fs.exists(
+            pinnedRuntimePaths(path, baseDir, "2.0.0", "linux", runtimeSource).entryPath,
+          ),
+        );
+        assert.equal(yield* fs.readFileString(statePath), state);
+        assert.equal(yield* fs.readFileString(marker), "keep");
+      }),
+  );
 
   it.effect("removes only completed runtimes nothing references", () =>
     Effect.gen(function* () {
@@ -622,5 +919,56 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
         );
         assert.deepEqual(removed, ["1.1.0"]);
       }),
+  );
+});
+
+it.layer(NodeServices.layer)("runtime source paths", (it) => {
+  it.effect("normalizes public sources and isolates every other origin and signed query", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      assert.isUndefined(runtimeSourceForReleaseBaseUrl());
+      assert.isUndefined(
+        runtimeSourceForReleaseBaseUrl(
+          "https://github.com/pingdotgg/t3code/releases/download/#fragment",
+        ),
+      );
+      const source = runtimeSourceForReleaseBaseUrl(
+        "https://managed.example/releases/?key=one#fragment",
+      );
+      assert.match(source!, /^[a-f0-9]{64}$/);
+      assert.equal(
+        source,
+        runtimeSourceForReleaseBaseUrl("https://managed.example/releases?key=one"),
+      );
+      assert.notEqual(
+        source,
+        runtimeSourceForReleaseBaseUrl("https://managed.example/releases?key=two"),
+      );
+      const root = "/test/home";
+      assert.equal(
+        pinnedRuntimeVersionsDir(path, root, source),
+        path.join(root, "runtime/sources", source!, "versions"),
+      );
+      assert.isTrue(
+        launcherOwnsRuntimePath(path, root, path.join(root, "runtime/versions/1.2.3/t3")),
+      );
+      assert.isTrue(
+        launcherOwnsRuntimePath(
+          path,
+          root,
+          pinnedRuntimePaths(path, root, version, "linux", source).entryPath,
+        ),
+      );
+      assert.isFalse(
+        launcherOwnsRuntimePath(
+          path,
+          root,
+          path.join(root, "runtime/sources/invalid/versions/1.2.3/t3"),
+        ),
+      );
+      assert.isFalse(
+        launcherOwnsRuntimePath(path, root, path.join(root, "runtime/service-state.json")),
+      );
+    }),
   );
 });

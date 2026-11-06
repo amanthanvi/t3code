@@ -1,12 +1,13 @@
 import packageJson from "../../package.json" with { type: "json" };
 import { BUILD_MIGRATION_HEAD, recordedMigrations } from "../persistence/databaseMigrationHead.ts";
-import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
+import { SERVICE_LAUNCHER_PROTOCOL, SERVICE_OWNERSHIP_PROTOCOL } from "./serviceProtocol.ts";
 
 export type ServicePreflightResult =
   | {
       readonly status: "ready";
       readonly version: string;
       readonly launcherProtocol: typeof SERVICE_LAUNCHER_PROTOCOL;
+      readonly ownershipProtocol: typeof SERVICE_OWNERSHIP_PROTOCOL;
     }
   | {
       readonly status: "blocked";
@@ -51,7 +52,12 @@ export function runServicePreflight(input: {
     };
   }
 
-  return { status: "ready", version, launcherProtocol: SERVICE_LAUNCHER_PROTOCOL };
+  return {
+    status: "ready",
+    version,
+    launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+    ownershipProtocol: SERVICE_OWNERSHIP_PROTOCOL,
+  };
 }
 
 /** Migrations a newer build recorded, or null when the database exists but cannot be read.
@@ -71,12 +77,14 @@ export function decodeServicePreflightResult(value: unknown): ServicePreflightRe
   if (
     record.status === "ready" &&
     record.launcherProtocol === SERVICE_LAUNCHER_PROTOCOL &&
+    record.ownershipProtocol === SERVICE_OWNERSHIP_PROTOCOL &&
     typeof record.version === "string"
   ) {
     return {
       status: "ready",
       version: record.version,
       launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+      ownershipProtocol: SERVICE_OWNERSHIP_PROTOCOL,
     };
   }
   if (

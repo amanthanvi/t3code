@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeCrypto from "node:crypto";
+
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
@@ -13,6 +16,7 @@ import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } fr
 
 import {
   CLI_RELEASE_CHECKSUMS_FILE,
+  CLI_RELEASES_PAGE_URL,
   cliArchiveFileName,
   cliArchivePlatformKey,
   cliArchiveTarCommand,
@@ -24,7 +28,12 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ProcessRunner from "../processRunner.ts";
-import { isExactServiceVersion, parseServiceState, SERVICE_STATE_FILE } from "./serviceProtocol.ts";
+import {
+  decodeManagedRuntimeBuild,
+  isExactServiceVersion,
+  parseServiceState,
+  SERVICE_STATE_FILE,
+} from "./serviceProtocol.ts";
 
 const PINNED_RUNTIME_DIR = "runtime";
 const PINNED_RUNTIME_INSTALL_TIMEOUT = Duration.minutes(10);
@@ -46,8 +55,54 @@ export function pinnedRuntimeCommand(paths: PinnedRuntimePaths): {
   return { command: paths.entryPath, args: [] };
 }
 
-export function pinnedRuntimeVersionsDir(path: Path.Path, baseDir: string): string {
-  return path.join(baseDir, PINNED_RUNTIME_DIR, "versions");
+const runtimeSourcePattern = /^[a-f0-9]{64}$/;
+const managedBuildFile = "managed-build.json";
+const managedReceiptFile = ".managed-install.json";
+
+/** Only public GitHub download roots support immutable release metadata through the GitHub API. */
+export function githubReleaseRepository(baseUrl: string): string | undefined {
+  try {
+    const url = new URL(baseUrl.trim());
+    if (
+      url.origin !== "https://github.com" ||
+      url.username !== "" ||
+      url.password !== "" ||
+      url.search !== "" ||
+      url.hash !== ""
+    )
+      return undefined;
+    const match = /^\/([A-Za-z0-9][A-Za-z0-9-]*)\/([A-Za-z0-9_.-]+)\/releases\/download\/?$/.exec(
+      url.pathname,
+    );
+    return match === null ? undefined : `${match[1]}/${match[2]}`;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Public releases retain their legacy location; every other source gets its own cache. */
+export function runtimeSourceForReleaseBaseUrl(baseUrl?: string): string | undefined {
+  const normalize = (value: string) => {
+    const url = new URL(value.trim());
+    url.hash = "";
+    url.pathname = url.pathname.replace(/\/+$/, "");
+    return url.toString();
+  };
+  const official = normalize(`${CLI_RELEASES_PAGE_URL}/download`);
+  const source = normalize(baseUrl?.trim() || official);
+  return source === official
+    ? undefined
+    : NodeCrypto.createHash("sha256").update(source).digest("hex");
+}
+
+export function pinnedRuntimeVersionsDir(
+  path: Path.Path,
+  baseDir: string,
+  runtimeSource?: string,
+): string {
+  if (runtimeSource === undefined) return path.join(baseDir, PINNED_RUNTIME_DIR, "versions");
+  if (!runtimeSourcePattern.test(runtimeSource)) throw new Error("Invalid runtime source key");
+  return path.join(baseDir, PINNED_RUNTIME_DIR, "sources", runtimeSource, "versions");
 }
 
 export function pinnedRuntimePaths(
@@ -55,8 +110,9 @@ export function pinnedRuntimePaths(
   baseDir: string,
   version: string,
   platform: NodeJS.Platform,
+  runtimeSource?: string,
 ): PinnedRuntimePaths {
-  const versionDir = path.join(pinnedRuntimeVersionsDir(path, baseDir), version);
+  const versionDir = path.join(pinnedRuntimeVersionsDir(path, baseDir, runtimeSource), version);
   return {
     versionDir,
     entryPath: path.join(versionDir, platform === "win32" ? "t3.exe" : "t3"),
@@ -112,6 +168,7 @@ interface PinnedRuntimeInstallInput {
   readonly arch: string;
   readonly httpClient: HttpClient.HttpClient;
   readonly releaseBaseUrl?: string | undefined;
+  readonly runtimeSource?: string | undefined;
   /** Reuse a cached runtime only while the release source still lists it, as a policy mirror does. */
   readonly requirePublishedRelease?: boolean;
   readonly onProgress?: (progress: PinnedRuntimeProgress) => void;
@@ -232,6 +289,7 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
       ),
     );
   yield* fs.remove(archivePath, { force: true }).pipe(Effect.ignore);
+  return expected;
 });
 
 /** The release's archive for this machine and its checksum; fails when the release lists none. */
@@ -239,6 +297,48 @@ const publishedArchive = Effect.fn("cloud.pinned_runtime.published_archive")(fun
   input: PinnedRuntimeInstallInput,
   platformKey: CliArchivePlatformKey,
 ) {
+  const repository =
+    input.releaseBaseUrl === undefined ? undefined : githubReleaseRepository(input.releaseBaseUrl);
+  if (
+    repository !== undefined &&
+    runtimeSourceForReleaseBaseUrl(input.releaseBaseUrl) !== undefined
+  ) {
+    const release = yield* fetchReleaseAsset(
+      input.httpClient,
+      `https://api.github.com/repos/${repository}/releases/tags/v${encodeURIComponent(input.version)}`,
+      "downloading the t3 release immutability metadata",
+    ).pipe(
+      Effect.map((bytes) => new TextDecoder().decode(bytes)),
+      Effect.flatMap(
+        Schema.decodeUnknownEffect(
+          Schema.fromJsonString(
+            Schema.Struct({
+              immutable: Schema.Boolean,
+              tag_name: Schema.String,
+              draft: Schema.optional(Schema.Boolean),
+            }),
+          ),
+        ),
+      ),
+      Effect.mapError((cause) =>
+        isPinnedRuntimeInstallError(cause)
+          ? cause
+          : new PinnedRuntimeInstallError({
+              step: "verifying managed release immutability",
+              cause,
+            }),
+      ),
+    );
+    if (
+      release.immutable !== true ||
+      release.draft === true ||
+      release.tag_name !== `v${input.version}`
+    ) {
+      return yield* new PinnedRuntimeInstallError({
+        step: "verifying managed release immutability",
+      });
+    }
+  }
   const fileName = cliArchiveFileName(input.version, platformKey);
   const checksums = parseChecksums(
     new TextDecoder().decode(
@@ -258,6 +358,75 @@ const publishedArchive = Effect.fn("cloud.pinned_runtime.published_archive")(fun
   return { fileName, expected };
 });
 
+const managedReceiptJson = Schema.fromJsonString(
+  Schema.Struct({
+    schemaVersion: Schema.Literal(1),
+    runtimeSource: Schema.String,
+    version: Schema.String,
+    archiveSha256: Schema.String,
+    provenance: Schema.Unknown,
+  }),
+);
+
+const readManagedBuild = Effect.fn("cloud.pinned_runtime.read_managed_build")(function* (
+  input: PinnedRuntimeInstallInput,
+  versionDir: string,
+) {
+  return yield* input.fs.readFileString(input.path.join(versionDir, managedBuildFile)).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))),
+    Effect.flatMap((value) => {
+      const provenance = decodeManagedRuntimeBuild(value);
+      return provenance !== undefined && provenance.upstreamVersion === input.version
+        ? Effect.succeed(provenance)
+        : Effect.fail(
+            new PinnedRuntimeInstallError({ step: "verifying managed build provenance" }),
+          );
+    }),
+    Effect.mapError(
+      (cause) =>
+        new PinnedRuntimeInstallError({ step: "verifying managed build provenance", cause }),
+    ),
+  );
+});
+
+const verifyManagedReceipt = Effect.fn("cloud.pinned_runtime.verify_managed_receipt")(function* (
+  input: PinnedRuntimeInstallInput,
+  paths: PinnedRuntimePaths,
+  source: string,
+  expected: string,
+) {
+  const provenance = yield* readManagedBuild(input, paths.versionDir);
+  yield* input.fs.readFileString(input.path.join(paths.versionDir, managedReceiptFile)).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(managedReceiptJson)),
+    Effect.filterOrFail(
+      (receipt) => {
+        const recordedBuild = decodeManagedRuntimeBuild(receipt.provenance);
+        return (
+          receipt.runtimeSource === source &&
+          receipt.version === input.version &&
+          receipt.archiveSha256 === expected &&
+          recordedBuild !== undefined &&
+          (
+            [
+              "schemaVersion",
+              "distribution",
+              "buildId",
+              "upstreamVersion",
+              "upstreamSourceCommit",
+              "sourceCommit",
+            ] as const
+          ).every((field) => recordedBuild[field] === provenance[field])
+        );
+      },
+      () => new PinnedRuntimeInstallError({ step: "verifying the managed runtime receipt" }),
+    ),
+    Effect.mapError(
+      (cause) =>
+        new PinnedRuntimeInstallError({ step: "verifying the managed runtime receipt", cause }),
+    ),
+  );
+});
+
 const isPinnedRuntimeInstallError = Schema.is(PinnedRuntimeInstallError);
 
 /** Whether an install failed because the release source does not publish the version for this machine. */
@@ -268,11 +437,58 @@ export const isUnpublishedRelease = (error: unknown): error is PinnedRuntimeInst
       HttpClientError.isHttpClientError(error.cause) &&
       error.cause.response?.status === 404));
 
+const cacheHasLinkedAncestor = Effect.fn("cloud.pinned_runtime.cache_has_linked_ancestor")(
+  function* (
+    input: {
+      readonly fs: FileSystem.FileSystem;
+      readonly path: Path.Path;
+      readonly baseDir: string;
+    },
+    runtimeSource?: string,
+    version?: string,
+  ) {
+    const { fs, path, baseDir } = input;
+    const runtimeDir = path.join(baseDir, PINNED_RUNTIME_DIR);
+    const ancestors =
+      runtimeSource === undefined
+        ? [runtimeDir, path.join(runtimeDir, "versions")]
+        : [
+            runtimeDir,
+            path.join(runtimeDir, "sources"),
+            path.join(runtimeDir, "sources", runtimeSource),
+            pinnedRuntimeVersionsDir(path, baseDir, runtimeSource),
+          ];
+    if (version !== undefined)
+      ancestors.push(path.join(pinnedRuntimeVersionsDir(path, baseDir, runtimeSource), version));
+    for (const ancestor of ancestors) {
+      if (yield* fs.readLink(ancestor).pipe(Effect.isSuccess)) return true;
+    }
+    return false;
+  },
+);
+
 const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(function* (
   input: PinnedRuntimeInstallInput,
 ) {
   const { fs } = input;
-  const paths = pinnedRuntimePaths(input.path, input.baseDir, input.version, input.platform);
+  const source = runtimeSourceForReleaseBaseUrl(input.releaseBaseUrl);
+  if (input.runtimeSource !== undefined && input.runtimeSource !== source) {
+    return yield* new PinnedRuntimeInstallError({
+      step: "matching the runtime source to its release feed",
+    });
+  }
+  const paths = pinnedRuntimePaths(
+    input.path,
+    input.baseDir,
+    input.version,
+    input.platform,
+    source,
+  );
+  if (yield* cacheHasLinkedAncestor(input, source, input.version)) {
+    return yield* new PinnedRuntimeInstallError({
+      step: "refusing a linked runtime cache directory",
+    });
+  }
   const [versionDirExists, entryExists, sentinel] = yield* Effect.all([
     fs.exists(paths.versionDir),
     fs.exists(paths.entryPath),
@@ -285,14 +501,16 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
   const alreadyPinned =
     entryExists && Option.isSome(sentinel) && sentinel.value.trim() === input.version;
   if (alreadyPinned) {
-    if (input.requirePublishedRelease === true) {
+    if (input.requirePublishedRelease === true || source !== undefined) {
       const platformKey = cliArchivePlatformKey(input.platform, input.arch);
       if (platformKey === undefined) {
         return yield* new PinnedRuntimeInstallError({
           step: `selecting a t3 release archive for ${input.platform}-${input.arch}`,
         });
       }
-      yield* publishedArchive(input, platformKey);
+      const published = yield* publishedArchive(input, platformKey);
+      if (source !== undefined)
+        yield* verifyManagedReceipt(input, paths, source, published.expected);
     }
     input.onProgress?.({ stage: "cached" });
     yield* input.validate(paths);
@@ -341,7 +559,31 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
   };
 
   return yield* Effect.gen(function* () {
-    yield* installFromArchive(input, stagingDir);
+    const archiveSha256 = yield* installFromArchive(input, stagingDir);
+    if (source !== undefined) {
+      const provenance = yield* readManagedBuild(input, stagingDir);
+      const receipt = yield* Schema.encodeEffect(managedReceiptJson)({
+        schemaVersion: 1,
+        runtimeSource: source,
+        version: input.version,
+        archiveSha256,
+        provenance,
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new PinnedRuntimeInstallError({ step: "recording managed runtime provenance", cause }),
+        ),
+      );
+      yield* fs.writeFileString(input.path.join(stagingDir, managedReceiptFile), receipt).pipe(
+        Effect.mapError(
+          (cause) =>
+            new PinnedRuntimeInstallError({
+              step: "recording managed runtime provenance",
+              cause,
+            }),
+        ),
+      );
+    }
 
     input.onProgress?.({ stage: "validate" });
     yield* input.validate(stagingPaths);
@@ -382,7 +624,10 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
         ),
       ),
     );
-    if (!published) yield* input.validate(paths);
+    if (!published) {
+      if (source !== undefined) yield* verifyManagedReceipt(input, paths, source, archiveSha256);
+      yield* input.validate(paths);
+    }
     return paths;
   }).pipe(
     Effect.ensuring(fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore)),
@@ -420,6 +665,29 @@ export function launcherOwnsVersionsDir(
 ): boolean {
   const relative = path.relative(versionsDir, path.resolve(candidate));
   return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+/** Only the legacy cache or a validated source namespace belongs to this home. */
+export function launcherOwnsRuntimePath(
+  path: Path.Path,
+  baseDir: string,
+  candidate: string,
+): boolean {
+  if (launcherOwnsVersionsDir(path, pinnedRuntimeVersionsDir(path, baseDir), candidate))
+    return true;
+  const relative = path.relative(
+    path.join(baseDir, PINNED_RUNTIME_DIR, "sources"),
+    path.resolve(candidate),
+  );
+  const [source, versions, ...rest] = relative.split(path.sep);
+  return (
+    source !== undefined &&
+    runtimeSourcePattern.test(source) &&
+    versions === "versions" &&
+    rest.length > 0 &&
+    !path.isAbsolute(relative) &&
+    !relative.startsWith("..")
+  );
 }
 
 /**
@@ -466,10 +734,7 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
   ]
     .filter((directory) => path.isAbsolute(directory))
     .map((directory) => path.join(directory, launcherName));
-  const versionsDir = pinnedRuntimeVersionsDir(path, baseDir);
-  const realVersionsDir = yield* fs
-    .realPath(versionsDir)
-    .pipe(Effect.orElseSucceed(() => versionsDir));
+  const realBaseDir = yield* fs.realPath(baseDir).pipe(Effect.orElseSucceed(() => baseDir));
   const unrecorded: Array<string> = [];
   const targets: Array<string> = [];
   for (const launcher of [...recorded, ...found]) {
@@ -484,8 +749,8 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
     if (target === undefined) continue;
     targets.push(target);
     if (
-      (launcherOwnsVersionsDir(path, versionsDir, target) ||
-        launcherOwnsVersionsDir(path, realVersionsDir, target)) &&
+      (launcherOwnsRuntimePath(path, baseDir, target) ||
+        launcherOwnsRuntimePath(path, realBaseDir, target)) &&
       !recorded.includes(launcher) &&
       !unrecorded.includes(launcher)
     ) {
@@ -548,10 +813,14 @@ const selectUnusedRuntimes = Effect.fn("cloud.pinned_runtime.select_unused")(fun
   readonly baseDir: string;
   readonly keep: ReadonlyArray<string>;
   readonly references: ReadonlyArray<string>;
+  readonly runtimeSource?: string | undefined;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const versionsDir = pinnedRuntimeVersionsDir(path, input.baseDir);
+  const versionsDir = pinnedRuntimeVersionsDir(path, input.baseDir, input.runtimeSource);
+  if (yield* cacheHasLinkedAncestor({ fs, path, baseDir: input.baseDir }, input.runtimeSource)) {
+    return new Set<string>();
+  }
   const entries = yield* fs.readDirectory(versionsDir).pipe(Effect.orElseSucceed(() => []));
   // An interrupted prune has already renamed its runtime out of the way.
   const pruned = new Set(
@@ -655,6 +924,7 @@ export const prunePinnedRuntimes = Effect.fn("cloud.pinned_runtime.prune")(funct
   readonly baseDir: string;
   readonly keep: ReadonlyArray<string>;
   readonly references?: ReadonlyArray<string>;
+  readonly runtimeSource?: string | undefined;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;

@@ -1,11 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off - Injects a real file replacement during the native SQLite transaction.
 import * as NodeFS from "node:fs";
 import * as NodeSqlite from "node:sqlite";
+import * as NodeChildProcess from "node:child_process";
 
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -196,11 +198,90 @@ describe("server ownership", () => {
     }).pipe(Effect.provide(layerOwnership)),
   );
 
+  it.live(
+    "admits a managed child behind a launcher reservation and retains exclusive writing",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-owner-managed-" });
+        const statePath = path.join(root, "server-runtime.json");
+        const lockPath = path.join(root, "server-owner.sqlite");
+        const writerPath = path.join(root, "server-writer.sqlite");
+        const launcher = yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            NodeChildProcess.spawn(
+              process.execPath,
+              [
+                "--input-type=module",
+                "-e",
+                `import { DatabaseSync } from 'node:sqlite';
+               const lock = new DatabaseSync(${JSON.stringify(lockPath)});
+               lock.exec('PRAGMA busy_timeout = 0; BEGIN; SELECT * FROM sqlite_schema;');
+               process.on('message', () => {});
+               process.send({ ready: true });`,
+              ],
+              { stdio: ["ignore", "ignore", "ignore", "ipc"] },
+            ),
+          ),
+          (child) =>
+            Effect.promise(
+              () =>
+                new Promise<void>((resolve) => {
+                  if (child.exitCode !== null || child.signalCode !== null) return resolve();
+                  child.once("exit", () => resolve());
+                  child.kill("SIGKILL");
+                }),
+            ),
+        );
+        yield* Effect.promise(
+          () =>
+            new Promise<void>((resolve, reject) => {
+              launcher.once("message", () => resolve());
+              launcher.once("error", reject);
+              launcher.once("exit", () =>
+                reject(new Error("Launcher fixture exited before ready")),
+              );
+            }),
+        );
+        const tryExclusive = (file: string) =>
+          NodeChildProcess.spawnSync(process.execPath, [
+            "--input-type=module",
+            "-e",
+            `import { DatabaseSync } from 'node:sqlite';
+           const lock = new DatabaseSync(${JSON.stringify(file)});
+           try { lock.exec('PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;'); }
+           catch (error) { process.exitCode = error.errcode === 5 ? 78 : 1; }
+           finally { lock.close(); }`,
+          ]).status;
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const owner = yield* ServerOwnership.acquireServerOwnership(statePath, {
+              serviceManaged: true,
+            });
+            yield* owner.publish(yield* makeState);
+            const refused = yield* Effect.scoped(
+              ServerOwnership.acquireServerOwnership(statePath, { serviceManaged: true }),
+            ).pipe(Effect.flip);
+            assert.equal(refused._tag, "ServerAlreadyRunningError");
+            assert.equal(tryExclusive(writerPath), 78);
+            assert.equal(tryExclusive(lockPath), 78);
+          }),
+        );
+        assert.isFalse(yield* fs.exists(statePath));
+        assert.equal(tryExclusive(writerPath), 0);
+        assert.equal(tryExclusive(lockPath), 78);
+        assert.equal((yield* fs.stat(lockPath)).size, ByteSize.zero);
+      }).pipe(Effect.provide(layerOwnership)),
+  );
+
   describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("lock file checks", () => {
     it.effect.each([
       "unchanged",
       "unlink",
       "replace",
+      "writer unlink",
+      "writer replace",
       "during acquisition",
       "first acquisition",
       // Root bypasses directory permissions, so chmod cannot force EACCES.
@@ -216,7 +297,10 @@ describe("server ownership", () => {
         const path = yield* Path.Path;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-owner-lost-" });
         const statePath = path.join(root, "server-runtime.json");
-        const lockPath = path.join(root, "server-owner.sqlite");
+        const lockPath = path.join(
+          root,
+          operation.startsWith("writer ") ? "server-writer.sqlite" : "server-owner.sqlite",
+        );
         const replacement = path.join(root, "replacement.sqlite");
         if (operation === "during acquisition" || operation === "first acquisition") {
           if (operation === "during acquisition") yield* fs.writeFileString(lockPath, "");
@@ -236,9 +320,9 @@ describe("server ownership", () => {
           );
         }
         yield* ServerOwnership.acquireServerOwnership(statePath);
-        if (operation === "unlink") {
+        if (operation === "unlink" || operation === "writer unlink") {
           yield* fs.remove(lockPath);
-        } else if (operation === "replace") {
+        } else if (operation === "replace" || operation === "writer replace") {
           yield* fs.writeFileString(replacement, "");
           yield* fs.rename(replacement, lockPath);
         }
@@ -249,6 +333,9 @@ describe("server ownership", () => {
           );
           assert.deepEqual(warnings, [
             [`Cannot check server ownership lock at ${lockPath} (EACCES).`],
+            [
+              `Cannot check server ownership lock at ${path.join(root, "server-writer.sqlite")} (EACCES).`,
+            ],
           ]);
           yield* TestClock.adjust("5 seconds");
           assert.deepEqual(messages, []);
@@ -266,11 +353,14 @@ describe("server ownership", () => {
         assert.deepEqual(messages, expected);
         if (operation !== "unchanged") {
           yield* fs.remove(`${lockPath}-journal`, { force: true });
-          yield* Effect.scoped(ServerOwnership.acquireServerOwnership(statePath));
+          const refused = yield* Effect.scoped(
+            ServerOwnership.acquireServerOwnership(statePath),
+          ).pipe(Effect.flip);
+          assert.equal(refused._tag, "ServerAlreadyRunningError");
         }
         yield* TestClock.adjust("15 seconds");
         assert.deepEqual(messages, expected);
-        assert.lengthOf(warnings, operation === "stat error" ? 1 : 0);
+        assert.lengthOf(warnings, operation === "stat error" ? 2 : 0);
       }).pipe(
         Effect.provide(
           Layer.merge(layerOwnership, Logger.layer([logger], { mergeWithExisting: false })),

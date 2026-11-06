@@ -39,6 +39,7 @@ import {
   pinnedRuntimeCommand,
   PinnedRuntimeInstallError,
   pinnedRuntimePaths,
+  runtimeSourceForReleaseBaseUrl,
   PinnedRuntimePreflightBlockedError,
   prunePinnedRuntimes,
 } from "./pinnedRuntime.ts";
@@ -80,12 +81,22 @@ export class ServerSelfUpdate extends Context.Service<
  * install script's `t3` start this home's pinned runtime directly, without one.
  */
 export const pruneRuntimesOnStart = Effect.fn("cloud.server_self_update.prune_on_start")(
-  function* (input: { readonly baseDir: string; readonly managed: boolean }) {
+  function* (input: {
+    readonly baseDir: string;
+    readonly managed: boolean;
+    readonly runtimeSource?: string | undefined;
+  }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const platform = yield* HostProcess.Platform;
     const executablePath = yield* HostProcess.ExecutablePath;
-    const { entryPath } = pinnedRuntimePaths(path, input.baseDir, packageJson.version, platform);
+    const { entryPath } = pinnedRuntimePaths(
+      path,
+      input.baseDir,
+      packageJson.version,
+      platform,
+      input.runtimeSource,
+    );
     // The executable path is resolved, so it names the real path of a symlinked T3 home.
     const realEntryPath = yield* fs.realPath(entryPath).pipe(Effect.orElseSucceed(() => entryPath));
     if (!input.managed && executablePath !== entryPath && executablePath !== realEntryPath) {
@@ -94,6 +105,7 @@ export const pruneRuntimesOnStart = Effect.fn("cloud.server_self_update.prune_on
     const removed = yield* prunePinnedRuntimes({
       baseDir: input.baseDir,
       keep: [packageJson.version],
+      runtimeSource: input.runtimeSource,
     });
     if (removed.length > 0) {
       yield* Effect.logInfo("Removed unused t3 runtimes.", { versions: removed });
@@ -138,10 +150,13 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     mirror?.feedUrl ??
     Option.getOrUndefined(yield* Config.String(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option));
   const inFlight = yield* Ref.make(false);
+  const runtimeSource = runtimeSourceForReleaseBaseUrl(releaseBaseUrl);
 
-  yield* pruneRuntimesOnStart({ baseDir: serverConfig.baseDir, managed: launcher.managed }).pipe(
-    Effect.forkScoped,
-  );
+  yield* pruneRuntimesOnStart({
+    baseDir: serverConfig.baseDir,
+    managed: launcher.managed,
+    runtimeSource,
+  }).pipe(Effect.forkScoped);
 
   const capability: ServerSelfUpdateCapability | null =
     serverConfig.mode === "desktop" ? "desktop-managed" : launcher.managed ? "boot-service" : null;
@@ -211,6 +226,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         platform,
         arch,
         releaseBaseUrl,
+        runtimeSource,
         requirePublishedRelease: mirror !== undefined,
         validate: (runtime) =>
           runner

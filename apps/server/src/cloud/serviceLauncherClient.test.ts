@@ -3,6 +3,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 
+import packageJson from "../../package.json" with { type: "json" };
 import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
@@ -48,6 +49,77 @@ const makeClient = (host: FakeLauncherProcess, currentVersion: string) =>
     Effect.provideService(ServiceLauncherClient.ServiceLauncherHostProcess, host),
     Effect.provideService(HostProcess.Environment, host.env),
   );
+
+it.effect.each([
+  {
+    name: "validated IPC capability",
+    context: {
+      protocol: SERVICE_LAUNCHER_PROTOCOL,
+      childVersion: packageJson.version,
+      ownershipProtocol: 1,
+    },
+    connected: true,
+    expected: { managed: true, serviceOwnership: true },
+  },
+  {
+    name: "legacy launcher context",
+    context: { protocol: SERVICE_LAUNCHER_PROTOCOL, childVersion: packageJson.version },
+    connected: true,
+    expected: { managed: true, serviceOwnership: false },
+  },
+  {
+    name: "inherited environment without IPC",
+    context: {
+      protocol: SERVICE_LAUNCHER_PROTOCOL,
+      childVersion: packageJson.version,
+      ownershipProtocol: 1,
+    },
+    connected: false,
+    expected: { managed: false, serviceOwnership: false },
+  },
+  {
+    name: "unknown ownership capability",
+    context: {
+      protocol: SERVICE_LAUNCHER_PROTOCOL,
+      childVersion: packageJson.version,
+      ownershipProtocol: 2,
+    },
+    connected: true,
+    error: "decode-context",
+  },
+  {
+    name: "string ownership capability",
+    context: {
+      protocol: SERVICE_LAUNCHER_PROTOCOL,
+      childVersion: packageJson.version,
+      ownershipProtocol: "1",
+    },
+    connected: true,
+    error: "decode-context",
+  },
+  {
+    name: "capability with mismatched child version",
+    context: { protocol: SERVICE_LAUNCHER_PROTOCOL, childVersion: "0.0.0", ownershipProtocol: 1 },
+    connected: true,
+    error: "version-mismatch",
+  },
+])("resolves service ownership for $name", (fixture) =>
+  Effect.gen(function* () {
+    const host = new FakeLauncherProcess(fixture.context, fixture.connected);
+    const result = yield* ServiceLauncherClient.resolveServiceLauncherMode().pipe(
+      Effect.provideService(ServiceLauncherClient.ServiceLauncherHostProcess, host),
+      Effect.provideService(HostProcess.Environment, host.env),
+      Effect.result,
+    );
+    if (fixture.error !== undefined) {
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") expect(result.failure.operation).toBe(fixture.error);
+    } else {
+      expect(result._tag).toBe("Success");
+      if (result._tag === "Success") expect(result.success).toEqual(fixture.expected);
+    }
+  }),
+);
 
 it.effect("waits for the launcher to durably commit the trial update ID", () =>
   Effect.gen(function* () {

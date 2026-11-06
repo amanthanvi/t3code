@@ -1,18 +1,26 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Captures only test-owned native launcher processes.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeSqlite from "node:sqlite";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it } from "@effect/vitest";
+import { expect, it, live } from "@effect/vitest";
+import type { ManagedPolicyDocument } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import { HttpClient } from "effect/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { vi } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as ServiceHandoff from "./serviceHandoff.ts";
 import * as BootService from "./bootService.ts";
-import { pinnedRuntimePaths } from "./pinnedRuntime.ts";
+import { pinnedRuntimePaths, runtimeSourceForReleaseBaseUrl } from "./pinnedRuntime.ts";
 import {
   parseServiceState,
   SERVICE_ENV_FILE,
@@ -119,12 +127,29 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     linger: string;
     enabled: boolean;
     active: boolean;
+    nativeHandoff?: boolean;
+    afterStop?: () => void;
+    onActivate?: () => Promise<void>;
+    supportsOwnership?: boolean;
   } = {
     failCommand: undefined,
     linger: "yes",
     enabled: true,
     active: true,
   };
+  const prepareNativeHandoff = ServiceHandoff.prepareServiceHandoff;
+  yield* Effect.acquireRelease(
+    Effect.sync(() =>
+      vi
+        .spyOn(ServiceHandoff, "prepareServiceHandoff")
+        .mockImplementation((directory) =>
+          control.nativeHandoff
+            ? prepareNativeHandoff(directory)
+            : Promise.resolve({ waitForReady: async () => {}, close: async () => {} }),
+        ),
+    ),
+    (spy) => Effect.sync(() => spy.mockRestore()),
+  );
   const runner = ProcessRunner.ProcessRunner.of({
     run: Effect.fn("test.run_boot_service_command")(function* (
       input: ProcessRunner.ProcessRunInput,
@@ -140,6 +165,10 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       if (!failed && command === "systemctl --user restart t3code.service") control.active = true;
       // A timed-out stop may still stop the service.
       if (command === "systemctl --user stop t3code.service") control.active = false;
+      if (command === "systemctl --user stop t3code.service") control.afterStop?.();
+      if (!failed && command === "systemctl --user restart t3code.service" && control.onActivate) {
+        yield* Effect.promise(control.onActivate);
+      }
       if (
         control.stateAfterStop !== undefined &&
         (command === "systemctl --user stop t3code.service" ||
@@ -162,13 +191,20 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
               })
             : input.args[0] === "--version"
               ? `t3 v${/versions\/([^/]+)\//.exec(input.command)?.[1] ?? "1.2.3"}\n`
-              : input.command === "loginctl" && input.args[0] === "show-user"
-                ? `${control.linger}\n`
-                : input.args[1] === "is-enabled"
-                  ? control.enabled
-                    ? "enabled\n"
-                    : "disabled\n"
-                  : "",
+              : input.args[0] === "__service-preflight"
+                ? JSON.stringify({
+                    status: "ready",
+                    version: /versions\/([^/]+)\//.exec(input.command)?.[1] ?? "1.2.3",
+                    launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+                    ...(control.supportsOwnership === false ? {} : { ownershipProtocol: 1 }),
+                  })
+                : input.command === "loginctl" && input.args[0] === "show-user"
+                  ? `${control.linger}\n`
+                  : input.args[1] === "is-enabled"
+                    ? control.enabled
+                      ? "enabled\n"
+                      : "disabled\n"
+                    : "",
         stderr: "",
         code: ChildProcessSpawner.ExitCode(
           failed ||
@@ -191,12 +227,49 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     serviceBaseDir = baseDir,
     insideService = false,
     hostExecPath = "/usr/bin/t3",
+    release?: { readonly policy?: ManagedPolicyDocument; readonly baseUrl?: string },
   ) =>
     Effect.gen(function* () {
       const paths = pinnedRuntimePaths(path, serviceBaseDir, cliVersion, platform);
       yield* fs.makeDirectory(path.dirname(paths.entryPath), { recursive: true });
       yield* fs.writeFileString(paths.entryPath, "#!/bin/sh\n");
       yield* fs.writeFileString(paths.sentinelPath, `${cliVersion}\n`);
+      for (const url of [release?.baseUrl, release?.policy?.limits?.updates?.feedUrl]) {
+        if (url === undefined) continue;
+        const runtimeSource = runtimeSourceForReleaseBaseUrl(url);
+        const selected = pinnedRuntimePaths(
+          path,
+          serviceBaseDir,
+          cliVersion,
+          platform,
+          runtimeSource,
+        );
+        const provenance = {
+          schemaVersion: 1,
+          distribution: "aman-t3-managed",
+          buildId: "ssh-race-v1",
+          upstreamVersion: cliVersion,
+          upstreamSourceCommit: "a".repeat(40),
+          sourceCommit: "b".repeat(40),
+        };
+        yield* fs.makeDirectory(selected.versionDir, { recursive: true });
+        yield* fs.writeFileString(selected.entryPath, "#!/bin/sh\n");
+        yield* fs.writeFileString(selected.sentinelPath, `${cliVersion}\n`);
+        yield* fs.writeFileString(
+          path.join(selected.versionDir, "managed-build.json"),
+          JSON.stringify(provenance),
+        );
+        yield* fs.writeFileString(
+          path.join(selected.versionDir, ".managed-install.json"),
+          JSON.stringify({
+            schemaVersion: 1,
+            runtimeSource,
+            version: cliVersion,
+            archiveSha256: "a".repeat(64),
+            provenance,
+          }),
+        );
+      }
       return yield* BootService.make({
         baseDir: serviceBaseDir,
         logsDir: path.join(serviceBaseDir, "userdata", "logs"),
@@ -212,12 +285,29 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
           Layer.succeed(HostProcess.ExecutablePath, hostExecPath),
           Layer.succeed(
             HttpClient.HttpClient,
-            HttpClient.make(() => Effect.die("no release download expected")),
+            HttpClient.make((request) =>
+              release === undefined
+                ? Effect.die("no release download expected")
+                : Effect.succeed(
+                    HttpClientResponse.fromWeb(
+                      request,
+                      new Response(
+                        ["linux-x64", "linux-arm64", "darwin-arm64", "darwin-x64"]
+                          .map((target) => `${"a".repeat(64)}  t3-${cliVersion}-${target}.tar.gz`)
+                          .join("\n"),
+                      ),
+                    ),
+                  ),
+            ),
           ),
+          ManagedPolicy.layerTest(release?.policy),
           ConfigProvider.layer(
             ConfigProvider.fromEnv({
               env: {
                 HOME: home,
+                ...(release?.baseUrl === undefined
+                  ? {}
+                  : { [CLI_RELEASE_BASE_URL_ENV]: release.baseUrl }),
                 ...(xdgConfigHome === undefined ? {} : { XDG_CONFIG_HOME: xdgConfigHome }),
                 ...(environmentPath === undefined || environmentPath === ""
                   ? {}
@@ -246,6 +336,101 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
 });
 
 it.layer(NodeServices.layer)("boot service install", (it) => {
+  live("reserves the whole restart until the replacement launcher owns the home", () =>
+    Effect.gen(function* () {
+      const { service, control, baseDir } = yield* makeHarness();
+      yield* service.install();
+      const gatePath = `${baseDir}/userdata/server-owner.sqlite`;
+      const helperUrl = new URL("../serverOwnershipLock.ts", import.meta.url).href;
+      const handoffUrl = new URL("./serviceHandoff.ts", import.meta.url).href;
+      const legacyAttempt = () =>
+        NodeChildProcess.spawnSync(process.execPath, [
+          "--input-type=module",
+          "-e",
+          `
+        import { DatabaseSync } from 'node:sqlite';
+        const db = new DatabaseSync(${JSON.stringify(gatePath)});
+        try { db.exec('PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;'); }
+        catch (error) { process.exitCode = error.errcode === 5 ? 78 : 1; }
+        finally { db.close(); }
+      `,
+        ]).status;
+      let child: NodeChildProcess.ChildProcess | undefined;
+      yield* Effect.addFinalizer(() =>
+        Effect.promise(async () => {
+          if (child === undefined || child.exitCode !== null || child.signalCode !== null) return;
+          const exited = new Promise<void>((resolve) => child!.once("exit", () => resolve()));
+          child.kill("SIGKILL");
+          await exited;
+        }),
+      );
+      control.nativeHandoff = true;
+      control.afterStop = () => expect(legacyAttempt()).toBe(78);
+      control.onActivate = async () => {
+        child = NodeChildProcess.spawn(
+          process.execPath,
+          [
+            "--input-type=module",
+            "-e",
+            `
+          import { acquireOwnershipLock } from ${JSON.stringify(helperUrl)};
+          import { acknowledgeServiceHandoff } from ${JSON.stringify(handoffUrl)};
+          const gate = acquireOwnershipLock(${JSON.stringify(gatePath)}, 'shared');
+          const control = acquireOwnershipLock(${JSON.stringify(`${baseDir}/userdata/service-launcher-owner.sqlite`)}, 'exclusive');
+          await acknowledgeServiceHandoff(${JSON.stringify(baseDir)});
+          process.on('message', () => {});
+          process.send({ ready: true });
+        `,
+          ],
+          { stdio: ["ignore", "ignore", "ignore", "ipc"] },
+        );
+        await new Promise<void>((resolve, reject) => {
+          child!.once("message", () => resolve());
+          child!.once("error", reject);
+          child!.once("exit", () =>
+            reject(new Error("Replacement launcher fixture exited before acknowledgment")),
+          );
+        });
+      };
+      expect(yield* service.restart).toBe("restarted");
+      expect(legacyAttempt()).toBe(78);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("refuses an uncoordinated runtime before stopping the service", () =>
+    Effect.gen(function* () {
+      const { service, control, commands } = yield* makeHarness();
+      yield* service.install();
+      control.supportsOwnership = false;
+      commands.length = 0;
+      expect((yield* service.install().pipe(Effect.flip)).message).toContain(
+        "does not support coordinated service ownership",
+      );
+      expect(commands).not.toContain("systemctl --user stop t3code.service");
+    }),
+  );
+
+  it.effect("separates a policy mirror runtime from official and environment runtimes", () =>
+    Effect.gen(function* () {
+      const { makeService, baseDir, fs } = yield* makeHarness();
+      const feedUrl = "https://managed.example.test/releases";
+      const runtimeSource = runtimeSourceForReleaseBaseUrl(feedUrl);
+      const service = yield* makeService(undefined, "1.2.3", baseDir, false, "/usr/bin/t3", {
+        baseUrl: "https://environment.example.test/releases",
+        policy: {
+          schemaVersion: 1,
+          organization: "Example",
+          limits: { updates: { mode: "auto", feedUrl } },
+        },
+      });
+      const plan = yield* service.install({ start: false });
+      expect(plan.program[0]).toContain(`/runtime/sources/${runtimeSource}/versions/1.2.3/t3`);
+      expect(
+        JSON.parse(yield* fs.readFileString(`${baseDir}/runtime/service-state.json`)).runtimeSource,
+      ).toBe(runtimeSource);
+      expect(yield* fs.readFileString(`${baseDir}/runtime/versions/1.2.3/t3`)).toBe("#!/bin/sh\n");
+    }),
+  );
   it.effect(
     "fails before installing files or validating a runtime when lingering needs an administrator",
     () =>
@@ -619,6 +804,61 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
+  it.effect("serializes deferred installation with an accepted remote update", () =>
+    Effect.gen(function* () {
+      const { service, fs, statePath, baseDir, makeService, commands } = yield* makeHarness();
+      const plan = yield* service.install();
+      const state = yield* fs.readFileString(statePath);
+      const unit = yield* fs.readFileString(plan.unitPath);
+      const next = yield* makeService(undefined, "1.2.4");
+      for (const [lockPath, sql] of [
+        [
+          `${baseDir}/runtime/service-installer-owner.sqlite`,
+          "BEGIN; SELECT * FROM sqlite_schema;",
+        ],
+        [`${baseDir}/userdata/server-owner.sqlite`, "BEGIN EXCLUSIVE;"],
+      ] as const)
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* Effect.acquireRelease(
+              Effect.sync(() => {
+                const db = new NodeSqlite.DatabaseSync(lockPath);
+                db.exec(`PRAGMA busy_timeout = 0; ${sql}`);
+                return db;
+              }),
+              (db) => Effect.sync(() => db.close()),
+            );
+            const attempted = yield* next.install({ start: false }).pipe(Effect.result);
+            expect(attempted._tag).toBe("Failure");
+            expect(yield* fs.readFileString(statePath)).toBe(state);
+            expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
+            expect(yield* fs.exists(`${baseDir}/runtime/${SERVICE_RESTART_PENDING_FILE}`)).toBe(
+              false,
+            );
+          }),
+        );
+      const pending = JSON.stringify({
+        protocol: SERVICE_LAUNCHER_PROTOCOL,
+        activeVersion: "1.2.3",
+        update: {
+          id: "accepted-before-installer",
+          fromVersion: "1.2.3",
+          targetVersion: "1.2.4",
+          dbPath: `${baseDir}/userdata/statev2.sqlite`,
+          status: "pending",
+        },
+      });
+      yield* fs.writeFileString(statePath, pending);
+      commands.length = 0;
+      expect((yield* next.install({ start: false }).pipe(Effect.flip))._tag).toBe(
+        "BootServiceUpdatePendingError",
+      );
+      expect(yield* fs.readFileString(statePath)).toBe(pending);
+      expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
+      expect(commands).not.toContain("systemctl --user stop t3code.service");
+    }),
+  );
+
   it.effect("pauses only this home's running service for maintenance, even when it fails", () =>
     Effect.gen(function* () {
       const { service, commands, control, makeService } = yield* makeHarness();
@@ -753,21 +993,18 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         yield* fs.writeFileString(marker, "1.2.3\n");
         const inside = yield* makeService(undefined, "1.2.3", undefined, true);
         commands.length = 0;
-        control.failCommand = "systemctl --user daemon-reload";
+        const handoffCommand = `systemd-run --user --collect --quiet --property=StandardOutput=append:${plan.logPath} --property=StandardError=append:${plan.logPath} --setenv=T3_BOOT_SERVICE_UNIT= ${plan.program[0]} service restart --base-dir ${plan.baseDir}`;
+        control.failCommand = handoffCommand;
 
         const error = yield* inside.restart.pipe(Effect.flip);
         expect(error).toMatchObject({ _tag: "BootServiceCommandError", exitCode: 1 });
-        expect(commands).toEqual(["systemctl --user daemon-reload"]);
+        expect(commands).toEqual([handoffCommand]);
         expect(control.active).toBe(true);
 
         control.failCommand = undefined;
         commands.length = 0;
         const outcome = yield* inside.restart;
-        expect(commands).toEqual([
-          "systemctl --user daemon-reload",
-          "systemctl --user enable t3code.service",
-          "systemctl --user restart --no-block t3code.service",
-        ]);
+        expect(commands).toEqual([handoffCommand]);
         expect(outcome).toBe("queued");
         expect(yield* fs.readFileString(statePath)).toBe(state);
         expect(yield* fs.readFileString(marker)).toBe("1.2.3\n");

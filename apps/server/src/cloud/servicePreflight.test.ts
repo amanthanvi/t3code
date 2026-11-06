@@ -12,8 +12,25 @@ import {
 } from "../persistence/databaseMigrationHead.ts";
 import { migrationManifest } from "../persistence/Migrations.ts";
 
-import { runServicePreflight } from "./servicePreflight.ts";
-import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
+import { decodeServicePreflightResult, runServicePreflight } from "./servicePreflight.ts";
+import { SERVICE_LAUNCHER_PROTOCOL, SERVICE_OWNERSHIP_PROTOCOL } from "./serviceProtocol.ts";
+
+it("requires cooperative ownership before accepting a target runtime", () => {
+  const ready = runServicePreflight({
+    databasePath: "/missing/state.sqlite",
+    launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+    version: "1.2.3",
+  });
+  expect(decodeServicePreflightResult(ready)).toEqual({
+    status: "ready",
+    version: "1.2.3",
+    launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+    ownershipProtocol: SERVICE_OWNERSHIP_PROTOCOL,
+  });
+  for (const ownershipProtocol of [undefined, 0, 2, "1"]) {
+    expect(decodeServicePreflightResult({ ...ready, ownershipProtocol })).toBeUndefined();
+  }
+});
 
 // regression: #13239 a stale CLI shadowing the updated one kept "updating" to itself
 it.each([1])("blocks legacy launcher protocol %i with exact recovery steps", (launcherProtocol) => {

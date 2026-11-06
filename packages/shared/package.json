@@ -538,6 +538,10 @@
     "./speech": {
       "types": "./src/speech.ts",
       "import": "./src/speech.ts"
+    },
+    "./serviceRuntime": {
+      "types": "./src/serviceRuntime.ts",
+      "import": "./src/serviceRuntime.ts"
     }
   },
   "scripts": {

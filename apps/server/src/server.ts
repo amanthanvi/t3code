@@ -834,8 +834,11 @@ const layerMakeRoutes = Layer.mergeAll(
 const layerMakeServer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
+    const launcherMode = yield* ServiceLauncherClient.resolveServiceLauncherMode();
     // Before anything opens the database: one server per T3 home.
-    const ownership = yield* ServerOwnership.acquireServerOwnership(config.serverRuntimeStatePath);
+    const ownership = yield* ServerOwnership.acquireServerOwnership(config.serverRuntimeStatePath, {
+      serviceManaged: launcherMode.serviceOwnership,
+    });
     const activation = yield* Deferred.make<void>();
     const awaitActivation = Deferred.await(activation);
     const layerActivation = Layer.succeed(ServerActivation.ServerActivation, awaitActivation);

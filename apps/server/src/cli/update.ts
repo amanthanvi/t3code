@@ -2,6 +2,9 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   CLI_RELEASE_BASE_URL_ENV,
   CLI_RELEASE_CHANNELS,
+  CLI_RELEASE_CHECKSUMS_FILE,
+  cliArchiveFileName,
+  cliArchivePlatformKey,
   cliReleaseIndexPageUrl,
   cliReleaseChannelOf,
   newestCliReleaseVersion,
@@ -24,12 +27,15 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import {
   ensurePinnedRuntimeInstalled,
+  githubReleaseRepository,
+  launcherOwnsRuntimePath,
   launcherOwnsVersionsDir,
+  pinnedRuntimeVersionsDir,
   pinnedRuntimeCommand,
   isUnpublishedRelease,
   PinnedRuntimeInstallError,
   pinnedRuntimePaths,
-  pinnedRuntimeVersionsDir,
+  runtimeSourceForReleaseBaseUrl,
   prunePinnedRuntimes,
   recordPinnedRuntimeLauncher,
   windowsShimTarget,
@@ -55,6 +61,8 @@ const ReleaseIndex = Schema.Array(
   Schema.Struct({
     tag_name: Schema.String,
     draft: Schema.optional(Schema.Boolean),
+    immutable: Schema.optional(Schema.Boolean),
+    assets: Schema.optional(Schema.Array(Schema.Struct({ name: Schema.String }))),
   }),
 );
 const decodeReleaseIndex = Schema.decodeUnknownEffect(Schema.fromJsonString(ReleaseIndex));
@@ -64,12 +72,26 @@ const RELEASE_INDEX_MAX_PAGES = 10;
 
 export const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(function* (
   channel: CliReleaseChannel,
+  managed?: { readonly repository: string; readonly organization: string },
 ) {
   const httpClient = yield* HttpClient.HttpClient;
   const environment = yield* HostProcess.Environment;
   const githubToken = environment.GH_TOKEN?.trim() || environment.GITHUB_TOKEN?.trim() || undefined;
+  const platformKey =
+    managed === undefined
+      ? undefined
+      : cliArchivePlatformKey(yield* HostProcess.Platform, yield* HostProcess.Architecture);
+  const missing = new CliUpdateError({
+    reason:
+      managed === undefined
+        ? `No published ${channel} release was found.`
+        : `No published managed ${channel} release for this machine was found in ${managed.organization}'s update mirror.`,
+  });
+  if (managed !== undefined && platformKey === undefined) return yield* missing;
   for (let page = 1; page <= RELEASE_INDEX_MAX_PAGES; page += 1) {
-    const request = HttpClientRequest.get(cliReleaseIndexPageUrl(page)).pipe(
+    const indexUrl = new URL(cliReleaseIndexPageUrl(page));
+    if (managed !== undefined) indexUrl.pathname = `/repos/${managed.repository}/releases`;
+    const request = HttpClientRequest.get(indexUrl.toString()).pipe(
       HttpClientRequest.setHeader("Accept", "application/vnd.github+json"),
     );
     const authenticatedRequest =
@@ -90,11 +112,31 @@ export const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(funct
         () => new CliUpdateError({ reason: "The t3 release index had an unexpected shape." }),
       ),
     );
-    const version = newestCliReleaseVersion(releases, channel);
+    const eligible =
+      managed === undefined
+        ? releases
+        : releases.filter((release) => {
+            if (release.immutable !== true) return false;
+            const version = /^v(.+)$/.exec(release.tag_name)?.[1];
+            if (
+              version === undefined ||
+              !isExactServiceVersion(version) ||
+              platformKey === undefined
+            )
+              return false;
+            const names = new Set(release.assets?.map((asset) => asset.name));
+            return [
+              "managed-build.json",
+              "provenance.json",
+              CLI_RELEASE_CHECKSUMS_FILE,
+              cliArchiveFileName(version, platformKey),
+            ].every((name) => names.has(name));
+          });
+    const version = newestCliReleaseVersion(eligible, channel);
     if (version !== undefined) return version;
     if (releases.length === 0) break;
   }
-  return yield* new CliUpdateError({ reason: `No published ${channel} release was found.` });
+  return yield* missing;
 });
 
 /** The version an update mirror's feed file for this platform offers on `channel`. */
@@ -106,6 +148,10 @@ export const resolveMirrorVersion = Effect.fn("cli.update.resolve_mirror")(funct
     return yield* new CliUpdateError({
       reason: `${mirror.organization}'s update mirror has no preview builds.`,
     });
+  }
+  const repository = githubReleaseRepository(mirror.feedUrl);
+  if (repository !== undefined) {
+    return yield* resolveNewestVersion(channel, { repository, organization: mirror.organization });
   }
   const httpClient = yield* HttpClient.HttpClient;
   const fileName = updateFeedFileName(
@@ -139,7 +185,7 @@ export const resolveMirrorVersion = Effect.fn("cli.update.resolve_mirror")(funct
 });
 
 /**
- * Only a launcher that already points into this home's `runtime/versions` tree is touched; a
+ * Only a launcher that already points into this home's official or managed cache is touched; a
  * plain copy of the executable, or a launcher for some other install, is left alone. It is
  * recorded before it moves, so prune never meets a repointed launcher it does not know about.
  */
@@ -152,8 +198,7 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
   if (input.launchedAs === undefined) return Option.none<string>();
-  const versionsDir = pinnedRuntimeVersionsDir(path, input.baseDir);
-  const ownsTarget = (candidate: string) => launcherOwnsVersionsDir(path, versionsDir, candidate);
+  const ownsTarget = (candidate: string) => launcherOwnsRuntimePath(path, input.baseDir, candidate);
   const remember = (launcher: string) =>
     recordPinnedRuntimeLauncher({ baseDir: input.baseDir, launcher }).pipe(
       Effect.mapError(
@@ -365,6 +410,9 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   const service = yield* BootService.BootService;
   const policy = yield* ManagedPolicy.ManagedPolicy;
   const mirror = managedUpdateMirror(policy.document);
+  const releaseBaseUrl =
+    mirror?.feedUrl ?? (environment[CLI_RELEASE_BASE_URL_ENV]?.trim() || undefined);
+  const runtimeSource = runtimeSourceForReleaseBaseUrl(releaseBaseUrl);
 
   const currentVersion = packageJson.version;
   const channel = input.channel ?? cliReleaseChannelOf(currentVersion);
@@ -427,12 +475,38 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     serviceInstalled,
   });
   const serviceVersion = serviceInstalled ? status.installedVersion : undefined;
-  const executableCurrent = targetVersion === currentVersion;
+  const executablePath = yield* HostProcess.ExecutablePath;
+  const realBaseDir = yield* fs
+    .realPath(input.baseDir)
+    .pipe(Effect.orElseSucceed(() => input.baseDir));
+  const realExecutable = yield* fs
+    .realPath(executablePath)
+    .pipe(Effect.orElseSucceed(() => executablePath));
+  // A managed executable can be invoked from another home or a bootstrap directory.
+  const hasManagedProvenance = yield* fs
+    .exists(path.join(path.dirname(realExecutable), "managed-build.json"))
+    .pipe(Effect.orElseSucceed(() => true));
+  const sourceCurrent =
+    runtimeSource === undefined
+      ? !hasManagedProvenance &&
+        (!launcherOwnsRuntimePath(path, realBaseDir, realExecutable) ||
+          launcherOwnsVersionsDir(
+            path,
+            pinnedRuntimeVersionsDir(path, realBaseDir),
+            realExecutable,
+          ))
+      : launcherOwnsVersionsDir(
+          path,
+          pinnedRuntimeVersionsDir(path, realBaseDir, runtimeSource),
+          realExecutable,
+        );
+  const executableCurrent = targetVersion === currentVersion && sourceCurrent;
   const restartPending = status.problems?.includes("restart-pending") === true;
   const serviceCurrent =
     !serviceInstalled ||
     (serviceVersion === targetVersion &&
-      (executableCurrent ? status.current : (status.problems ?? []).length === 0));
+      status.installedRuntimeSource === runtimeSource &&
+      (targetVersion === currentVersion ? status.current : (status.problems ?? []).length === 0));
   const newestInstalled =
     serviceVersion !== undefined && compareExactServiceVersions(serviceVersion, currentVersion) > 0
       ? serviceVersion
@@ -453,7 +527,9 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   }
 
   const alreadyOnDisk = yield* fs
-    .readFileString(pinnedRuntimePaths(path, input.baseDir, targetVersion, platform).sentinelPath)
+    .readFileString(
+      pinnedRuntimePaths(path, input.baseDir, targetVersion, platform, runtimeSource).sentinelPath,
+    )
     .pipe(
       Effect.map((sentinel) => sentinel.trim() === targetVersion),
       Effect.orElseSucceed(() => false),
@@ -502,7 +578,8 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     httpClient,
     platform,
     arch,
-    releaseBaseUrl: mirror?.feedUrl ?? (environment[CLI_RELEASE_BASE_URL_ENV]?.trim() || undefined),
+    releaseBaseUrl,
+    runtimeSource,
     requirePublishedRelease: mirror !== undefined,
     validate: (paths) =>
       runner
@@ -584,6 +661,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     yield* prunePinnedRuntimes({
       baseDir: input.baseDir,
       keep: [currentVersion, targetVersion],
+      runtimeSource,
       references: Option.toArray(Option.flatMapNullishOr(unit, BootService.bootServiceProgramOf)),
     });
   }

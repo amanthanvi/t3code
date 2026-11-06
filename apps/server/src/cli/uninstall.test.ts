@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
+import { pinnedRuntimePaths, runtimeSourceForReleaseBaseUrl } from "../cloud/pinnedRuntime.ts";
 import { findOwnedLauncher, spawnWindowsRemoval } from "./uninstall.ts";
 
 it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
@@ -29,10 +30,25 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
       yield* fs.symlink(exe, ours);
       yield* fs.symlink(otherExe, theirs);
 
-      assert.equal(yield* findOwnedLauncher({ launchedAs: ours, versionsDir }), ours);
-      assert.isUndefined(yield* findOwnedLauncher({ launchedAs: theirs, versionsDir }));
-      assert.isUndefined(yield* findOwnedLauncher({ launchedAs: copy, versionsDir }));
-      assert.isUndefined(yield* findOwnedLauncher({ launchedAs: undefined, versionsDir }));
+      const managed = pinnedRuntimePaths(
+        path,
+        root,
+        "1.0.0",
+        "linux",
+        runtimeSourceForReleaseBaseUrl("https://managed.example/releases"),
+      );
+      yield* fs.makeDirectory(managed.versionDir, { recursive: true });
+      yield* fs.writeFileString(managed.entryPath, "");
+      const managedLauncher = path.join(root, "managed-t3");
+      yield* fs.symlink(managed.entryPath, managedLauncher);
+      assert.equal(
+        yield* findOwnedLauncher({ launchedAs: managedLauncher, baseDir: root }),
+        managedLauncher,
+      );
+      assert.equal(yield* findOwnedLauncher({ launchedAs: ours, baseDir: root }), ours);
+      assert.isUndefined(yield* findOwnedLauncher({ launchedAs: theirs, baseDir: root }));
+      assert.isUndefined(yield* findOwnedLauncher({ launchedAs: copy, baseDir: root }));
+      assert.isUndefined(yield* findOwnedLauncher({ launchedAs: undefined, baseDir: root }));
     }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
   );
 });

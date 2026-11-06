@@ -18,6 +18,7 @@ import type {
 } from "./cloud/serviceProtocol.ts";
 import {
   compareExactServiceVersions,
+  decodeManagedRuntimeBuild,
   decodeServiceLauncherChildMessage,
   isExactServiceVersion,
   parseServiceState,
@@ -27,7 +28,15 @@ import {
   SERVICE_STATE_FILE,
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STOP_MARKER_FILE,
+  SERVICE_OWNERSHIP_PROTOCOL,
 } from "./cloud/serviceProtocol.ts";
+import {
+  acquireOwnershipLock,
+  SERVER_OWNER_FILE,
+  SERVER_WRITER_FILE,
+  SERVICE_LAUNCHER_OWNER_FILE,
+} from "./serverOwnershipLock.ts";
+import { acknowledgeServiceHandoff, acquireServiceInstallerLease } from "./cloud/serviceHandoff.ts";
 
 const HANDOFF_DELAY_MS = 2_000;
 /**
@@ -48,8 +57,11 @@ interface ManagedChild {
   readonly process: NodeChildProcess.ChildProcess;
 }
 
-const runtimePaths = (baseDir: string, version: string) => {
-  const versionDir = NodePath.join(baseDir, "runtime", "versions", version);
+const runtimePaths = (baseDir: string, version: string, source?: string) => {
+  const versionDir =
+    source === undefined
+      ? NodePath.join(baseDir, "runtime", "versions", version)
+      : NodePath.join(baseDir, "runtime", "sources", source, "versions", version);
   // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
   const executableName = process.platform === "win32" ? "t3.exe" : "t3";
   return {
@@ -382,14 +394,23 @@ export async function writeServiceState(filePath: string, state: ServiceState): 
   }
 }
 
-async function runtimeExists(baseDir: string, version: string): Promise<boolean> {
-  const paths = runtimePaths(baseDir, version);
+async function runtimeExists(baseDir: string, version: string, source?: string): Promise<boolean> {
+  const paths = runtimePaths(baseDir, version, source);
   try {
-    const [entry, sentinel] = await Promise.all([
+    const [entry, sentinel, manifest] = await Promise.all([
       NodeFSP.stat(paths.entryPath),
       NodeFSP.readFile(paths.sentinelPath, "utf8"),
+      NodeFSP.readFile(NodePath.join(paths.versionDir, "package.json"), "utf8"),
     ]);
-    return entry.isFile() && sentinel.trim() === version;
+    const metadata: unknown = JSON.parse(manifest);
+    return (
+      entry.isFile() &&
+      sentinel.trim() === version &&
+      typeof metadata === "object" &&
+      metadata !== null &&
+      "serviceOwnershipProtocol" in metadata &&
+      metadata.serviceOwnershipProtocol === SERVICE_OWNERSHIP_PROTOCOL
+    );
   } catch {
     return false;
   }
@@ -459,6 +480,7 @@ export class Launcher {
   readonly #completion = Promise.withResolvers<void>();
   readonly #backupSpaceProbe: Partial<BackupSpaceProbe> | undefined;
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
+  #leases: Array<ReturnType<typeof acquireOwnershipLock>> = [];
 
   constructor(
     baseDir: string,
@@ -481,11 +503,63 @@ export class Launcher {
     process.once("SIGTERM", onSigterm);
     process.once("SIGINT", onSigint);
     try {
-      this.#enqueue(() => this.#recover());
+      this.#leases.push(
+        acquireOwnershipLock(
+          NodePath.join(this.#baseDir, "userdata", SERVICE_LAUNCHER_OWNER_FILE),
+          "exclusive",
+        ),
+      );
+      try {
+        this.#leases.push(
+          acquireOwnershipLock(
+            NodePath.join(this.#baseDir, "userdata", SERVER_OWNER_FILE),
+            "shared",
+          ),
+        );
+      } catch (cause) {
+        if (!(cause instanceof Error && "errcode" in cause && cause.errcode === 5)) throw cause;
+        await this.#idleWhileStateDirOwned(false);
+        await this.#completion.promise;
+        return;
+      }
+      this.#assertOwnership();
+      this.#enqueue(async () => {
+        await acknowledgeServiceHandoff(this.#baseDir);
+        await this.#recover();
+      });
       await this.#completion.promise;
     } finally {
       process.off("SIGTERM", onSigterm);
       process.off("SIGINT", onSigint);
+      for (const lease of this.#leases.reverse()) lease.db.close();
+      this.#leases = [];
+    }
+  }
+
+  #assertOwnership(): void {
+    for (const lease of this.#leases) {
+      const current = NodeFS.statSync(lease.lockPath, { bigint: true });
+      if (
+        lease.replacedDuringAcquire ||
+        current.dev !== lease.identity.dev ||
+        current.ino !== lease.identity.ino
+      ) {
+        throw new Error("The T3 home ownership lock was replaced.");
+      }
+    }
+  }
+
+  async #withDatabaseOwnership(operation: () => Promise<void>): Promise<void> {
+    this.#assertOwnership();
+    const writer = acquireOwnershipLock(
+      NodePath.join(this.#baseDir, "userdata", SERVER_WRITER_FILE),
+      "exclusive",
+    );
+    try {
+      if (writer.replacedDuringAcquire) throw new Error("The T3 home writer lock was replaced.");
+      await operation();
+    } finally {
+      writer.db.close();
     }
   }
 
@@ -556,7 +630,7 @@ export class Launcher {
       await this.#returnToPrevious(update, "failed", "rollback-interrupted");
       return;
     }
-    if (!(await runtimeExists(this.#baseDir, update.targetVersion))) {
+    if (!(await runtimeExists(this.#baseDir, update.targetVersion, this.#state.runtimeSource))) {
       await this.#returnToPrevious(update, "failed", "target-runtime-missing");
       return;
     }
@@ -565,7 +639,7 @@ export class Launcher {
 
   async #startTrial(pending: PendingServiceUpdate): Promise<void> {
     try {
-      await backupDatabaseOnce(this.#baseDir, pending);
+      await this.#withDatabaseOwnership(() => backupDatabaseOnce(this.#baseDir, pending));
     } catch {
       await this.#returnToPrevious(pending, "failed", "db-backup-failed");
       return;
@@ -579,13 +653,15 @@ export class Launcher {
 
   async #startChild(version: string, role: ChildRole, update?: ServiceUpdateRecord): Promise<void> {
     if (this.#stopping) return;
-    if (!(await runtimeExists(this.#baseDir, version))) {
+    this.#assertOwnership();
+    if (!(await runtimeExists(this.#baseDir, version, this.#state.runtimeSource))) {
       throw new Error(`Selected t3@${version} runtime is missing or incomplete.`);
     }
     if (this.#stopping) return;
-    const paths = runtimePaths(this.#baseDir, version);
+    const paths = runtimePaths(this.#baseDir, version, this.#state.runtimeSource);
     const context: ServiceLauncherContext = {
       protocol: SERVICE_LAUNCHER_PROTOCOL,
+      ownershipProtocol: SERVICE_OWNERSHIP_PROTOCOL,
       childVersion: version,
       ...(update === undefined ? {} : { update }),
     };
@@ -633,7 +709,29 @@ export class Launcher {
   async #handleMessage(child: ManagedChild, message: ServiceLauncherChildMessage): Promise<void> {
     if (this.#child !== child || this.#stopping) return;
     if (message.type === "request-update") {
-      await this.#handleUpdateRequest(child, message);
+      let selection: ReturnType<typeof acquireServiceInstallerLease>;
+      try {
+        selection = acquireServiceInstallerLease(this.#baseDir, "shared");
+      } catch {
+        await sendMessage(child.process, {
+          type: "update-rejected",
+          reason:
+            "Could not reserve the service selection. Another service operation may be in progress.",
+        });
+        return;
+      }
+      try {
+        if (await pathExists(restartPendingPath(this.#baseDir))) {
+          await sendMessage(child.process, {
+            type: "update-rejected",
+            reason: "A CLI update is staged. Restart the service before requesting another update.",
+          });
+          return;
+        }
+        await this.#handleUpdateRequest(child, message);
+      } finally {
+        selection.db.close();
+      }
       return;
     }
     await this.#handlePrepared(child, message.updateId);
@@ -669,7 +767,7 @@ export class Launcher {
       await reject("The requested database path is not absolute.");
       return;
     }
-    if (!(await runtimeExists(this.#baseDir, message.targetVersion))) {
+    if (!(await runtimeExists(this.#baseDir, message.targetVersion, this.#state.runtimeSource))) {
       await reject("The requested target runtime is missing or incomplete.");
       return;
     }
@@ -785,10 +883,10 @@ export class Launcher {
   }
 
   // Stay idle to avoid supervisor restart loops; never restore backups over another owner's possible writes.
-  async #idleWhileStateDirOwned(): Promise<void> {
+  async #idleWhileStateDirOwned(recordFailure = true): Promise<void> {
     this.#clearTimer();
     const pending = this.#state.update;
-    if (pending?.status === "pending") {
+    if (recordFailure && pending?.status === "pending") {
       const next: ServiceState = {
         ...this.#state,
         activeVersion: pending.fromVersion,
@@ -815,7 +913,7 @@ export class Launcher {
       this.#child = null;
       await terminateChild(child.process);
     }
-    await restoreDatabaseBackup(this.#baseDir, pending);
+    await this.#withDatabaseOwnership(() => restoreDatabaseBackup(this.#baseDir, pending));
     const outcome = terminalUpdate({ pending, status, reason });
     const next: ServiceState = {
       ...this.#state,
@@ -837,5 +935,18 @@ export async function main(): Promise<void> {
   const environment = await readServiceEnvironment(baseDir);
   const statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
   const state = await readServiceState(statePath);
+  if (state.runtimeSource !== undefined) {
+    const provenance: unknown = JSON.parse(
+      await NodeFSP.readFile(
+        NodePath.join(NodePath.dirname(process.execPath), "managed-build.json"),
+        "utf8",
+      ),
+    );
+    const build = decodeManagedRuntimeBuild(provenance);
+    if (build === undefined) throw new Error("The managed launcher has invalid source provenance.");
+    process.stderr.write(
+      `[service-launcher] ${build.distribution} build ${build.buildId}; upstream ${build.upstreamVersion}; source ${build.sourceCommit}.\n`,
+    );
+  }
   await new Launcher(baseDir, state, { environment }).run();
 }

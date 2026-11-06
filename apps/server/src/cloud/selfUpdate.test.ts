@@ -22,6 +22,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
 import * as ServerSelfUpdate from "./selfUpdate.ts";
+import { pinnedRuntimeVersionsDir } from "./pinnedRuntime.ts";
 
 interface HarnessOptions {
   readonly mode?: "web" | "desktop";
@@ -72,6 +73,19 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
           const stagingDir = input.args[input.args.indexOf("-C") + 1];
           if (stagingDir === undefined) return yield* Effect.die("missing tar target");
           yield* fs.writeFileString(path.join(stagingDir, "t3"), "#!/bin/sh\n").pipe(Effect.orDie);
+          yield* fs
+            .writeFileString(
+              path.join(stagingDir, "managed-build.json"),
+              JSON.stringify({
+                schemaVersion: 1,
+                distribution: "aman-t3-managed",
+                buildId: "ssh-race-v1",
+                upstreamVersion: "1.1.0",
+                upstreamSourceCommit: "a".repeat(40),
+                sourceCommit: "b".repeat(40),
+              }),
+            )
+            .pipe(Effect.orDie);
           return {
             stdout: "",
             stderr: "",
@@ -106,6 +120,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
                 status: "ready",
                 version: "1.1.0",
                 launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+                ownershipProtocol: 1,
               };
         return {
           stdout: JSON.stringify(result),
@@ -359,21 +374,31 @@ it.layer(NodeServices.layer)("pruning runtimes on start", (it) => {
     readonly executable: "own runtime" | "elsewhere";
     readonly managed?: boolean;
     readonly symlinkedHome?: boolean;
+    readonly runtimeSource?: string;
   }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-prune-on-start-" });
     const realHome = path.join(tempDir, "home");
     const baseDir = input.symlinkedHome ? path.join(tempDir, "linked-home") : realHome;
-    const versionsDir = path.join(baseDir, "runtime", "versions");
+    const versionsDir = pinnedRuntimeVersionsDir(path, baseDir, input.runtimeSource);
     yield* TestClock.setTime(24 * 60 * 60 * 1000);
     for (const version of [staleVersion, packageJson.version]) {
-      const directory = path.join(realHome, "runtime", "versions", version);
+      const directory = path.join(
+        pinnedRuntimeVersionsDir(path, realHome, input.runtimeSource),
+        version,
+      );
       yield* fs.makeDirectory(directory, { recursive: true });
       yield* fs.writeFileString(path.join(directory, "t3"), "");
       const sentinel = path.join(directory, ".install-complete");
       yield* fs.writeFileString(sentinel, `${version}\n`);
       yield* fs.utimes(sentinel, 0, 0);
+    }
+    if (input.runtimeSource !== undefined) {
+      const official = path.join(pinnedRuntimeVersionsDir(path, realHome), staleVersion);
+      yield* fs.makeDirectory(official, { recursive: true });
+      yield* fs.writeFileString(path.join(official, "t3"), "official");
+      yield* fs.writeFileString(path.join(official, ".install-complete"), `${staleVersion}\n`);
     }
     if (input.symlinkedHome) yield* fs.symlink(realHome, baseDir);
     // Like `process.execPath`, the running runtime is reported by its real path.
@@ -384,16 +409,37 @@ it.layer(NodeServices.layer)("pruning runtimes on start", (it) => {
     const removed = yield* ServerSelfUpdate.pruneRuntimesOnStart({
       baseDir,
       managed: input.managed ?? false,
+      runtimeSource: input.runtimeSource,
     }).pipe(
       Effect.provideService(HostProcess.ExecutablePath, executablePath),
       Effect.provideService(HostProcess.Platform, "darwin"),
       Effect.provideService(HostProcess.Environment, {}),
       Effect.provideService(ProcessRunner.ProcessRunner, otherProcesses),
     );
-    return { removed, remaining: (yield* fs.readDirectory(versionsDir)).toSorted() };
+    return {
+      removed,
+      remaining: (yield* fs.readDirectory(versionsDir)).toSorted(),
+      officialRetained:
+        input.runtimeSource === undefined ||
+        (yield* fs.readFileString(
+          path.join(pinnedRuntimeVersionsDir(path, realHome), staleVersion, "t3"),
+        )) === "official",
+    };
   });
 
   // The SSH launcher runs `t3 serve` straight from the pinned runtime, with no boot service.
+  it.effect("prunes only the selected managed source and preserves official runtimes", () =>
+    Effect.gen(function* () {
+      const { removed, remaining, officialRetained } = yield* pruneOnStart({
+        executable: "own runtime",
+        runtimeSource: "c".repeat(64),
+      });
+      expect(removed).toEqual([staleVersion]);
+      expect(remaining).toEqual([packageJson.version]);
+      expect(officialRetained).toBe(true);
+    }),
+  );
+
   it.effect("prunes for a server started from its home's pinned runtime", () =>
     Effect.gen(function* () {
       const { removed, remaining } = yield* pruneOnStart({ executable: "own runtime" });
