@@ -153,6 +153,62 @@ class DiagnosticTests(unittest.TestCase):
                              ("gh.release.create", [403], "permission_denied"))
 
 
+class AttestationReadinessTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        for name in ("native.tar.gz", "provenance.json"):
+            (self.root / name).write_bytes(b"verified local asset")
+
+    def test_retries_only_readonly_attestations_until_release_and_assets_verify(self):
+        clock, calls, delays = [0.0], [], []
+        failures = {"verify": 1, "verify-asset": 1}
+        def run(*args, **kwargs):
+            calls.append((args, kwargs))
+            operation = args[2]
+            if failures[operation]:
+                failures[operation] -= 1
+                raise subprocess.CalledProcessError(1, args, stderr=b"attestation is not ready")
+            return b"verified"
+        def sleep(seconds):
+            delays.append(seconds)
+            clock[0] += seconds
+        with patch.object(release, "run", side_effect=run), patch.object(release.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(release.time, "sleep", side_effect=sleep):
+            release.verify_attestations(VERSION, self.root)
+        self.assertEqual(delays, [5, 5])
+        self.assertEqual([args[2] for args, _ in calls], ["verify", "verify", "verify-asset", "verify-asset", "verify-asset"])
+        self.assertTrue(all(args[:2] == ("gh", "release") and 0 < options["timeout"] <= 120 for args, options in calls))
+        self.assertEqual({Path(args[4]).name for args, _ in calls if args[2] == "verify-asset"}, {"native.tar.gz", "provenance.json"})
+
+    def test_release_and_assets_share_one_hard_deadline(self):
+        clock = [0.0]
+        failure = subprocess.CalledProcessError(1, ["gh", "release", "verify-asset"], stderr=b"private captured diagnostic")
+        def run(*args, **kwargs):
+            if args[2] == "verify":
+                clock[0] += 115
+                return b"verified release"
+            self.assertEqual(kwargs["timeout"], 5)
+            raise failure
+        with patch.object(release, "run", side_effect=run) as called, \
+                patch.object(release.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(release.time, "sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)):
+            with self.assertRaises(subprocess.CalledProcessError) as stopped:
+                release.verify_attestations(VERSION, self.root)
+        self.assertIs(stopped.exception, failure)
+        self.assertEqual((clock[0], called.call_count), (120, 2))
+
+    def test_hung_verification_fails_safely_at_its_remaining_timeout(self):
+        secret = "github_pat_SENTINEL_NEVER_PRINT"
+        failure = subprocess.TimeoutExpired(["gh", "release", "verify", secret], 120, output=secret, stderr=secret)
+        with patch.object(release, "run", side_effect=failure), patch.object(release.time, "sleep") as sleep:
+            with self.assertRaisesRegex(ValueError, "attestation verification exceeded") as stopped:
+                release.verify_attestations(VERSION, self.root)
+        self.assertNotIn(secret, str(stopped.exception))
+        sleep.assert_not_called()
+
+
 class ArchiveTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

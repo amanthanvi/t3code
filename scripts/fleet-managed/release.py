@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import time
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -42,9 +43,9 @@ def write_json(path, value):
     Path(path).write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 
-def run(*args, cwd=None, env=None, input=None):
+def run(*args, cwd=None, env=None, input=None, timeout=None):
     return subprocess.run(args, cwd=cwd, env=env, input=input, check=True,
-                          stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout).stdout
 
 
 def git(directory, *args, **kwargs):
@@ -368,6 +369,35 @@ def verify_package(directory):
     return provenance
 
 
+def verify_attestations(version, directory):
+    commands = [("verify", f"v{version}", "--repo", REPOSITORY),
+                *(("verify-asset", f"v{version}", str(asset), "--repo", REPOSITORY)
+                  for asset in sorted(Path(directory).iterdir()))]
+    # GitHub can publish immutably before its signed release statement is available.
+    deadline = time.monotonic() + 120
+    last_error = None
+    for arguments in commands:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                if last_error is not None:
+                    raise last_error
+                raise ValueError("release attestation verification exceeded its readiness deadline")
+            try:
+                run("gh", "release", *arguments, timeout=remaining)
+            except subprocess.TimeoutExpired:
+                raise ValueError("release attestation verification exceeded its readiness deadline") from None
+            except subprocess.CalledProcessError as error:
+                last_error = error
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise
+                time.sleep(min(5, remaining))
+            else:
+                last_error = None
+                break
+
+
 def publish(directory, source):
     require(os.environ.get("GITHUB_REPOSITORY") == REPOSITORY, "publishing is restricted to the public managed fork")
     provenance = verify_package(directory)
@@ -446,9 +476,7 @@ def publish(directory, source):
             except subprocess.CalledProcessError as error:
                 raise ValueError("release is mutable and retraction failed; operator must retract it") from error
         raise ValueError("release did not become immutable; retracted to draft for operator review")
-    run("gh", "release", "verify", f"v{version}", "--repo", REPOSITORY)
-    for asset in sorted(Path(directory).iterdir()):
-        run("gh", "release", "verify-asset", f"v{version}", str(asset), "--repo", REPOSITORY)
+    verify_attestations(version, directory)
 
 
 def main():
