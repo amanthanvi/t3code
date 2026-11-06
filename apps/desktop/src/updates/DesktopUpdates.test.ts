@@ -1076,3 +1076,87 @@ describe("DesktopUpdates under a managed policy", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 });
+
+it.effect("prepares the native installer and reservation before stopping a backend", () =>
+  Effect.gen(function* () {
+    const nativePreparing = yield* Deferred.make<void>();
+    const nativeReady = yield* Deferred.make<void>();
+    const preparing = yield* Deferred.make<void>();
+    const ready = yield* Deferred.make<void>();
+    const events: string[] = [];
+    const harness = makeHarness({
+      prepareInstall: Deferred.succeed(nativePreparing, undefined).pipe(
+        Effect.andThen(Deferred.await(nativeReady)),
+      ),
+      prepareHandoff: Deferred.succeed(preparing, undefined).pipe(
+        Effect.andThen(Deferred.await(ready)),
+      ),
+      commitHandoff: Effect.sync(() => {
+        events.push("committed");
+      }),
+      stopBackend: Effect.sync(() => {
+        events.push("stopped");
+      }),
+      quitAndInstall: Effect.sync(() => {
+        events.push("install");
+      }),
+    });
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+        const installing = yield* updates.install.pipe(Effect.forkScoped);
+        yield* Deferred.await(nativePreparing);
+        assert.deepEqual(events, []);
+        assert.isFalse(yield* Deferred.isDone(preparing));
+        yield* Deferred.succeed(nativeReady, undefined);
+        yield* Deferred.await(preparing);
+        assert.deepEqual(events, []);
+        yield* Deferred.succeed(ready, undefined);
+        yield* Fiber.join(installing);
+        assert.deepEqual(events, ["stopped", "committed", "install"]);
+      }),
+    ).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("restores the old native backend before releasing a failed install reservation", () => {
+  const events: string[] = [];
+  const harness = makeHarness({
+    prepareHandoff: Effect.sync(() => {
+      events.push("reserved");
+    }),
+    commitHandoff: Effect.sync(() => {
+      events.push("committed");
+    }),
+    cancelHandoff: Effect.sync(() => {
+      events.push("released");
+    }),
+    stopBackend: Effect.sync(() => {
+      events.push("stopped");
+    }),
+    startBackend: Effect.sync(() => {
+      events.push("restarted");
+    }),
+    quitAndInstall: Effect.fail(
+      new ElectronUpdater.ElectronUpdaterQuitAndInstallError({
+        channel: "stable",
+        isSilent: true,
+        isForceRunAfter: true,
+        cause: new Error("install failed"),
+      }),
+    ),
+  });
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const updates = yield* DesktopUpdates.DesktopUpdates;
+      yield* updates.configure;
+      harness.emit("update-downloaded", { version: "1.2.4" });
+      yield* flushCallbacks;
+      yield* updates.install;
+      assert.deepEqual(events, ["reserved", "stopped", "committed", "restarted", "released"]);
+    }),
+  ).pipe(Effect.provide(harness.layer));
+});

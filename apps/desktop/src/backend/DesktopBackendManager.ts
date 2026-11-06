@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off - Native desktop owns SQLite reservations before spawning its backend.
+import * as NodeCrypto from "node:crypto";
 import * as Brand from "effect/Brand";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
@@ -7,6 +9,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Schema from "effect/Schema";
@@ -25,6 +28,11 @@ import {
   DesktopTelemetryControlMessage,
   type DesktopTelemetryControlMessage as DesktopTelemetryControlMessageValue,
 } from "@t3tools/contracts";
+import {
+  acquireDesktopSupervisor,
+  desktopOwnershipResponse,
+} from "@t3tools/shared/desktopOwnership";
+import { acknowledgeDesktopHandoff } from "@t3tools/shared/desktopHandoff";
 import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/httpReadiness";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
@@ -74,6 +82,7 @@ export interface DesktopBackendStartConfig extends BackendProcessContext {
   readonly httpBaseUrl: URL;
   readonly captureOutput: boolean;
   readonly preflightFailure: Option.Option<PreflightFailure>;
+  readonly ownershipBaseDir?: string;
   readonly runningDistro?: string;
   readonly wslRuntimeId?: string;
 }
@@ -234,7 +243,10 @@ export interface DesktopBackendInstance {
   readonly id: BackendInstanceId;
   readonly label: Effect.Effect<string>;
   readonly start: Effect.Effect<void>;
-  readonly stop: (options?: { readonly timeout?: Duration.Duration }) => Effect.Effect<void>;
+  readonly stop: (options?: {
+    readonly timeout?: Duration.Duration;
+    readonly preserveOwnership?: boolean;
+  }) => Effect.Effect<void>;
   readonly currentConfig: Effect.Effect<Option.Option<DesktopBackendStartConfig>>;
   readonly snapshot: Effect.Effect<DesktopBackendSnapshot>;
   readonly waitForReady: (timeout: Duration.Duration) => Effect.Effect<boolean>;
@@ -405,12 +417,17 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   );
   const onOutput = options.onOutput ?? (() => Effect.void);
   const bootstrapStream = Stream.encodeText(Stream.make(`${bootstrapJson}\n`));
+  const ownershipReplies = yield* Queue.unbounded<Uint8Array>();
+  yield* Effect.addFinalizer(() => Queue.shutdown(ownershipReplies));
   const additionalFds: Record<`fd${number}`, ChildProcess.AdditionalFdConfig> = {};
   if (options.bootstrapDelivery === "fd3") {
     additionalFds.fd3 = {
       type: "input",
       stream: bootstrapStream,
     };
+    if (options.bootstrap.desktopOwnership !== undefined) {
+      additionalFds.fd8 = { type: "duplex", stream: Stream.fromQueue(ownershipReplies) };
+    }
     if (options.bootstrap.desktopTelemetryFd !== undefined) {
       additionalFds[`fd${options.bootstrap.desktopTelemetryFd}`] = {
         type: "input",
@@ -461,6 +478,23 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     ),
   );
   const outputFibers: Array<Fiber.Fiber<void, never>> = [];
+  const desktopOwnership = options.bootstrap.desktopOwnership;
+  if (desktopOwnership !== undefined) {
+    yield* handle.getOutputFd(desktopOwnership.fd).pipe(
+      Stream.decodeText(),
+      Stream.splitLines,
+      Stream.runForEach((line) =>
+        Effect.try({
+          try: () => desktopOwnershipResponse(line, desktopOwnership.nonce),
+          catch: (cause) => new BackendProcessSpawnError({ ...options, cause }),
+        }).pipe(
+          Effect.flatMap((reply) => Queue.offer(ownershipReplies, new TextEncoder().encode(reply))),
+        ),
+      ),
+      Effect.catchCause(() => handle.kill()),
+      Effect.forkScoped,
+    );
+  }
 
   yield* options.onStarted?.(handle.pid) ?? Effect.void;
   if (
@@ -638,6 +672,8 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   // One streaming decoder per stream keeps UTF-8 characters split across chunks intact.
   const makeOutputDecoders = () => ({ stdout: new TextDecoder(), stderr: new TextDecoder() });
   let outputDecoders = makeOutputDecoders();
+  let supervisor: ReturnType<typeof acquireDesktopSupervisor> | undefined;
+  let preserveOwnershipUntilExit = false;
   const reportStartupFailure = (reason: string, managedPolicy = false) =>
     Ref.get(outputTail).pipe(
       Effect.flatMap(
@@ -681,6 +717,8 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
     mutex.withPermits(1)(
       Effect.gen(function* () {
         const current = yield* SubscriptionRef.get(state);
+        preserveOwnershipUntilExit = false;
+        supervisor?.resume();
         if (Option.isSome(current.active)) {
           if (!current.desiredRunning) {
             yield* SubscriptionRef.update(state, (latest) => ({
@@ -784,6 +822,34 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
         if (!entryExists) {
           yield* scheduleRestart(`missing server entry at ${config.value.entryPath}`);
           return;
+        }
+
+        if (config.value.ownershipBaseDir !== undefined && supervisor === undefined) {
+          const baseDir = config.value.ownershipBaseDir;
+          const reserved = yield* Effect.tryPromise({
+            try: async () => {
+              const acquired = acquireDesktopSupervisor(baseDir);
+              supervisor = acquired;
+              try {
+                await acknowledgeDesktopHandoff(baseDir);
+                return acquired;
+              } catch (cause) {
+                acquired.close();
+                if (supervisor === acquired) supervisor = undefined;
+                throw cause;
+              }
+            },
+            catch: (cause) => new BackendProcessSpawnError({ ...config.value, cause }),
+          }).pipe(Effect.option);
+          if (Option.isNone(reserved)) {
+            yield* SubscriptionRef.update(state, (latest) => ({
+              ...latest,
+              desiredRunning: false,
+            }));
+            yield* spec.onStateDirOwned?.() ?? Effect.void;
+            return;
+          }
+          supervisor = reserved.value;
         }
 
         const runScope = yield* Scope.make("sequential");
@@ -893,6 +959,13 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
 
         const program = runBackendProcess({
           ...config.value,
+          bootstrap:
+            supervisor === undefined
+              ? config.value.bootstrap
+              : {
+                  ...config.value.bootstrap,
+                  desktopOwnership: { fd: 8, nonce: NodeCrypto.randomBytes(32).toString("hex") },
+                },
           desktopTelemetryStream: desktopTelemetryPublisher.encoded,
           desktopBrowserStream: desktopBrowserHost.events,
           onDesktopBrowserCommand: desktopBrowserHost.handleCommandLine,
@@ -1051,9 +1124,14 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
 
   const stop = Effect.fn("desktop.backendInstance.stop")(function* (options?: {
     readonly timeout?: Duration.Duration;
+    readonly preserveOwnership?: boolean;
   }) {
     const { active, restartFiber, notifyShutdown } = yield* mutex.withPermits(1)(
       Effect.gen(function* () {
+        if (options?.preserveOwnership === true) {
+          preserveOwnershipUntilExit = true;
+          supervisor?.retainUntilExit();
+        }
         const result = yield* SubscriptionRef.modify(state, (latest) => {
           const active = Option.map(latest.active, (run) =>
             run.exitObserved ? run : { ...run, stopRequested: true },
@@ -1139,6 +1217,15 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
         }
       }),
     });
+    yield* mutex.withPermits(1)(
+      Effect.gen(function* () {
+        const latest = yield* SubscriptionRef.get(state);
+        if (!preserveOwnershipUntilExit && !latest.desiredRunning && Option.isNone(latest.active)) {
+          supervisor?.close();
+          supervisor = undefined;
+        }
+      }),
+    );
   });
 
   const waitForReady = Effect.fn("DesktopBackendManager.waitForReady")(

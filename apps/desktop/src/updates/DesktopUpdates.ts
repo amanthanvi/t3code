@@ -26,6 +26,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
+import * as DesktopOwnershipHandoff from "../backend/DesktopOwnershipHandoff.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
@@ -364,6 +365,7 @@ function isArm64HostRunningIntelBuild(runtimeInfo: DesktopRuntimeInfo): boolean 
 export const make = Effect.gen(function* () {
   const config = yield* DesktopConfig.DesktopConfig;
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
+  const ownershipHandoff = yield* DesktopOwnershipHandoff.DesktopOwnershipHandoff;
   const desktopState = yield* DesktopState.DesktopState;
   const electronUpdater = yield* ElectronUpdater.ElectronUpdater;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
@@ -710,17 +712,6 @@ export const make = Effect.gen(function* () {
       })),
     );
 
-  const resetInstallAction = Effect.all(
-    [
-      finishUpdateAction("install"),
-      Ref.set(desktopState.quitting, false),
-      Ref.set(installRunningBackendsRef, []),
-      removeUpdateRestartMarker,
-      removeInstallRecord,
-    ],
-    { discard: true },
-  );
-
   const recoverFailedInstall = Effect.fn("desktop.updates.recoverFailedInstall")(function* (
     message: string,
   ) {
@@ -730,6 +721,7 @@ export const make = Effect.gen(function* () {
         : ([false, activeAction] as const),
     );
     if (!ownsRecovery) return;
+    yield* ownershipHandoff.recover;
 
     yield* Ref.set(desktopState.quitting, false);
     yield* removeUpdateRestartMarker;
@@ -746,6 +738,13 @@ export const make = Effect.gen(function* () {
       yield* updateState((current) => reduceDesktopUpdateStateOnInstallFailure(current, message));
       if (Exit.isFailure(restartExit)) {
         yield* logUpdaterError("Desktop update install recovery could not restart every backend.");
+      } else {
+        const ready = yield* Effect.forEach(
+          instances,
+          (instance) => instance.waitForReady(Duration.minutes(3)),
+          { concurrency: "unbounded" },
+        );
+        if (ready.every(Boolean)) yield* ownershipHandoff.cancel;
       }
     }).pipe(
       Effect.catchCause(() =>
@@ -807,6 +806,8 @@ export const make = Effect.gen(function* () {
         yield* Ref.set(installRunningBackendsRef, []);
 
         return yield* Effect.gen(function* () {
+          yield* electronUpdater.prepareInstall;
+          yield* ownershipHandoff.prepare;
           yield* writeUpdateRestartMarker;
           const { downloadedVersion } = yield* Ref.get(updateStateRef);
           if (downloadedVersion !== null) yield* writeInstallRecord(downloadedVersion);
@@ -819,9 +820,10 @@ export const make = Effect.gen(function* () {
           yield* Ref.set(installRunningBackendsRef, runningInstances);
           yield* Effect.forEach(
             instances,
-            (instance) => instance.stop({ timeout: Duration.seconds(5) }),
+            (instance) => instance.stop({ timeout: Duration.seconds(5), preserveOwnership: true }),
             { concurrency: "unbounded" },
           );
+          yield* ownershipHandoff.commit;
           yield* electronUpdater.quitAndInstall({
             isSilent: true,
             isForceRunAfter: true,
@@ -829,6 +831,13 @@ export const make = Effect.gen(function* () {
           return { accepted: true, completed: false, failed: false };
         }).pipe(
           Effect.catchTags({
+            DesktopOwnershipHandoffError: Effect.fn("desktop.updates.handleOwnershipFailure")(
+              function* (error) {
+                yield* recoverFailedInstall(error.message);
+                yield* logUpdaterError(error.message, { errorTag: error._tag });
+                return { accepted: true, completed: false, failed: true };
+              },
+            ),
             ElectronUpdaterQuitAndInstallError: Effect.fn("desktop.updates.handleInstallFailure")(
               function* (error) {
                 yield* recoverFailedInstall(error.message);
@@ -843,7 +852,7 @@ export const make = Effect.gen(function* () {
               },
             ),
           }),
-          Effect.onInterrupt(() => resetInstallAction),
+          Effect.onInterrupt(() => recoverFailedInstall("The desktop update was interrupted.")),
           Effect.catchCause((cause) =>
             Effect.gen(function* () {
               if (Cause.hasInterruptsOnly(cause)) {

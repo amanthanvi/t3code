@@ -1,3 +1,9 @@
+// @effect-diagnostics nodeBuiltinImport:off - Native handoff regression uses a private real worker.
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import { acquireDesktopSupervisor } from "@t3tools/shared/desktopOwnership";
+import { startDesktopHandoff } from "@t3tools/shared/desktopHandoff";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -14,6 +20,7 @@ import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
+import * as DesktopOwnershipHandoff from "../backend/DesktopOwnershipHandoff.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
@@ -119,6 +126,15 @@ describe("DesktopLifecycle", () => {
       } as DesktopEnvironment.DesktopEnvironment["Service"]);
 
       const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(
+          Layer.succeed(DesktopOwnershipHandoff.DesktopOwnershipHandoff, {
+            prepare: Effect.void,
+            commit: Effect.void,
+            check: Effect.void,
+            cancel: Effect.void,
+            recover: Effect.void,
+          }),
+        ),
         Layer.provideMerge(layerElectronApp(appListeners)),
         Layer.provideMerge(layerElectronTheme),
         Layer.provideMerge(
@@ -197,6 +213,15 @@ describe("DesktopLifecycle", () => {
       } as DesktopEnvironment.DesktopEnvironment["Service"]);
 
       const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(
+          Layer.succeed(DesktopOwnershipHandoff.DesktopOwnershipHandoff, {
+            prepare: Effect.void,
+            commit: Effect.void,
+            check: Effect.void,
+            cancel: Effect.void,
+            recover: Effect.void,
+          }),
+        ),
         Layer.provideMerge(layerElectronApp(appListeners, quit)),
         Layer.provideMerge(layerElectronTheme),
         Layer.provideMerge(layerElectronWindow(destroyAll)),
@@ -234,6 +259,15 @@ describe("DesktopLifecycle", () => {
         isDevelopment: false,
       } as DesktopEnvironment.DesktopEnvironment["Service"]);
       const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(
+          Layer.succeed(DesktopOwnershipHandoff.DesktopOwnershipHandoff, {
+            prepare: Effect.void,
+            commit: Effect.void,
+            check: Effect.void,
+            cancel: Effect.void,
+            recover: Effect.void,
+          }),
+        ),
         Layer.provideMerge(
           layerElectronApp(
             new Map(),
@@ -283,6 +317,15 @@ describe("DesktopLifecycle", () => {
         isDevelopment: false,
       } as DesktopEnvironment.DesktopEnvironment["Service"]);
       const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(
+          Layer.succeed(DesktopOwnershipHandoff.DesktopOwnershipHandoff, {
+            prepare: Effect.void,
+            commit: Effect.void,
+            check: Effect.void,
+            cancel: Effect.void,
+            recover: Effect.void,
+          }),
+        ),
         Layer.provideMerge(layerElectronApp(appListeners, Effect.void, exit)),
         Layer.provideMerge(layerElectronTheme),
         Layer.provideMerge(layerElectronWindow()),
@@ -336,6 +379,15 @@ describe("DesktopLifecycle", () => {
         isDevelopment: false,
       } as DesktopEnvironment.DesktopEnvironment["Service"]);
       const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(
+          Layer.succeed(DesktopOwnershipHandoff.DesktopOwnershipHandoff, {
+            prepare: Effect.void,
+            commit: Effect.void,
+            check: Effect.void,
+            cancel: Effect.void,
+            recover: Effect.void,
+          }),
+        ),
         Layer.provideMerge(layerElectronApp(appListeners)),
         Layer.provideMerge(layerElectronTheme),
         Layer.provideMerge(layerElectronWindow()),
@@ -360,3 +412,170 @@ describe("DesktopLifecycle", () => {
     }),
   );
 });
+
+it.effect.each([false, true])(
+  "retains ownership and cleans up when relaunch failure is %s",
+  (fails) =>
+    Effect.gen(function* () {
+      const events: string[] = [];
+      const exited = yield* Deferred.make<void>();
+      const mark = (event: string) =>
+        Effect.sync(() => {
+          events.push(event);
+        });
+      const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(
+          Layer.succeed(DesktopOwnershipHandoff.DesktopOwnershipHandoff, {
+            prepare: mark("reserved"),
+            commit: mark("committed"),
+            check: Effect.void,
+            cancel: mark("cancelled").pipe(
+              Effect.andThen(Deferred.succeed(exited, undefined)),
+              Effect.asVoid,
+            ),
+            recover: mark("recovering"),
+          }),
+        ),
+        Layer.provideMerge(
+          layerElectronApp(
+            new Map(),
+            Effect.void,
+            () =>
+              mark("exit").pipe(Effect.andThen(Deferred.succeed(exited, undefined)), Effect.asVoid),
+            () =>
+              mark("relaunch").pipe(
+                Effect.andThen(fails ? Effect.die(new Error("relaunch failed")) : Effect.void),
+              ),
+          ),
+        ),
+        Layer.provideMerge(layerElectronTheme),
+        Layer.provideMerge(layerElectronWindow()),
+        Layer.provideMerge(layerDesktopWindow()),
+        Layer.provideMerge(
+          Layer.succeed(DesktopShutdown.DesktopShutdown, {
+            request: mark("shutdown"),
+            awaitComplete: Effect.void,
+            awaitRequest: Effect.never,
+            markComplete: Effect.void,
+            isComplete: Effect.succeed(true),
+          }),
+        ),
+        Layer.provideMerge(
+          Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+            platform: "darwin",
+            isDevelopment: false,
+          } as DesktopEnvironment.DesktopEnvironment["Service"]),
+        ),
+        Layer.provideMerge(DesktopState.layer),
+      );
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+          yield* lifecycle.relaunch("ownership-test");
+          yield* Deferred.await(exited);
+          assert.deepEqual(events, [
+            "reserved",
+            "committed",
+            "shutdown",
+            "relaunch",
+            ...(fails ? ["recovering", "cancelled"] : ["exit"]),
+          ]);
+        }),
+      ).pipe(Effect.provide(layer));
+    }),
+);
+
+it.live("refuses relaunch when the real helper exits while native shutdown is pending", () =>
+  Effect.gen(function* () {
+    const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-relaunch-loss-"));
+    const parent = acquireDesktopSupervisor(baseDir);
+    let worker: Awaited<ReturnType<typeof startDesktopHandoff>> | undefined;
+    let relaunched = false;
+    let exited = false;
+    const cancelled = Promise.withResolvers<void>();
+    const layer = DesktopLifecycle.layer.pipe(
+      Layer.provideMerge(
+        Layer.succeed(DesktopOwnershipHandoff.DesktopOwnershipHandoff, {
+          prepare: Effect.promise(async () => {
+            worker = await startDesktopHandoff({
+              executablePath: process.execPath,
+              args: [
+                new URL("../../../server/src/bin.ts", import.meta.url).pathname,
+                "__desktop-handoff",
+              ],
+              cwd: baseDir,
+              env: process.env,
+              baseDir,
+            });
+          }),
+          commit: Effect.promise(async () => {
+            await worker!.assertAlive();
+          }),
+          check: Effect.tryPromise({
+            try: async () => {
+              await worker!.assertAlive();
+            },
+            catch: (cause) => new DesktopOwnershipHandoff.DesktopOwnershipHandoffError({ cause }),
+          }),
+          recover: Effect.void,
+          cancel: Effect.promise(async () => {
+            await worker?.cancel();
+            cancelled.resolve();
+          }),
+        }),
+      ),
+      Layer.provideMerge(
+        layerElectronApp(
+          new Map(),
+          Effect.void,
+          () =>
+            Effect.sync(() => {
+              exited = true;
+            }),
+          () =>
+            Effect.sync(() => {
+              relaunched = true;
+            }),
+        ),
+      ),
+      Layer.provideMerge(layerElectronTheme),
+      Layer.provideMerge(layerElectronWindow()),
+      Layer.provideMerge(layerDesktopWindow()),
+      Layer.provideMerge(
+        Layer.succeed(DesktopShutdown.DesktopShutdown, {
+          request: Effect.void,
+          awaitComplete: Effect.promise(async () => {
+            await worker!.cancel();
+          }),
+          awaitRequest: Effect.never,
+          markComplete: Effect.void,
+          isComplete: Effect.succeed(true),
+        }),
+      ),
+      Layer.provideMerge(
+        Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+          platform: "darwin",
+          isDevelopment: false,
+        } as DesktopEnvironment.DesktopEnvironment["Service"]),
+      ),
+      Layer.provideMerge(DesktopState.layer),
+    );
+    try {
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+          yield* lifecycle.relaunch("helper-loss");
+          yield* Effect.promise(() => cancelled.promise);
+          assert.isFalse(relaunched);
+          assert.isFalse(exited);
+        }),
+      ).pipe(Effect.provide(layer));
+    } finally {
+      yield* Effect.promise(async () => {
+        await worker?.cancel();
+      });
+      parent.close();
+      NodeFS.rmSync(baseDir, { recursive: true, force: true });
+    }
+  }),
+);

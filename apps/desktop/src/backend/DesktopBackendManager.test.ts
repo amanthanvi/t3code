@@ -1,3 +1,10 @@
+// @effect-diagnostics nodeBuiltinImport:off - Proves native desktop reservations at the manager process boundary.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { acquireDesktopSupervisor } from "@t3tools/shared/desktopOwnership";
 import {
   SERVER_EXIT_CODE_MANAGED_POLICY,
   SERVER_EXIT_CODE_STATE_DIR_OWNED,
@@ -136,6 +143,8 @@ interface MakeInstanceInput {
     PlatformError.PlatformError
   >;
   readonly desktopTelemetryStream?: Stream.Stream<Uint8Array>;
+  readonly desktopBrowserStream?: Stream.Stream<Uint8Array>;
+  readonly onDesktopBrowserCommand?: (line: string) => Effect.Effect<void>;
   readonly desktopTelemetryPublisher?: Partial<
     DesktopTelemetryPublisher.DesktopTelemetryPublisher["Service"]
   >;
@@ -172,7 +181,16 @@ function makeTestInstance(input: MakeInstanceInput) {
       updateCancellations: Stream.empty,
       ...input.desktopTelemetryPublisher,
     }),
-    DesktopBrowserHost.layer,
+    Layer.effect(
+      DesktopBrowserHost.DesktopBrowserHost,
+      DesktopBrowserHost.make.pipe(
+        Effect.map((host) => ({
+          ...host,
+          events: input.desktopBrowserStream ?? host.events,
+          handleCommandLine: input.onDesktopBrowserCommand ?? host.handleCommandLine,
+        })),
+      ),
+    ),
     DesktopWslEnvironment.layerTest(
       input.pruneRuntimes === undefined ? {} : { pruneRuntimes: input.pruneRuntimes },
     ),
@@ -193,6 +211,284 @@ function makeTestInstance(input: MakeInstanceInput) {
 }
 
 describe("DesktopBackendManager", () => {
+  it.live(
+    "keeps the actual spawner ownership socket open through native descriptor roundtrips",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const baseDir = yield* Effect.acquireRelease(
+            Effect.sync(() =>
+              NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-manager-fds-")),
+            ),
+            (directory) =>
+              Effect.sync(() => NodeFS.rmSync(directory, { recursive: true, force: true })),
+          );
+          yield* Effect.acquireRelease(
+            Effect.sync(() => acquireDesktopSupervisor(baseDir)),
+            (supervisor) => Effect.sync(() => supervisor.close()),
+          );
+          const ownershipUrl = new URL(
+            "../../../../packages/shared/src/desktopOwnership.ts",
+            import.meta.url,
+          ).href;
+          const lockUrl = new URL(
+            "../../../../packages/shared/src/serverOwnershipLock.ts",
+            import.meta.url,
+          ).href;
+          const browserCommand = '{"type":"turn","threadId":"native-thread","active":true}';
+          const telemetryControl = encodeDesktopTelemetryControl({
+            version: 1,
+            type: "setDiagnosticsDemand",
+            enabled: true,
+          });
+          const script = `
+        import * as fs from 'node:fs';
+        import * as net from 'node:net';
+        import * as readline from 'node:readline';
+        import { authenticateDesktopSupervisor } from ${JSON.stringify(ownershipUrl)};
+        import { acquireOwnershipLock } from ${JSON.stringify(lockUrl)};
+        const bootstrap = JSON.parse(fs.readFileSync(3, 'utf8'));
+        const ownership = await authenticateDesktopSupervisor(bootstrap.desktopOwnership);
+        const gate = acquireOwnershipLock(${JSON.stringify(NodePath.join(baseDir, "userdata", "server-owner.sqlite"))}, 'shared');
+        const writer = acquireOwnershipLock(${JSON.stringify(NodePath.join(baseDir, "userdata", "server-writer.sqlite"))}, 'exclusive');
+        const telemetry = new net.Socket({ fd: bootstrap.desktopTelemetryFd, readable: true, writable: false });
+        const telemetryLines = readline.createInterface({ input: telemetry })[Symbol.asyncIterator]();
+        const browser = new net.Socket({ fd: bootstrap.desktopBrowserFd, readable: true, writable: false });
+        const browserLines = readline.createInterface({ input: browser })[Symbol.asyncIterator]();
+        const initialTelemetry = (await telemetryLines.next()).value;
+        const browserEvent = (await browserLines.next()).value;
+        fs.writeSync(bootstrap.desktopTelemetryControlFd, ${JSON.stringify(telemetryControl + "\n")});
+        fs.writeSync(bootstrap.desktopBrowserControlFd, ${JSON.stringify(browserCommand + "\n")});
+        const confirmation = (await telemetryLines.next()).value;
+        process.stdout.write(JSON.stringify({ initialTelemetry, browserEvent, confirmation, ownershipConnected: ownership.connected() }), () => {
+          telemetry.destroy(); browser.destroy(); ownership.close(); writer.db.close(); gate.db.close();
+          fs.closeSync(bootstrap.desktopTelemetryControlFd); fs.closeSync(bootstrap.desktopBrowserControlFd);
+        });
+      `;
+          const telemetryReplies = yield* Queue.unbounded<Uint8Array>();
+          yield* Effect.addFinalizer(() => Queue.shutdown(telemetryReplies));
+          let controlCount = 0;
+          let handledBrowser = "";
+          let output = "";
+          const decoder = new TextDecoder();
+          const confirm = Effect.suspend(() => {
+            controlCount += 1;
+            return controlCount === 2
+              ? Queue.offer(telemetryReplies, new TextEncoder().encode("confirmed\n")).pipe(
+                  Effect.asVoid,
+                )
+              : Effect.void;
+          });
+          const exit = yield* DesktopBackendManager.runBackendProcess({
+            ...baseConfig,
+            executablePath: process.execPath,
+            args: ["--input-type=module", "-e", script],
+            entryPath: process.execPath,
+            cwd: baseDir,
+            env: {},
+            bootstrap: {
+              ...baseConfig.bootstrap,
+              t3Home: baseDir,
+              desktopOwnership: { fd: 8, nonce: "a".repeat(64) },
+              desktopBrowserFd: 6,
+              desktopBrowserControlFd: 7,
+            },
+            desktopTelemetryStream: Stream.concat(
+              Stream.encodeText(Stream.make("telemetry-initial\n")),
+              Stream.fromQueue(telemetryReplies),
+            ),
+            desktopBrowserStream: Stream.encodeText(Stream.make("browser-event\n")),
+            onDesktopTelemetryControl: (message) =>
+              message.type === "setDiagnosticsDemand" && message.enabled ? confirm : Effect.void,
+            onDesktopBrowserCommand: (line) =>
+              Effect.sync(() => {
+                handledBrowser = line;
+              }).pipe(Effect.andThen(confirm)),
+            onOutput: (_stream, chunk) =>
+              Effect.sync(() => {
+                output += decoder.decode(chunk, { stream: true });
+              }),
+          }).pipe(Effect.provide(Layer.merge(NodeServices.layer, layerHealthyHttpClient)));
+          assert.deepEqual(exit.code, Option.some(0));
+          assert.equal(handledBrowser, browserCommand);
+          assert.deepEqual(JSON.parse(output), {
+            initialTelemetry: "telemetry-initial",
+            browserEvent: "browser-event",
+            confirmation: "confirmed",
+            ownershipConnected: true,
+          });
+        }),
+      ),
+  );
+  it.effect(
+    "keeps native ownership across crashes with telemetry and browser channels intact",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const baseDir = yield* Effect.acquireRelease(
+            Effect.sync(() =>
+              NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-manager-owner-")),
+            ),
+            (directory) =>
+              Effect.sync(() => NodeFS.rmSync(directory, { recursive: true, force: true })),
+          );
+          const lockUrl = new URL(
+            "../../../../packages/shared/src/serverOwnershipLock.ts",
+            import.meta.url,
+          ).href;
+          const legacyAttempt = () =>
+            NodeChildProcess.spawnSync(
+              process.execPath,
+              [
+                "--input-type=module",
+                "-e",
+                `
+          import { acquireOwnershipLock } from ${JSON.stringify(lockUrl)};
+          try { acquireOwnershipLock(${JSON.stringify(NodePath.join(baseDir, "userdata", "server-owner.sqlite"))}, 'exclusive').db.close(); }
+          catch (cause) { process.exitCode = cause.errcode === 5 ? 78 : 1; }
+        `,
+              ],
+              { stdio: "ignore" },
+            ).status;
+          const starts = yield* Queue.unbounded<{
+            readonly bootstrap: DesktopBackendBootstrapValue;
+            readonly command: ChildProcess.StandardCommand;
+            readonly reply: Deferred.Deferred<string>;
+            readonly exit: Deferred.Deferred<ChildProcessSpawner.ExitCode>;
+          }>();
+          const ready = yield* Queue.unbounded<void>();
+          const crashed = yield* Queue.unbounded<void>();
+          const challenge = "b".repeat(64);
+          const browserCommand = '{"type":"turn","threadId":"test-thread","active":true}';
+          const browserCommands = yield* Queue.unbounded<string>();
+          let telemetry = "";
+          let browser = "";
+          const instance = yield* makeTestInstance({
+            config: {
+              ...baseConfig,
+              ownershipBaseDir: baseDir,
+              bootstrap: {
+                ...baseConfig.bootstrap,
+                t3Home: baseDir,
+                desktopBrowserFd: 6,
+                desktopBrowserControlFd: 7,
+              },
+            },
+            desktopTelemetryStream: Stream.encodeText(Stream.make("telemetry\n")),
+            desktopBrowserStream: Stream.encodeText(Stream.make("browser-event\n")),
+            onDesktopBrowserCommand: (line) =>
+              Queue.offer(browserCommands, line).pipe(Effect.asVoid),
+            onReady: Queue.offer(ready, undefined).pipe(Effect.asVoid),
+            backendOutputLog: {
+              persistFailure: () => Queue.offer(crashed, undefined).pipe(Effect.asVoid),
+            },
+            spawnerLayer: Layer.succeed(
+              ChildProcessSpawner.ChildProcessSpawner,
+              ChildProcessSpawner.make((command) =>
+                Effect.gen(function* () {
+                  assert.equal(command._tag, "StandardCommand");
+                  if (command._tag !== "StandardCommand")
+                    throw new Error("Expected a standard command.");
+                  const fd3 = command.options.additionalFds?.fd3;
+                  if (fd3?.type !== "input" || fd3.stream === undefined)
+                    throw new Error("Missing bootstrap input.");
+                  const bootstrap = yield* fd3.stream.pipe(
+                    Stream.decodeText(),
+                    Stream.mkString,
+                    Effect.flatMap(decodeBootstrap),
+                    Effect.orDie,
+                  );
+                  const fd4 = command.options.additionalFds?.fd4;
+                  if (fd4?.type !== "input" || fd4.stream === undefined)
+                    throw new Error("Missing telemetry input.");
+                  telemetry = yield* fd4.stream.pipe(Stream.decodeText(), Stream.mkString);
+                  const fd6 = command.options.additionalFds?.fd6;
+                  if (fd6?.type !== "input" || fd6.stream === undefined)
+                    throw new Error("Missing browser input.");
+                  browser = yield* fd6.stream.pipe(Stream.decodeText(), Stream.mkString);
+                  const fd8 = command.options.additionalFds?.fd8;
+                  const reply = yield* Deferred.make<string>();
+                  if (fd8?.type === "duplex" && fd8.stream !== undefined) {
+                    yield* fd8.stream.pipe(
+                      Stream.decodeText(),
+                      Stream.take(1),
+                      Stream.mkString,
+                      Effect.flatMap((line) => Deferred.succeed(reply, line)),
+                      Effect.forkScoped,
+                    );
+                  }
+                  const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+                  yield* Effect.addFinalizer(() =>
+                    Deferred.succeed(exit, ChildProcessSpawner.ExitCode(0)),
+                  );
+                  yield* Queue.offer(starts, { bootstrap, command, reply, exit });
+                  return makeProcess({
+                    exitCode: Deferred.await(exit),
+                    kill: () =>
+                      Deferred.succeed(exit, ChildProcessSpawner.ExitCode(0)).pipe(Effect.asVoid),
+                    getOutputFd: (fd) =>
+                      fd === 8
+                        ? Stream.concat(
+                            Stream.encodeText(
+                              Stream.make(
+                                `challenge:${bootstrap.desktopOwnership?.nonce}:${challenge}\n`,
+                              ),
+                            ),
+                            Stream.never,
+                          )
+                        : fd === 7
+                          ? Stream.encodeText(Stream.make(`${browserCommand}\n`))
+                          : Stream.empty,
+                  });
+                }),
+              ),
+            ),
+          });
+          yield* instance.start;
+          const first = yield* Queue.take(starts);
+          yield* Queue.take(ready);
+          assert.equal(legacyAttempt(), 78);
+          assert.equal(first.command.options.additionalFds?.fd8?.type, "duplex");
+          assert.deepEqual(first.bootstrap.desktopOwnership, {
+            fd: 8,
+            nonce: first.bootstrap.desktopOwnership?.nonce,
+          });
+          assert.match(first.bootstrap.desktopOwnership?.nonce ?? "", /^[a-f0-9]{64}$/);
+          assert.equal(
+            yield* Deferred.await(first.reply),
+            `owned:${first.bootstrap.desktopOwnership?.nonce}:${challenge}\n`,
+          );
+          assert.equal(telemetry, "telemetry\n");
+          assert.equal(browser, "browser-event\n");
+          assert.equal(yield* Queue.take(browserCommands), browserCommand);
+          assert.equal(first.command.options.additionalFds?.fd4?.type, "input");
+          assert.equal(first.command.options.additionalFds?.fd5?.type, "output");
+          assert.equal(first.command.options.additionalFds?.fd6?.type, "input");
+          assert.equal(first.command.options.additionalFds?.fd7?.type, "output");
+          assert.equal(legacyAttempt(), 78);
+          yield* Deferred.succeed(first.exit, ChildProcessSpawner.ExitCode(1));
+          yield* Queue.take(crashed);
+          assert.equal(legacyAttempt(), 78);
+          yield* TestClock.adjust(Duration.millis(500));
+          const second = yield* Queue.take(starts);
+          yield* Queue.take(ready);
+          assert.notEqual(
+            second.bootstrap.desktopOwnership?.nonce,
+            first.bootstrap.desktopOwnership?.nonce,
+          );
+          assert.equal(yield* Queue.take(browserCommands), browserCommand);
+          assert.equal(
+            yield* Deferred.await(second.reply),
+            `owned:${second.bootstrap.desktopOwnership?.nonce}:${challenge}\n`,
+          );
+          assert.equal(legacyAttempt(), 78);
+          yield* instance.stop();
+          assert.isFalse((yield* instance.snapshot).desiredRunning);
+          assert.equal(legacyAttempt(), 0);
+        }).pipe(Effect.provide(TestClock.layer())),
+      ),
+  );
+
   it.effect("notifies readiness waiters on HTTP readiness and stop without clock advancement", () =>
     Effect.scoped(
       Effect.gen(function* () {

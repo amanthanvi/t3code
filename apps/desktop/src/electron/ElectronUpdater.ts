@@ -1,12 +1,17 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
+import * as Electron from "electron";
 import { autoUpdater } from "electron-updater";
 
+import { makeNativeUpdatePreparation } from "./nativeUpdatePreparation.ts";
+
 type AutoUpdater = typeof autoUpdater;
+const nativeUpdatePreparation = makeNativeUpdatePreparation(Electron.autoUpdater);
 
 export type ElectronUpdaterFeedUrl = Parameters<AutoUpdater["setFeedURL"]>[0];
 
@@ -69,6 +74,7 @@ export class ElectronUpdater extends Context.Service<
     readonly setDisableDifferentialDownload: (value: boolean) => Effect.Effect<void>;
     readonly checkForUpdates: Effect.Effect<void, ElectronUpdaterCheckForUpdatesError>;
     readonly downloadUpdate: Effect.Effect<void, ElectronUpdaterDownloadUpdateError>;
+    readonly prepareInstall: Effect.Effect<void, ElectronUpdaterQuitAndInstallError>;
     readonly quitAndInstall: (options: {
       readonly isSilent: boolean;
       readonly isForceRunAfter: boolean;
@@ -141,11 +147,25 @@ export const make = ElectronUpdater.of({
     }).pipe(Effect.asVoid);
   }),
   downloadUpdate: Effect.suspend(() => {
+    nativeUpdatePreparation.reset();
     const channel = autoUpdater.channel;
     return Effect.tryPromise({
       try: () => autoUpdater.downloadUpdate(),
       catch: (cause) => new ElectronUpdaterDownloadUpdateError({ channel, cause }),
     }).pipe(Effect.asVoid);
+  }),
+  prepareInstall: Effect.gen(function* () {
+    if ((yield* HostProcess.Platform) !== "darwin") return;
+    yield* Effect.tryPromise({
+      try: () => nativeUpdatePreparation.prepare(),
+      catch: (cause) =>
+        new ElectronUpdaterQuitAndInstallError({
+          channel: autoUpdater.channel,
+          isSilent: true,
+          isForceRunAfter: true,
+          cause,
+        }),
+    });
   }),
   quitAndInstall: Effect.fn("ElectronUpdater.quitAndInstall")(function ({
     isSilent,

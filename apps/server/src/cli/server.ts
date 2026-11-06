@@ -1,3 +1,4 @@
+import { authenticateDesktopSupervisor } from "@t3tools/shared/desktopOwnership";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -6,6 +7,10 @@ import * as Schema from "effect/Schema";
 import { Command, GlobalFlag } from "effect/cli";
 import * as CliError from "effect/cli/CliError";
 
+import {
+  DesktopSupervisorOwnership,
+  DesktopSupervisorOwnershipError,
+} from "../desktopOwnership.ts";
 import * as ServerConfig from "../config.ts";
 import { awaitLauncherLoss } from "../launcherWatch.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -40,8 +45,29 @@ const runServerCommand = Effect.fn("server.runServerCommand")(function* (
     process.stdout.on("error", ignoreClosedLauncherPipe);
     process.stderr.on("error", ignoreClosedLauncherPipe);
   });
+  const supervisedRun =
+    config.desktopOwnership === undefined
+      ? run
+      : Effect.scoped(
+          Effect.gen(function* () {
+            const ownership = yield* Effect.acquireRelease(
+              Effect.tryPromise({
+                try: () => authenticateDesktopSupervisor(config.desktopOwnership!),
+                catch: (cause) => new DesktopSupervisorOwnershipError({ cause }),
+              }),
+              (connection) =>
+                Effect.sync(() => {
+                  connection.close();
+                }),
+            );
+            return yield* Effect.raceFirst(
+              run.pipe(Effect.provideService(DesktopSupervisorOwnership, ownership)),
+              Effect.promise(() => ownership.lost).pipe(Effect.andThen(Effect.interrupt)),
+            );
+          }),
+        );
   return yield* Effect.raceFirst(
-    run,
+    supervisedRun,
     awaitLauncherLoss().pipe(
       // End like SIGTERM does (interrupt-only exit, so the runtime forces process exit).
       Effect.andThen(Effect.interrupt),
