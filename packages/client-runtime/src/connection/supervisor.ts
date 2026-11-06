@@ -43,11 +43,6 @@ import {
 const RETRY_BASE_DELAY_MS = 1_000;
 const RETRY_MAX_DELAY_MS = 300_000;
 const SESSION_LOSS_RETRY_DELAY_MS = 250;
-// A cold server with a large database can take longer than 15 seconds to
-// answer, and that is not a reason to drop a working connection.
-const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
-const establishmentTimeout = Duration.fromInputUnsafe(CONNECTION_ESTABLISHMENT_TIMEOUT);
-const synchronizationTimeout = Duration.fromInputUnsafe("75 seconds");
 const CONNECTION_PROBE_TIMEOUT = "15 seconds";
 const QUICK_CONNECTION_PROBE_TIMEOUT = "3 seconds";
 // After a long suspension pooled connections are often dead too, so the host
@@ -911,11 +906,15 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       Effect.gen(function* () {
         const routeCount = connectionRoutes(yield* Ref.get(currentEntry)).length;
         const startedAt = yield* Clock.monotonicTimeNanos;
-        const setup = Duration.toNanosUnsafe(Duration.times(establishmentTimeout, routeCount));
+        const setup = Duration.toNanosUnsafe(
+          Duration.times(ConnectionDriver.establishmentTimeout, routeCount),
+        );
         while (true) {
           const synchronized = BigInt(yield* Ref.get(synchronizedRoutes));
           const deadline =
-            startedAt + setup + synchronized * Duration.toNanosUnsafe(synchronizationTimeout);
+            startedAt +
+            setup +
+            synchronized * Duration.toNanosUnsafe(ConnectionDriver.synchronizationTimeout);
           const remaining = deadline - (yield* Clock.monotonicTimeNanos);
           if (remaining <= 0n) {
             return { _tag: "TimedOut" } as const satisfies EstablishmentEvent;

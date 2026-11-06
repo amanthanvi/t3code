@@ -1,8 +1,10 @@
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
@@ -41,7 +43,7 @@ export interface EnvironmentConnectionLease {
 }
 
 export type RouteCheck = "answered" | "silent" | "unchecked";
-/** "unprepared" means the route answered its check but could not be prepared. */
+/** "unprepared" means authorization or session readiness failed after checking a route. */
 export type RoutePreflight = "ready" | "unprepared" | "silent" | "unchecked";
 
 const ROUTE_CHECK_TIMEOUT_MS = 2_500;
@@ -49,6 +51,10 @@ const ROUTE_CHECK_TIMEOUT_MS = 2_500;
 // wait the full probe timeout for a LAN the device has already left. A route
 // that misses it connects over relay, then upgrades with a second reconnect.
 const ROUTE_CHECK_HEAD_START_MS = 500;
+
+// A cold server can need additional time to deliver its initial snapshot.
+export const establishmentTimeout = Duration.fromInputUnsafe("15 seconds");
+export const synchronizationTimeout = Duration.fromInputUnsafe("75 seconds");
 
 export class ConnectionDriver extends Context.Service<
   ConnectionDriver,
@@ -218,20 +224,27 @@ export const make = Effect.gen(function* () {
   });
 
   const preflight = (entry: ConnectionCatalogEntry, route: ConnectionRoute) =>
-    (sendsTokenInClear(connectionRoutes(entry), route)
-      ? Effect.succeed("silent" as const)
-      : checkRoute(entry, route)
-    ).pipe(
-      Effect.filterOrElse(
-        (check): check is Exclude<RouteCheck, "answered"> => check !== "answered",
-        () =>
-          resolver.prepare(routeEntry(entry, route)).pipe(
-            Effect.as<RoutePreflight>("ready"),
-            Effect.orElseSucceed((): RoutePreflight => "unprepared"),
+    (route.target._tag === "RelayConnectionTarget"
+      ? connect(routeEntry(entry, route), () => Effect.void).pipe(
+          Effect.scoped,
+          Effect.timeoutOption(Duration.sum(establishmentTimeout, synchronizationTimeout)),
+          Effect.map((result): RoutePreflight => (Option.isSome(result) ? "ready" : "unprepared")),
+          Effect.orElseSucceed((): RoutePreflight => "unprepared"),
+        )
+      : (sendsTokenInClear(connectionRoutes(entry), route)
+          ? Effect.succeed("silent" as const)
+          : checkRoute(entry, route)
+        ).pipe(
+          Effect.filterOrElse(
+            (check): check is Exclude<RouteCheck, "answered"> => check !== "answered",
+            () =>
+              resolver.prepare(routeEntry(entry, route)).pipe(
+                Effect.as<RoutePreflight>("ready"),
+                Effect.orElseSucceed((): RoutePreflight => "unprepared"),
+              ),
           ),
-      ),
-      Effect.withSpan("ConnectionDriver.preflight"),
-    );
+        )
+    ).pipe(Effect.withSpan("ConnectionDriver.preflight"));
 
   return ConnectionDriver.of({ connect, preflight, checkHost });
 });
