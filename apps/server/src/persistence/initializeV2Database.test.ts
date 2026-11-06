@@ -9,7 +9,16 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { ThreadId } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import {
+  acquireOwnershipLock,
+  SERVER_OWNER_FILE,
+  SERVER_WRITER_FILE,
+  DESKTOP_SUPERVISOR_OWNER_FILE,
+  DESKTOP_HANDOFF_OWNER_FILE,
+} from "@t3tools/shared/serverOwnershipLock";
+
 import * as Effect from "effect/Effect";
+import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Predicate from "effect/Predicate";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -22,6 +31,51 @@ import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
+
+const holdOwnershipFiles = Effect.fn("test.holdOwnershipFiles")(function* (stateDir: string) {
+  const path = yield* Path.Path;
+  return yield* Effect.forEach(
+    [
+      SERVER_OWNER_FILE,
+      SERVER_WRITER_FILE,
+      DESKTOP_SUPERVISOR_OWNER_FILE,
+      DESKTOP_HANDOFF_OWNER_FILE,
+    ],
+    (name) =>
+      Effect.acquireRelease(
+        Effect.sync(() => acquireOwnershipLock(path.join(stateDir, name), "exclusive")),
+        (lease) => Effect.sync(() => lease.db.close()),
+      ),
+  );
+});
+
+function assertOwnershipFiles(leases: ReadonlyArray<ReturnType<typeof acquireOwnershipLock>>) {
+  for (const lease of leases) {
+    const after = NodeFS.statSync(lease.lockPath, { bigint: true });
+    assert.equal(after.dev, lease.identity.dev);
+    assert.equal(after.ino, lease.identity.ino);
+    assert.equal(after.size, lease.identity.size);
+  }
+  const probe = NodeChildProcess.spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+    import { DatabaseSync } from "node:sqlite";
+    for (const path of ${JSON.stringify(leases.map((lease) => lease.lockPath))}) {
+      const db = new DatabaseSync(path);
+      try { db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;"); process.exitCode = 1; }
+      catch (cause) { if (cause.errcode !== 5) process.exitCode = 2; }
+      finally { db.close(); }
+    }
+  `,
+    ],
+    { stdio: "ignore" },
+  );
+  assert.isUndefined(probe.error);
+  assert.equal(probe.status, 0);
+}
 
 it.effect(
   "snapshots V1, imports transcripts lazily, and preserves both databases across switches",
@@ -44,6 +98,10 @@ it.effect(
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: sourcePath })));
 
     return Effect.gen(function* () {
+      const leases = yield* holdOwnershipFiles(directory);
+      const markerPath = NodePath.join(directory, ".desktop-handoff.json");
+      NodeFS.writeFileSync(markerPath, "keep desktop handoff", { mode: 0o600 });
+      const markerBefore = NodeFS.statSync(markerPath, { bigint: true });
       yield* seed;
       const original = NodeFS.readFileSync(sourcePath);
       const config = yield* ServerConfig.ServerConfig;
@@ -108,7 +166,11 @@ it.effect(
         assert.equal((yield* sql`SELECT text FROM v2_work`)[0]?.text, "Keep V2 work");
         assert.equal((yield* sql`SELECT title FROM projection_threads`)[0]?.title, "V1 thread");
       }).pipe(Effect.provide(layerDatabase));
+      assertOwnershipFiles(leases);
+      assert.equal(NodeFS.readFileSync(markerPath, "utf8"), "keep desktop handoff");
+      assert.equal(NodeFS.statSync(markerPath, { bigint: true }).ino, markerBefore.ino);
     }).pipe(
+      Effect.scoped,
       Effect.provide(
         ServerConfig.layerTest(directory, directory).pipe(Layer.provideMerge(NodeServices.layer)),
       ),
@@ -192,6 +254,13 @@ it.effect("removes copies left by a killed start, but not one that is still runn
   const running = `.v2-import-${process.pid}-Kq81Zx`;
   const unrelated = ".v2-import-not-a-copy";
   return Effect.gen(function* () {
+    const leases = yield* holdOwnershipFiles(directory);
+    const leaseFiles = leases.flatMap((lease) => {
+      const name = NodePath.basename(lease.lockPath);
+      return NodeFS.existsSync(`${lease.lockPath}-journal`) ? [name, `${name}-journal`] : [name];
+    });
+    const markerPath = NodePath.join(directory, ".desktop-handoff.json");
+    NodeFS.writeFileSync(markerPath, "keep desktop handoff", { mode: 0o600 });
     for (const name of [`.v2-import-${killed}-Wm3nPa`, ".v2-import-Q3xZ9a", running]) {
       NodeFS.mkdirSync(NodePath.join(directory, name));
       NodeFS.writeFileSync(NodePath.join(directory, name, "snapshot.sqlite"), "partial copy");
@@ -202,10 +271,13 @@ it.effect("removes copies left by a killed start, but not one that is still runn
     yield* initializeV2Database(destinationPath);
     assert.deepEqual(
       NodeFS.readdirSync(directory).sort(),
-      [running, unrelated, "statev2.sqlite"].sort(),
+      [running, unrelated, "statev2.sqlite", ".desktop-handoff.json", ...leaseFiles].sort(),
     );
     assert.equal(NodeFS.readFileSync(destinationPath, "utf8"), "existing V2 database");
+    assertOwnershipFiles(leases);
+    assert.equal(NodeFS.readFileSync(markerPath, "utf8"), "keep desktop handoff");
   }).pipe(
+    Effect.scoped,
     Effect.provide(NodeServices.layer),
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(directory, { recursive: true, force: true }))),
   );

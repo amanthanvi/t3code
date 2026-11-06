@@ -99,6 +99,7 @@ import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerOwnership from "./serverOwnership.ts";
+import { DesktopSupervisorOwnership } from "./desktopOwnership.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import * as ServerSettings from "./serverSettings.ts";
@@ -835,7 +836,11 @@ const layerMakeServer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     // Before anything opens the database: one server per T3 home.
-    const ownership = yield* ServerOwnership.acquireServerOwnership(config.serverRuntimeStatePath);
+    const desktopSupervisor = yield* Effect.serviceOption(DesktopSupervisorOwnership);
+    const ownership = yield* ServerOwnership.acquireServerOwnership(
+      config.serverRuntimeStatePath,
+      Option.isSome(desktopSupervisor) ? { desktopSupervisor: desktopSupervisor.value } : undefined,
+    );
     const activation = yield* Deferred.make<void>();
     const awaitActivation = Deferred.await(activation);
     const layerActivation = Layer.succeed(ServerActivation.ServerActivation, awaitActivation);

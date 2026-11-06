@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - Checks native lease identity and cross-process retention during migration.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -7,7 +10,60 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { runMigrations } from "../src/persistence/Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import {
+  acquireOwnershipLock,
+  SERVER_OWNER_FILE,
+  SERVER_WRITER_FILE,
+  DESKTOP_SUPERVISOR_OWNER_FILE,
+  DESKTOP_HANDOFF_OWNER_FILE,
+} from "@t3tools/shared/serverOwnershipLock";
+
 import { runMigrateDevDb } from "./migrate-dev-db.ts";
+
+const holdOwnershipFiles = Effect.fn("test.holdOwnershipFiles")(function* (stateDir: string) {
+  const path = yield* Path.Path;
+  return yield* Effect.forEach(
+    [
+      SERVER_OWNER_FILE,
+      SERVER_WRITER_FILE,
+      DESKTOP_SUPERVISOR_OWNER_FILE,
+      DESKTOP_HANDOFF_OWNER_FILE,
+    ],
+    (name) =>
+      Effect.acquireRelease(
+        Effect.sync(() => acquireOwnershipLock(path.join(stateDir, name), "exclusive")),
+        (lease) => Effect.sync(() => lease.db.close()),
+      ),
+  );
+});
+
+function assertOwnershipFiles(leases: ReadonlyArray<ReturnType<typeof acquireOwnershipLock>>) {
+  for (const lease of leases) {
+    const after = NodeFS.statSync(lease.lockPath, { bigint: true });
+    assert.equal(after.dev, lease.identity.dev);
+    assert.equal(after.ino, lease.identity.ino);
+    assert.equal(after.size, lease.identity.size);
+  }
+  const probe = NodeChildProcess.spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+    import { DatabaseSync } from "node:sqlite";
+    for (const path of ${JSON.stringify(leases.map((lease) => lease.lockPath))}) {
+      const db = new DatabaseSync(path);
+      try { db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;"); process.exitCode = 1; }
+      catch (cause) { if (cause.errcode !== 5) process.exitCode = 2; }
+      finally { db.close(); }
+    }
+  `,
+    ],
+    { stdio: "ignore" },
+  );
+  assert.isUndefined(probe.error);
+  assert.equal(probe.status, 0);
+}
 
 const withDatabase = <A, E>(
   databasePath: string,
@@ -112,6 +168,18 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
       const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-src-" });
       const destDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-dest-" });
       const source = yield* createFixtureSource(sourceDir);
+      const sourceStateDir = path.join(sourceDir, "userdata");
+      const destinationStateDir = path.join(destDir, "userdata");
+      const sourceLeases = yield* holdOwnershipFiles(sourceStateDir);
+      const destinationLeases = yield* holdOwnershipFiles(destinationStateDir);
+      const sourceMarker = path.join(sourceStateDir, ".desktop-handoff.json");
+      const destinationMarker = path.join(destinationStateDir, ".desktop-handoff.json");
+      yield* fs.writeFileString(sourceMarker, "source desktop handoff");
+      yield* fs.chmod(sourceMarker, 0o600);
+      yield* fs.writeFileString(destinationMarker, "destination desktop handoff");
+      yield* fs.chmod(destinationMarker, 0o600);
+      const sourceMarkerBefore = NodeFS.statSync(sourceMarker, { bigint: true });
+      const destinationMarkerBefore = NodeFS.statSync(destinationMarker, { bigint: true });
 
       const result = yield* runMigrateDevDb(
         { baseDir: destDir, source, projects: 5, threadsPerProject: 2 },
@@ -165,6 +233,14 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         transfers: 0,
         links: 0,
       });
+      assertOwnershipFiles([...sourceLeases, ...destinationLeases]);
+      assert.equal(yield* fs.readFileString(sourceMarker), "source desktop handoff");
+      assert.equal(yield* fs.readFileString(destinationMarker), "destination desktop handoff");
+      assert.equal(NodeFS.statSync(sourceMarker, { bigint: true }).ino, sourceMarkerBefore.ino);
+      assert.equal(
+        NodeFS.statSync(destinationMarker, { bigint: true }).ino,
+        destinationMarkerBefore.ino,
+      );
     }),
   );
 

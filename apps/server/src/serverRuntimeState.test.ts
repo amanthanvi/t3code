@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Injects a real file replacement during the native SQLite transaction.
 import * as NodeFS from "node:fs";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeSqlite from "node:sqlite";
 
 import { assert, describe, it } from "@effect/vitest";
@@ -34,6 +35,7 @@ const startBesideBootService = Effect.fn("test.startBesideBootService")(function
   readonly missingServiceState?: boolean;
   readonly environment?: NodeJS.ProcessEnv;
   readonly connected?: boolean;
+  readonly desktopSupervised?: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -113,7 +115,10 @@ const startBesideBootService = Effect.fn("test.startBesideBootService")(function
       }),
   });
   const result = yield* Effect.scoped(
-    ServerOwnership.acquireServerOwnership(path.join(t3Home, "userdata", "server-runtime.json")),
+    ServerOwnership.acquireServerOwnership(
+      path.join(t3Home, "userdata", "server-runtime.json"),
+      input.desktopSupervised ? { desktopSupervisor: { connected: () => true } } : undefined,
+    ),
   ).pipe(
     Effect.provideService(ProcessRunner.ProcessRunner, runner),
     Effect.provideService(HostProcess.Platform, input.platform),
@@ -193,6 +198,110 @@ describe("server ownership", () => {
       );
       assert.isFalse(yield* fs.exists(statePath));
       yield* Effect.scoped(ServerOwnership.acquireServerOwnership(statePath));
+    }).pipe(Effect.provide(layerOwnership)),
+  );
+
+  it.effect("admits only a connected desktop writer under a shared parent reservation", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-desktop-admission-" });
+      const statePath = path.join(root, "server-runtime.json");
+      const lockPath = path.join(root, "server-owner.sqlite");
+      const writerPath = path.join(root, "server-writer.sqlite");
+      const disconnected = yield* Effect.scoped(
+        ServerOwnership.acquireServerOwnership(statePath, {
+          desktopSupervisor: { connected: () => false },
+        }),
+      ).pipe(Effect.result);
+      assert.equal(
+        disconnected._tag === "Failure" && disconnected.failure._tag,
+        "ServerOwnershipError",
+      );
+      assert.isFalse(yield* fs.exists(lockPath));
+      const parent = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          NodeChildProcess.spawn(
+            process.execPath,
+            [
+              "--input-type=module",
+              "-e",
+              `
+          import { DatabaseSync } from 'node:sqlite';
+          const gate = new DatabaseSync(${JSON.stringify(lockPath)});
+          gate.exec('PRAGMA busy_timeout = 0; BEGIN; SELECT * FROM sqlite_schema;');
+          process.once('message', () => { gate.close(); process.disconnect(); });
+          process.send('ready');
+        `,
+            ],
+            { stdio: ["ignore", "ignore", "ignore", "ipc"] },
+          ),
+        ),
+        (child) =>
+          Effect.promise(
+            () =>
+              new Promise<void>((resolve) => {
+                if (child.exitCode !== null || child.signalCode !== null) return resolve();
+                child.once("exit", () => resolve());
+                child.send("stop");
+              }),
+          ),
+      );
+      yield* Effect.promise(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            parent.once("message", () => resolve());
+            parent.once("error", reject);
+            parent.once("exit", () =>
+              reject(new Error("Desktop reservation exited before readiness.")),
+            );
+          }),
+      );
+      const standalone = yield* Effect.scoped(
+        ServerOwnership.acquireServerOwnership(statePath),
+      ).pipe(Effect.result);
+      assert.equal(
+        standalone._tag === "Failure" && standalone.failure._tag,
+        "ServerAlreadyRunningError",
+      );
+      const attemptExclusive = (file: string) =>
+        NodeChildProcess.spawnSync(
+          process.execPath,
+          [
+            "--input-type=module",
+            "-e",
+            `
+        import { DatabaseSync } from 'node:sqlite';
+        const lock = new DatabaseSync(${JSON.stringify(file)});
+        try { lock.exec('PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;'); }
+        catch (cause) { process.exitCode = cause.errcode === 5 ? 78 : 1; }
+        finally { lock.close(); }
+      `,
+          ],
+          { stdio: "ignore" },
+        ).status;
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const owner = yield* ServerOwnership.acquireServerOwnership(statePath, {
+            desktopSupervisor: { connected: () => true },
+          });
+          yield* owner.publish(yield* makeState);
+          const duplicate = yield* Effect.scoped(
+            ServerOwnership.acquireServerOwnership(statePath, {
+              desktopSupervisor: { connected: () => true },
+            }),
+          ).pipe(Effect.result);
+          assert.equal(
+            duplicate._tag === "Failure" && duplicate.failure._tag,
+            "ServerAlreadyRunningError",
+          );
+          assert.equal(attemptExclusive(writerPath), 78);
+          assert.equal(attemptExclusive(lockPath), 78);
+        }),
+      );
+      assert.isFalse(yield* fs.exists(statePath));
+      assert.equal(attemptExclusive(writerPath), 0);
+      assert.equal(attemptExclusive(lockPath), 78);
     }).pipe(Effect.provide(layerOwnership)),
   );
 
@@ -279,28 +388,38 @@ describe("server ownership", () => {
     });
   });
 
-  it.effect("refuses beside a live pre-lock server and ignores a stale record", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-owner-legacy-" });
-      const statePath = path.join(root, "server-runtime.json");
-      const state = yield* makeState;
-      yield* ServerRuntimeState.persistServerRuntimeState({
-        path: statePath,
-        // Any record time after this process started proves the PID was not reused.
-        state: { ...state, startedAt: "2100-01-01T00:00:00.000Z" },
-      });
-      const refused = yield* Effect.scoped(ServerOwnership.acquireServerOwnership(statePath)).pipe(
-        Effect.flip,
-      );
-      assert.equal(refused._tag, "ServerAlreadyRunningError");
-      yield* ServerRuntimeState.persistServerRuntimeState({
-        path: statePath,
-        state: { ...state, pid: 0 },
-      });
-      yield* Effect.scoped(ServerOwnership.acquireServerOwnership(statePath));
-    }).pipe(Effect.provide(layerOwnership)),
+  it.effect.each([false, true])(
+    "refuses beside a live pre-lock server and ignores a stale record (desktop: %s)",
+    (desktopSupervised) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-owner-legacy-" });
+        const statePath = path.join(root, "server-runtime.json");
+        const state = yield* makeState;
+        yield* ServerRuntimeState.persistServerRuntimeState({
+          path: statePath,
+          // Any record time after this process started proves the PID was not reused.
+          state: { ...state, startedAt: "2100-01-01T00:00:00.000Z" },
+        });
+        const refused = yield* Effect.scoped(
+          ServerOwnership.acquireServerOwnership(
+            statePath,
+            desktopSupervised ? { desktopSupervisor: { connected: () => true } } : undefined,
+          ),
+        ).pipe(Effect.flip);
+        assert.equal(refused._tag, "ServerAlreadyRunningError");
+        yield* ServerRuntimeState.persistServerRuntimeState({
+          path: statePath,
+          state: { ...state, pid: 0 },
+        });
+        yield* Effect.scoped(
+          ServerOwnership.acquireServerOwnership(
+            statePath,
+            desktopSupervised ? { desktopSupervisor: { connected: () => true } } : undefined,
+          ),
+        );
+      }).pipe(Effect.provide(layerOwnership)),
   );
 
   it.effect("never removes a runtime record another server published", () =>
@@ -326,55 +445,60 @@ describe("server ownership", () => {
   );
 
   describe("beside an installed boot service", () => {
-    it.effect("refuses an old active or scheduled service even without its runtime record", () =>
-      Effect.gen(function* () {
-        for (const fixture of [
-          {
-            platform: "darwin",
-            outputs: { "launchctl print": { code: 0 } },
-          },
-          {
-            platform: "darwin",
-            outputs: {
-              "launchctl print": { code: 113 },
-              "launchctl print-disabled": {
-                code: 0,
-                stdout: '"com.t3tools.t3code.service" => false',
+    it.effect.each([false, true])(
+      "refuses an old active or scheduled service even without its runtime record (desktop: %s)",
+      (desktopSupervised) =>
+        Effect.gen(function* () {
+          for (const fixture of [
+            {
+              platform: "darwin",
+              outputs: { "launchctl print": { code: 0 } },
+            },
+            {
+              platform: "darwin",
+              outputs: {
+                "launchctl print": { code: 113 },
+                "launchctl print-disabled": {
+                  code: 0,
+                  stdout: '"com.t3tools.t3code.service" => false',
+                },
               },
             },
-          },
-          {
-            platform: "linux",
-            outputs: {
-              // Restart= keeps an otherwise disabled service alive during its restart delay.
-              "systemctl is-active": { code: 3, stdout: "activating\n" },
-              "systemctl is-enabled": { code: 1, stdout: "disabled\n" },
+            {
+              platform: "linux",
+              outputs: {
+                // Restart= keeps an otherwise disabled service alive during its restart delay.
+                "systemctl is-active": { code: 3, stdout: "activating\n" },
+                "systemctl is-enabled": { code: 1, stdout: "disabled\n" },
+              },
             },
-          },
-          {
-            platform: "linux",
-            outputs: {
-              "systemctl is-active": { code: 3, stdout: "inactive\n" },
-              "systemctl is-enabled": { code: 0, stdout: "enabled\n" },
+            {
+              platform: "linux",
+              outputs: {
+                "systemctl is-active": { code: 3, stdout: "inactive\n" },
+                "systemctl is-enabled": { code: 0, stdout: "enabled\n" },
+              },
             },
-          },
-          {
-            platform: "darwin",
-            outputs: { "launchctl print": { code: 0 } },
-            environment: { [SERVICE_LAUNCHER_CONTEXT_ENV]: "{}" },
-          },
-        ] as const) {
-          const { result, t3Home } = yield* startBesideBootService(fixture);
-          assert.equal(result._tag, "Failure");
-          if (result._tag !== "Failure") return;
-          assert.equal(result.failure._tag, "OlderBootServiceError");
-          assert.equal(Runtime.getErrorExitCode(result.failure), 78);
-          assert.include(result.failure.message, t3Home);
-          assert.include(result.failure.message, "t3 update");
-          assert.include(result.failure.message, "t3 service restart");
-          assert.include(result.failure.message, "No server was stopped");
-        }
-      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+            {
+              platform: "darwin",
+              outputs: { "launchctl print": { code: 0 } },
+              environment: { [SERVICE_LAUNCHER_CONTEXT_ENV]: "{}" },
+            },
+          ] as const) {
+            const { result, t3Home } = yield* startBesideBootService({
+              ...fixture,
+              desktopSupervised,
+            });
+            assert.equal(result._tag, "Failure");
+            if (result._tag !== "Failure") return;
+            assert.equal(result.failure._tag, "OlderBootServiceError");
+            assert.equal(Runtime.getErrorExitCode(result.failure), 78);
+            assert.include(result.failure.message, t3Home);
+            assert.include(result.failure.message, "t3 update");
+            assert.include(result.failure.message, "t3 service restart");
+            assert.include(result.failure.message, "No server was stopped");
+          }
+        }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
     );
 
     it.effect(

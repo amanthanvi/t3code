@@ -540,6 +540,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       extendEnv: true,
       bootstrap,
       bootstrapDelivery: "fd3",
+      ...(environment.platform === "darwin" ? { ownershipStateDir: environment.stateDir } : {}),
       httpBaseUrl: backendExposure.httpBaseUrl,
       captureOutput: true,
       preflightFailure: Option.none(),

@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
+import * as DesktopOwnershipHandoff from "../backend/DesktopOwnershipHandoff.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
@@ -29,8 +30,21 @@ export interface UpdatesHarnessOptions {
   readonly setDisableDifferentialDownload?: Effect.Effect<void>;
   readonly downloadUpdate?: Effect.Effect<void>;
   readonly quitAndInstall?: Effect.Effect<void, ElectronUpdater.ElectronUpdaterQuitAndInstallError>;
+  readonly prepareInstall?: Effect.Effect<void, ElectronUpdater.ElectronUpdaterQuitAndInstallError>;
   readonly stopBackend?: Effect.Effect<void>;
   readonly startBackend?: Effect.Effect<void>;
+  readonly prepareHandoff?: Effect.Effect<
+    void,
+    DesktopOwnershipHandoff.DesktopOwnershipHandoffError
+  >;
+  readonly commitHandoff?: Effect.Effect<
+    void,
+    DesktopOwnershipHandoff.DesktopOwnershipHandoffError
+  >;
+  readonly cancelHandoff?: Effect.Effect<
+    void,
+    DesktopOwnershipHandoff.DesktopOwnershipHandoffError
+  >;
   readonly backendDesiredRunning?: boolean;
   readonly backendInstances?: ReadonlyArray<DesktopBackendPool.DesktopBackendInstance>;
   readonly env?: Record<string, string | undefined>;
@@ -75,6 +89,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   };
 
   const layerUpdater = Layer.succeed(ElectronUpdater.ElectronUpdater, {
+    prepareInstall: options.prepareInstall ?? Effect.void,
     setFeedURL: (options) =>
       Effect.sync(() => {
         feedUrls.push(options);
@@ -274,6 +289,15 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
 
   const layer = DesktopUpdates.layer.pipe(
     Layer.provide(layerFileSystem),
+    Layer.provide(
+      Layer.succeed(DesktopOwnershipHandoff.DesktopOwnershipHandoff, {
+        prepare: options.prepareHandoff ?? Effect.void,
+        commit: options.commitHandoff ?? Effect.void,
+        check: Effect.void,
+        cancel: options.cancelHandoff ?? Effect.void,
+        recover: Effect.void,
+      }),
+    ),
     Layer.provide(DesktopUpdatePolicy.layerTest(options.policy)),
     Layer.provideMerge(layerUpdater),
     Layer.provideMerge(layerWindow),

@@ -1,5 +1,5 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off - observes the children the launcher spawns with Node built-ins.
-import type * as NodeChildProcess from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - the free-space probe is a plain Promise callback.
 import * as NodeFS from "node:fs";
 
@@ -7,6 +7,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { SERVER_EXIT_CODE_STATE_DIR_OWNED } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import {
+  acquireOwnershipLock,
+  SERVER_OWNER_FILE,
+  SERVER_WRITER_FILE,
+  DESKTOP_SUPERVISOR_OWNER_FILE,
+  DESKTOP_HANDOFF_OWNER_FILE,
+} from "@t3tools/shared/serverOwnershipLock";
+
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -29,6 +37,51 @@ import {
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_RESTART_PENDING_FILE,
 } from "./cloud/serviceProtocol.ts";
+
+const holdOwnershipFiles = Effect.fn("test.holdOwnershipFiles")(function* (stateDir: string) {
+  const path = yield* Path.Path;
+  return yield* Effect.forEach(
+    [
+      SERVER_OWNER_FILE,
+      SERVER_WRITER_FILE,
+      DESKTOP_SUPERVISOR_OWNER_FILE,
+      DESKTOP_HANDOFF_OWNER_FILE,
+    ],
+    (name) =>
+      Effect.acquireRelease(
+        Effect.sync(() => acquireOwnershipLock(path.join(stateDir, name), "exclusive")),
+        (lease) => Effect.sync(() => lease.db.close()),
+      ),
+  );
+});
+
+function assertOwnershipFiles(leases: ReadonlyArray<ReturnType<typeof acquireOwnershipLock>>) {
+  for (const lease of leases) {
+    const after = NodeFS.statSync(lease.lockPath, { bigint: true });
+    assert.equal(after.dev, lease.identity.dev);
+    assert.equal(after.ino, lease.identity.ino);
+    assert.equal(after.size, lease.identity.size);
+  }
+  const probe = NodeChildProcess.spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+    import { DatabaseSync } from "node:sqlite";
+    for (const path of ${JSON.stringify(leases.map((lease) => lease.lockPath))}) {
+      const db = new DatabaseSync(path);
+      try { db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;"); process.exitCode = 1; }
+      catch (cause) { if (cause.errcode !== 5) process.exitCode = 2; }
+      finally { db.close(); }
+    }
+  `,
+    ],
+    { stdio: "ignore" },
+  );
+  assert.isUndefined(probe.error);
+  assert.equal(probe.status, 0);
+}
 
 const spawnedChildren = vi.hoisted((): Array<NodeChildProcess.ChildProcess> => []);
 
@@ -407,6 +460,11 @@ if (context.update?.status === "pending") {
         }
         yield* fs.writeFileString(databaseFile, original);
         if (kind !== "file") yield* fs.symlink(linkTarget, databasePath);
+        const leases = yield* holdOwnershipFiles(path.dirname(databasePath));
+        const markerPath = path.join(path.dirname(databasePath), ".desktop-handoff.json");
+        yield* fs.writeFileString(markerPath, "keep desktop handoff");
+        yield* fs.chmod(markerPath, 0o600);
+        const markerBefore = NodeFS.statSync(markerPath, { bigint: true });
         const encodedDatabasePath = JSON.stringify(databasePath);
         const childSource = `
 import { realpathSync, unlinkSync, writeFileSync } from "node:fs";
@@ -461,6 +519,11 @@ if (context.update?.status === "pending") {
         const updateId = state.update?.id;
         assert.isDefined(updateId);
         assert.isFalse(yield* fs.exists(path.join(root, "runtime", "db-backup", updateId)));
+        assertOwnershipFiles(leases);
+        assert.equal(yield* fs.readFileString(markerPath), "keep desktop handoff");
+        const markerAfter = NodeFS.statSync(markerPath, { bigint: true });
+        assert.equal(markerAfter.dev, markerBefore.dev);
+        assert.equal(markerAfter.ino, markerBefore.ino);
       }),
   );
 

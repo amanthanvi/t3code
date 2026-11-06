@@ -42,6 +42,9 @@ if (
   if (process.argv[2] === "__service-launcher" && process.argv.length === 3) {
     const { runServiceLauncherCli } = await import("./cli/serviceLauncher.ts");
     await runServiceLauncherCli();
+  } else if (process.argv[2] === "__desktop-handoff" && process.argv.length === 3) {
+    const { runDesktopHandoff } = await import("@t3tools/shared/desktopHandoff");
+    await runDesktopHandoff();
   } else {
     const { runCliCommand } = await loadCliMain();
     await runCliCommand();

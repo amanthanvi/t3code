@@ -45,6 +45,7 @@ import * as DesktopApplicationMenu from "./window/DesktopApplicationMenu.ts";
 import * as DesktopAssets from "./app/DesktopAssets.ts";
 import * as DesktopBackendConfiguration from "./backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendPool from "./backend/DesktopBackendPool.ts";
+import * as DesktopOwnershipHandoff from "./backend/DesktopOwnershipHandoff.ts";
 import * as DesktopLocalEnvironmentAuth from "./backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopNetworkInterfaces from "./backend/DesktopNetworkInterfaces.ts";
 import * as DesktopEnvironment from "./app/DesktopEnvironment.ts";
@@ -222,6 +223,7 @@ const layerDesktopApplication = Layer.mergeAll(
       Layer.provide(DesktopManagedPolicy.layer),
     ),
   ),
+  Layer.provideMerge(DesktopOwnershipHandoff.layer.pipe(Layer.provide(layerDesktopBackend))),
   Layer.provideMerge(layerDesktopWslBackend),
   Layer.provideMerge(layerDesktopLocalEnvironmentAuth),
 );

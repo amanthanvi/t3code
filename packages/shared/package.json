@@ -542,6 +542,18 @@
     "./speech": {
       "types": "./src/speech.ts",
       "import": "./src/speech.ts"
+    },
+    "./serverOwnershipLock": {
+      "types": "./src/serverOwnershipLock.ts",
+      "import": "./src/serverOwnershipLock.ts"
+    },
+    "./desktopOwnership": {
+      "types": "./src/desktopOwnership.ts",
+      "import": "./src/desktopOwnership.ts"
+    },
+    "./desktopHandoff": {
+      "types": "./src/desktopHandoff.ts",
+      "import": "./src/desktopHandoff.ts"
     }
   },
   "scripts": {
