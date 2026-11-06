@@ -43,6 +43,7 @@ import * as CloudLink from "./CloudLink.ts";
 import * as ConnectReachability from "./ConnectReachability.ts";
 import { consumeCloudReplayGuards } from "./CloudLink.ts";
 import { pendingServiceUpdateExists } from "./updateHandoff.ts";
+import { prepareServiceHandoff } from "./serviceHandoff.ts";
 import { managedTunnelStartupAction } from "./managedTunnelStartup.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
@@ -367,6 +368,40 @@ describe("releaseManagedTunnelOnShutdown", () => {
       expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(false);
     }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
   });
+
+  it.live.each([
+    { operation: "replacement", replacement: true, finished: false, release: false },
+    { operation: "offline maintenance", replacement: false, finished: false, release: true },
+    { operation: "finished replacement", replacement: true, finished: true, release: true },
+  ] as const)(
+    "preserves tunnel cleanup intent during native $operation",
+    ({ replacement, finished, release }) => {
+      const { store, values } = makeMemorySecretStore(managedLinkSecrets);
+      const applyConfigCalls: Array<unknown> = [];
+      const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+      return Effect.gen(function* () {
+        const link = yield* CloudLink.CloudLink;
+        const config = yield* ServerConfigModule.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const handoff = yield* Effect.acquireRelease(
+          Effect.promise(() => prepareServiceHandoff(config.baseDir, replacement)),
+          (handoff) => Effect.promise(() => handoff.close()),
+        );
+        if (finished) yield* Effect.promise(() => handoff.close());
+        yield* fs.writeFileString(
+          path.join(config.baseDir, "runtime", SERVICE_STOP_MARKER_FILE),
+          "",
+        );
+
+        expect(yield* link.releaseManagedTunnelOnShutdown()).toBe(release);
+        expect(applyConfigCalls).toEqual(release ? [null] : []);
+        expect(requests).toHaveLength(release ? 1 : 0);
+        expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(!release);
+      }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
+    },
+  );
 
   // regression: 808d6853555 keep the managed tunnel across remote update restarts
   it.effect("still releases when the recorded update already settled", () => {

@@ -31,6 +31,7 @@ const isMissingEndpoint = (cause: unknown) =>
 interface Marker {
   readonly nonce: string;
   readonly socketPath: string;
+  readonly replacement: boolean;
 }
 
 function safeMarkerStat(baseDir: string) {
@@ -84,7 +85,8 @@ function readMarker(baseDir: string): Marker | undefined {
     typeof value.nonce !== "string" ||
     !/^[a-f0-9]{64}$/.test(value.nonce) ||
     !("socketPath" in value) ||
-    typeof value.socketPath !== "string"
+    typeof value.socketPath !== "string" ||
+    ("replacement" in value && typeof value.replacement !== "boolean")
   )
     throw new Error("Service handoff marker is invalid.");
   const directory = NodePath.dirname(value.socketPath);
@@ -113,7 +115,39 @@ function readMarker(baseDir: string): Marker | undefined {
   ) {
     throw new Error("Service handoff endpoint has unsafe ownership or permissions.");
   }
-  return { nonce: value.nonce, socketPath: value.socketPath };
+  return {
+    nonce: value.nonce,
+    socketPath: value.socketPath,
+    replacement: "replacement" in value && value.replacement === true,
+  };
+}
+
+export async function activeServiceReplacementExists(baseDir: string): Promise<boolean> {
+  let marker: Marker | undefined;
+  try {
+    marker = readMarker(baseDir);
+  } catch {
+    return false;
+  }
+  if (marker?.replacement !== true) return false;
+  try {
+    const installer = acquireServiceInstallerLease(baseDir);
+    installer.db.close();
+    return false;
+  } catch (cause) {
+    if (!isBusy(cause)) return false;
+  }
+  // A crashed installer's socket file may remain while an unrelated operation holds the lease.
+  return new Promise<boolean>((resolve) => {
+    const socket = NodeNet.createConnection(marker.socketPath);
+    const finish = (active: boolean) => {
+      socket.destroy();
+      resolve(active);
+    };
+    socket.setTimeout(1_000, () => finish(false));
+    socket.once("error", () => finish(false));
+    socket.once("connect", () => finish(true));
+  });
 }
 
 function removeMarker(baseDir: string, nonce: string): void {
@@ -127,7 +161,7 @@ function removeMarker(baseDir: string, nonce: string): void {
   }
 }
 
-export async function prepareServiceHandoff(baseDir: string) {
+export async function prepareServiceHandoff(baseDir: string, replacement = true) {
   const installer = acquireServiceInstallerLease(baseDir);
   let gate: ReturnType<typeof acquireOwnershipLock> | undefined;
   let directory: string | undefined;
@@ -195,7 +229,7 @@ export async function prepareServiceHandoff(baseDir: string) {
     const temporaryMarker = `${markerPath(baseDir)}.${nonce}.tmp`;
     const handle = NodeFS.openSync(temporaryMarker, "wx", 0o600);
     try {
-      NodeFS.writeFileSync(handle, `${JSON.stringify({ nonce, socketPath })}\n`);
+      NodeFS.writeFileSync(handle, `${JSON.stringify({ nonce, socketPath, replacement })}\n`);
       NodeFS.fsyncSync(handle);
     } finally {
       NodeFS.closeSync(handle);

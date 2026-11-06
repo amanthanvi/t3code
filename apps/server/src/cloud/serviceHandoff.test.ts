@@ -7,7 +7,12 @@ import * as NodePath from "node:path";
 import { assert, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { acknowledgeServiceHandoff, prepareServiceHandoff } from "./serviceHandoff.ts";
+import {
+  acknowledgeServiceHandoff,
+  acquireServiceInstallerLease,
+  activeServiceReplacementExists,
+  prepareServiceHandoff,
+} from "./serviceHandoff.ts";
 
 const runChild = async (source: string) => {
   const child = NodeChildProcess.spawn(process.execPath, ["--input-type=module", "-e", source], {
@@ -51,6 +56,7 @@ it.live("reserves replacement until the new launcher acknowledges its own native
     let stopChild: (() => Promise<void>) | undefined;
     try {
       handoff = await prepareServiceHandoff(baseDir);
+      assert.isTrue(await activeServiceReplacementExists(baseDir));
       await expect(prepareServiceHandoff(baseDir)).rejects.toThrow();
       assert.equal(attemptLegacy(), 78);
       stopChild = await runChild(`
@@ -64,6 +70,7 @@ it.live("reserves replacement until the new launcher acknowledges its own native
       `);
       await handoff.waitForReady(120_000);
       await handoff.close();
+      assert.isFalse(await activeServiceReplacementExists(baseDir));
       assert.equal(attemptLegacy(), 78);
       await stopChild();
       stopChild = undefined;
@@ -74,6 +81,41 @@ it.live("reserves replacement until the new launcher acknowledges its own native
       NodeFS.rmSync(baseDir, { recursive: true, force: true });
     }
   }),
+);
+
+it.live(
+  "rejects a crashed replacement even while another operation holds the installer lease",
+  () =>
+    Effect.promise(async () => {
+      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-handoff-crash-"));
+      const handoffUrl = new URL("./serviceHandoff.ts", import.meta.url).href;
+      const stop = await runChild(`
+      import { prepareServiceHandoff } from ${JSON.stringify(handoffUrl)};
+      await prepareServiceHandoff(${JSON.stringify(baseDir)});
+      process.on('message', () => {});
+      process.send({ ready: true });
+    `);
+      const markerPath = NodePath.join(baseDir, "runtime", ".service-handoff.json");
+      const marker = JSON.parse(NodeFS.readFileSync(markerPath, "utf8")) as { socketPath: string };
+      try {
+        assert.isTrue(await activeServiceReplacementExists(baseDir));
+        await stop();
+        assert.isTrue(NodeFS.existsSync(markerPath));
+        assert.isFalse(await activeServiceReplacementExists(baseDir));
+        const unrelated = acquireServiceInstallerLease(baseDir);
+        try {
+          assert.isFalse(await activeServiceReplacementExists(baseDir));
+        } finally {
+          unrelated.db.close();
+        }
+        await acknowledgeServiceHandoff(baseDir);
+        assert.isFalse(NodeFS.existsSync(markerPath));
+      } finally {
+        await stop();
+        NodeFS.rmSync(NodePath.dirname(marker.socketPath), { recursive: true, force: true });
+        NodeFS.rmSync(baseDir, { recursive: true, force: true });
+      }
+    }),
 );
 
 it.live("clears a stale marker only when the installer's exclusive lease is free", () =>
@@ -137,6 +179,7 @@ it.live("rejects a corrupt active marker but removes it after its installer exit
     const handoff = await prepareServiceHandoff(baseDir);
     try {
       NodeFS.writeFileSync(markerPath, "{");
+      assert.isFalse(await activeServiceReplacementExists(baseDir));
       await expect(acknowledgeServiceHandoff(baseDir)).rejects.toThrow();
       assert.isTrue(NodeFS.existsSync(markerPath));
       await handoff.close();

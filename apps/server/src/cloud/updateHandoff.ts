@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import * as ServerConfig from "../config.ts";
+import { activeServiceReplacementExists } from "./serviceHandoff.ts";
 import {
   SERVICE_STATE_FILE,
   SERVICE_STOP_MARKER_FILE,
@@ -27,10 +28,11 @@ export const pendingServiceUpdateExists = Effect.gen(function* () {
 });
 
 export const pendingUpdateHandoffExists = Effect.gen(function* () {
+  const config = yield* ServerConfig.ServerConfig;
+  if (yield* Effect.promise(() => activeServiceReplacementExists(config.baseDir))) return true;
   if (!(yield* pendingServiceUpdateExists)) {
     return false;
   }
-  const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runtimeDir = path.join(config.baseDir, "runtime");

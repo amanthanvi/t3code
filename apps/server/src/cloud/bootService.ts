@@ -811,7 +811,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       Effect.gen(function* () {
         const handoff = yield* Effect.acquireRelease(
           Effect.tryPromise({
-            try: () => prepareServiceHandoff(input.baseDir),
+            try: () => prepareServiceHandoff(input.baseDir, awaitRestart),
             catch: handoffError,
           }),
           (prepared) => Effect.promise(() => prepared.close()),
