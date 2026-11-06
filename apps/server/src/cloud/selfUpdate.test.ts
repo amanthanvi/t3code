@@ -13,6 +13,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { vi } from "vite-plus/test";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
@@ -23,6 +24,14 @@ import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
 import * as ServerSelfUpdate from "./selfUpdate.ts";
 import { pinnedRuntimeVersionsDir } from "./pinnedRuntime.ts";
+
+// These fixtures model a stable host even when release builds stamp the package Nightly.
+vi.mock("../../package.json", async (importOriginal) => ({
+  default: {
+    ...(await importOriginal<{ default: typeof packageJson }>()).default,
+    version: "1.0.0",
+  },
+}));
 
 interface HarnessOptions {
   readonly mode?: "web" | "desktop";
