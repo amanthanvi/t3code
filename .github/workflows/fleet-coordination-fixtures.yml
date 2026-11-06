@@ -1,0 +1,129 @@
+name: Private native coordination fixtures
+
+on:
+  workflow_dispatch:
+    inputs:
+      published_upstream_version:
+        description: Published upstream source release (canonical compatibility source)
+        required: true
+        default: 0.1.8-nightly.20261106.4247
+        type: string
+      patch_sha:
+        description: Exact verified 40-hex coordination patch commit
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: private-coordination-fixtures-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  fixtures:
+    if: github.repository == 'amanthanvi/t3code' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [v1, v2, fault-v3]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/fleet-managed
+            .github/workflows
+
+      - name: Test fixture and publisher contracts
+        run: python3 -B -m unittest discover -s scripts/fleet-managed -p 'test_*.py' -v
+
+      - name: Prepare exact published source and verified patch SHA
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RELEASE: ${{ inputs.published_upstream_version }}
+          PATCH_SHA: ${{ inputs.patch_sha }}
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          python3 -B scripts/fleet-managed/fixture.py prepare \
+            --published-upstream-version "$SOURCE_RELEASE" --patch-sha "$PATCH_SHA" --variant "$VARIANT" \
+            --source "$GITHUB_WORKSPACE/prepared" --context "$RUNNER_TEMP/fixture-context.json"
+
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb
+        with:
+          working-directory: prepared
+          node-version-file: package.json
+          cache: false
+          run-install: false
+
+      - name: Install exact source dependencies and prove healthy coordination before fault injection
+        working-directory: prepared
+        run: |
+          set -euo pipefail
+          vp install --frozen-lockfile
+          vp test run apps/server/src/serviceLauncher.test.ts apps/server/src/serverRuntimeState.test.ts \
+            apps/server/src/serverOwnershipLock.test.ts apps/server/src/cloud/serviceHandoff.test.ts \
+            apps/server/src/cloud/serviceLauncherClient.test.ts apps/server/src/cloud/pinnedRuntime.test.ts \
+            apps/server/src/cloud/bootService.test.ts apps/server/src/cloud/selfUpdate.test.ts \
+            apps/server/src/cli/update.test.ts apps/server/src/cli/uninstall.test.ts
+
+      - name: Align preview identity and seal explicitly labeled fixture source
+        env:
+          VERSION: ${{ steps.source.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd prepared
+          node scripts/update-release-package-versions.ts "$VERSION"
+          cp .env.example .env
+          cd ..
+          manifest=$(python3 -B scripts/fleet-managed/fixture.py seal --source prepared --context "$RUNNER_TEMP/fixture-context.json")
+          echo "T3CODE_BUILD_PROVENANCE=$manifest" >> "$GITHUB_ENV"
+
+      - name: Install native packaging prerequisites
+        run: sudo apt-get update && sudo apt-get install -y patchelf libsecret-1-dev pkg-config
+
+      - name: Compile complete native Linux runtime and smoke standalone archive
+        working-directory: prepared
+        env:
+          VERSION: ${{ steps.source.outputs.version }}
+          T3CODE_TELEMETRY_CHANNEL: dev
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          vp run --filter t3 typecheck
+          vp run --filter t3 build
+          node scripts/apply-web-brand-assets.ts nightly apps/server/dist/client
+          cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target x86_64-unknown-linux-gnu
+          mkdir -p "$RUNNER_TEMP/fixture-resource-monitor/linux-x64"
+          cp native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor "$RUNNER_TEMP/fixture-resource-monitor/linux-x64/"
+          node apps/server/scripts/cli.ts build-exe --verbose
+          node scripts/build-cli-archive.ts --platform linux --arch x64 --version "$VERSION" \
+            --resource-monitor-dir "$RUNNER_TEMP/fixture-resource-monitor" --output-dir fixture-cli
+          node scripts/smoke-cli-archive.ts --archive "fixture-cli/t3-$VERSION-linux-x64.tar.gz" --expect-version "$VERSION"
+
+      - name: Verify fixture binary, exact source and provenance bundle
+        env:
+          VERSION: ${{ steps.source.outputs.version }}
+        run: |
+          python3 -B scripts/fleet-managed/fixture.py package --source prepared --context "$RUNNER_TEMP/fixture-context.json" \
+            --archive "prepared/fixture-cli/t3-$VERSION-linux-x64.tar.gz" --output "$RUNNER_TEMP/private-fixture"
+
+      - uses: actions/upload-artifact@v7
+        id: artifact
+        with:
+          name: private-coordination-${{ matrix.variant }}-${{ steps.source.outputs.version }}
+          path: ${{ runner.temp }}/private-fixture
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Record immutable Actions artifact identity
+        env:
+          ARTIFACT_ID: ${{ steps.artifact.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ steps.artifact.outputs.artifact-digest }}
+          VARIANT: ${{ matrix.variant }}
+          VERSION: ${{ steps.source.outputs.version }}
+        run: |
+          printf 'Fixture %s (%s): Actions artifact %s, digest %s\n' "$VARIANT" "$VERSION" "$ARTIFACT_ID" "$ARTIFACT_DIGEST" >> "$GITHUB_STEP_SUMMARY"
