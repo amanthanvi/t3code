@@ -7,7 +7,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -150,16 +149,7 @@ def main(argv=None):
         verify(args.directory)
 
 
-def subprocess_diagnostic(error):
-    command = error.cmd[0] if isinstance(error.cmd, (list, tuple)) and error.cmd else ""
-    operation = Path(command).name if isinstance(command, str) else ""
-    if operation not in {"git", "node", "vp", "cargo", "tar", "gh"}:
-        operation = "subprocess"
-    text = "\n".join(value.decode(errors="replace") if isinstance(value, bytes) else value
-                     for value in (error.stdout, error.stderr) if isinstance(value, (bytes, str)))
-    codes = sorted(set(re.findall(r"\b(?:unicorn|t3code|eslint)\([a-z][a-z0-9/-]{0,79}\)|\bTS\d{3,7}\b", text)))[:20]
-    return {"operation": operation, "exitCode": error.returncode, "ruleCodes": codes,
-            "precommitFailed": bool(re.search(r"pre-commit[^\n]*failed", text, re.I))}
+subprocess_diagnostic = publisher.subprocess_diagnostic
 
 
 if __name__ == "__main__":

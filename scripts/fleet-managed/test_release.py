@@ -3,6 +3,7 @@ import io
 import json
 import os
 from pathlib import Path
+import runpy
 import subprocess
 import tarfile
 import tempfile
@@ -90,6 +91,66 @@ class SelectionTests(unittest.TestCase):
         for value in ("../x", VERSION + "+aman.1", VERSION + ";true", VERSION + ".aman.1"):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 release.version_key(value)
+
+
+class DiagnosticTests(unittest.TestCase):
+    def test_reports_only_fixed_operation_status_and_github_error_classes(self):
+        secret = "ghp_SENTINEL_AUTH_TOKEN_DO_NOT_EMIT"
+        for command, stderr, expected, status, help_flag in (
+            (["gh", "release", "create", secret], f"HTTP 403: Resource not accessible by integration Authorization: Bearer {secret}", "permission_denied", [403], False),
+            (["gh", "release", "edit", secret], f"HTTP 404: Not Found\nTOKEN={secret}", "not_found", [404], False),
+            (["gh", "release", "verify", "--help"], f"unknown command verify {secret}", "unsupported_command", [], True),
+            (["gh", "release", "verify-asset", secret], "HTTP 422: Validation Failed", "validation_failed", [422], False),
+            (["gh", "api", secret], "HTTP 409: Conflict", "conflict", [409], False),
+        ):
+            with self.subTest(command=command[:3]):
+                error = subprocess.CalledProcessError(1, command, stderr=stderr)
+                report = release.subprocess_diagnostic(error)
+                self.assertEqual(report["operation"], ".".join(command[:3] if command[1] == "release" else command[:2]))
+                self.assertEqual((report["githubClass"], report["httpStatuses"], report["help"]), (expected, status, help_flag))
+                self.assertEqual(set(report), {"operation", "help", "exitCode", "ruleCodes", "httpStatuses", "githubClass", "precommitFailed"})
+                for value in (secret, "Authorization", "Bearer", "TOKEN=", "accessible", "Not Found"):
+                    self.assertNotIn(value, json.dumps(report))
+
+    def test_unknown_commands_and_arguments_cannot_become_diagnostic_labels(self):
+        secret = "github_pat_SENTINEL_DO_NOT_EMIT"
+        for command in (["/tmp/" + secret, "publish"], ["gh", secret, "create"], "gh " + secret):
+            with self.subTest(command=type(command).__name__):
+                report = release.subprocess_diagnostic(subprocess.CalledProcessError(2, command,
+                            output=b"unrecognized diagnostic \xff", stderr="unknown arbitrary text"))
+                self.assertNotIn(secret, json.dumps(report))
+                self.assertEqual(report["operation"], "gh" if isinstance(command, list) and command[0] == "gh" else "subprocess")
+                self.assertIsNone(report["githubClass"])
+
+    def test_git_stage_and_bounded_rule_codes_survive_without_source_or_streams(self):
+        codes = " ".join(f"TS{number}" for number in range(1000, 1040))
+        report = release.subprocess_diagnostic(subprocess.CalledProcessError(3, ["/usr/bin/git", "rev-parse", "SECRET_ARGUMENT"],
+                    output=f"{codes}\nSOURCE_BODY_SENTINEL\n", stderr=b"unicorn(no-useless-spread)\nVITE+ - pre-commit script failed (code 1)"))
+        self.assertEqual((report["operation"], report["exitCode"], report["help"]), ("git.rev-parse", 3, False))
+        self.assertEqual(len(report["ruleCodes"]), 20)
+        self.assertTrue(report["precommitFailed"])
+        self.assertNotIn("SENTINEL", json.dumps(report))
+
+    def test_publisher_cli_emits_safe_diagnostic_instead_of_captured_streams(self):
+        secret = "github_pat_SENTINEL_NEVER_PRINT"
+        failure = subprocess.CalledProcessError(1, ["gh", "release", "create", secret],
+                    output=f"SOURCE_BODY {secret}".encode(), stderr=f"HTTP 403: Resource not accessible by integration\nBearer {secret}")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            selection = root / "selection.json"
+            release.write_json(selection, {"version": VERSION, "patchSourceCommit": "c" * 40})
+            argv = [release.__file__, "prepare", "--selection", str(selection), "--source", str(root / "source"), "--context", str(root / "context.json")]
+            errors = io.StringIO()
+            with patch("sys.argv", argv), patch("sys.stderr", errors), patch("subprocess.run", side_effect=failure), \
+                    self.assertRaises(SystemExit) as stopped:
+                runpy.run_path(release.__file__, run_name="__main__")
+            self.assertEqual(stopped.exception.code, 1)
+            emitted = errors.getvalue()
+            self.assertNotIn(secret, emitted)
+            self.assertNotIn("SOURCE_BODY", emitted)
+            report = json.loads(emitted.split("CalledProcessError: ", 1)[1])
+            self.assertEqual((report["operation"], report["httpStatuses"], report["githubClass"]),
+                             ("gh.release.create", [403], "permission_denied"))
 
 
 class ArchiveTests(unittest.TestCase):

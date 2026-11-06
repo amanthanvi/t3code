@@ -172,15 +172,18 @@ process.stdout.write(JSON.stringify(results));
                     output=f"Authorization: Bearer {secret}\nunicorn(no-useless-spread)\nTS2345\n".encode(),
                     stderr=f"TOKEN={secret}\nt3code(no-test-timeout) eslint(no-unused-vars)\nVITE+ - pre-commit script failed (code 1)")
         result = fixture.subprocess_diagnostic(error)
-        self.assertEqual(result, {"operation": "git", "exitCode": 1,
+        self.assertIs(fixture.subprocess_diagnostic, publisher.subprocess_diagnostic)
+        self.assertEqual(result, {"operation": "git.commit", "help": False, "exitCode": 1,
                                  "ruleCodes": ["TS2345", "eslint(no-unused-vars)", "t3code(no-test-timeout)", "unicorn(no-useless-spread)"],
+                                 "httpStatuses": [], "githubClass": None,
                                  "precommitFailed": True})
         emitted = json.dumps(result)
-        for value in (secret, "Authorization", "Bearer", "TOKEN=", "/usr/bin", "commit", "--message"):
+        for value in (secret, "Authorization", "Bearer", "TOKEN=", "/usr/bin", "--message"):
             self.assertNotIn(value, emitted.replace("precommitFailed", ""))
         unknown = subprocess.CalledProcessError(2, ["/tmp/" + secret], output="unrelated output", stderr=b"invalid bytes \xff")
-        self.assertEqual(fixture.subprocess_diagnostic(unknown), {"operation": "subprocess", "exitCode": 2,
-                                                               "ruleCodes": [], "precommitFailed": False})
+        self.assertEqual(fixture.subprocess_diagnostic(unknown), {"operation": "subprocess", "help": False, "exitCode": 2,
+                                                               "ruleCodes": [], "httpStatuses": [], "githubClass": None,
+                                                               "precommitFailed": False})
 
     def bundle(self):
         managed = self.seal()

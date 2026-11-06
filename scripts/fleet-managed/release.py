@@ -51,6 +51,41 @@ def git(directory, *args, **kwargs):
     return run("git", *args, cwd=directory, **kwargs).decode().strip()
 
 
+def subprocess_diagnostic(error):
+    args = error.cmd if isinstance(error.cmd, (list, tuple)) else ()
+    executable = Path(args[0]).name if args and isinstance(args[0], str) else ""
+    operation = executable if executable in {"git", "node", "vp", "cargo", "tar", "gh"} else "subprocess"
+    if executable == "gh" and len(args) >= 3 and args[1] == "release" and args[2] in {"create", "edit", "verify", "verify-asset"}:
+        operation = "gh.release." + args[2]
+    elif executable == "gh" and len(args) >= 2 and args[1] == "api":
+        operation = "gh.api"
+    elif executable == "git" and len(args) >= 2 and args[1] in {
+            "clone", "fetch", "merge-base", "diff", "checkout", "apply", "show", "add", "commit",
+            "rev-parse", "status", "archive", "cat-file", "ls-remote", "push"}:
+        operation = "git." + args[1]
+    text = "\n".join(value.decode(errors="replace") if isinstance(value, bytes) else value
+                     for value in (error.stdout, error.stderr) if isinstance(value, (bytes, str)))
+    codes = sorted(set(re.findall(r"\b(?:unicorn|t3code|eslint)\([a-z][a-z0-9/-]{0,79}\)|\bTS\d{3,7}\b", text)))[:20]
+    statuses = re.findall(r"\bHTTP(?:/[\d.]+)?\s+([1-5]\d{2})\b", text, re.I)
+    statuses += re.findall(r"[\"']?status(?: code)?[\"']?\s*[:=]\s*[\"']?([1-5]\d{2})\b", text, re.I)
+    github_class = None
+    if executable in {"gh", "git"}:
+        lower = text.lower()
+        for classification, needles in (
+            ("unsupported_command", ("unknown command", "unknown flag", "unknown shorthand flag", "unknown option", "unrecognized arguments")),
+            ("permission_denied", ("resource not accessible", "permission denied", "insufficient permission", "bad credentials", "requires authentication", "forbidden")),
+            ("not_found", ("not found",)),
+            ("conflict", ("conflict", "already exists", "already_exists")),
+            ("validation_failed", ("validation failed", "unprocessable entity")),
+        ):
+            if any(needle in lower for needle in needles):
+                github_class = classification
+                break
+    return {"operation": operation, "help": "--help" in args[1:], "exitCode": error.returncode,
+            "ruleCodes": codes, "httpStatuses": sorted({int(status) for status in statuses})[:20],
+            "githubClass": github_class, "precommitFailed": bool(re.search(r"pre-commit[^\n]*failed", text, re.I))}
+
+
 def api(path):
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "aman-t3-managed-publisher"}
     # Only GitHub's API receives the ephemeral workflow token, never an asset origin.
@@ -442,5 +477,5 @@ if __name__ == "__main__":
     except (ValueError, KeyError, OSError, tarfile.TarError, subprocess.CalledProcessError) as error:
         # Do not dump subprocess output, commands, or inherited environment on failure.
         print(f"Managed publisher stopped: {type(error).__name__}: " +
-              (str(error) if not isinstance(error, subprocess.CalledProcessError) else "required subprocess failed"), file=sys.stderr)
+              (json.dumps(subprocess_diagnostic(error)) if isinstance(error, subprocess.CalledProcessError) else str(error)), file=sys.stderr)
         sys.exit(1)
