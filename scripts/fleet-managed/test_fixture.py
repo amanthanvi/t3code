@@ -160,6 +160,28 @@ process.stdout.write(JSON.stringify(results));
         self.assertEqual(json.loads(result.stdout), [{"value": "normal startup", "exchanges": 0},
                                                     {"error": fixture.FAULT, "exchanges": 0}])
 
+    def test_fixture_labels_do_not_trigger_the_real_useless_spread_rule(self):
+        self.seal()
+        packager = (self.source / "scripts/build-cli-archive.ts").read_text()
+        self.assertIn('encodeJsonString({ ...provenance, "testFixture":true,', packager)
+        self.assertNotIn('...{"testFixture"', packager)
+
+    def test_subprocess_diagnostic_exposes_only_operation_status_and_known_codes(self):
+        secret = "ghp_SENTINEL_AUTH_TOKEN_DO_NOT_EMIT"
+        error = subprocess.CalledProcessError(1, ["/usr/bin/git", "commit", "--message", secret],
+                    output=f"Authorization: Bearer {secret}\nunicorn(no-useless-spread)\nTS2345\n".encode(),
+                    stderr=f"TOKEN={secret}\nt3code(no-test-timeout) eslint(no-unused-vars)\nVITE+ - pre-commit script failed (code 1)")
+        result = fixture.subprocess_diagnostic(error)
+        self.assertEqual(result, {"operation": "git", "exitCode": 1,
+                                 "ruleCodes": ["TS2345", "eslint(no-unused-vars)", "t3code(no-test-timeout)", "unicorn(no-useless-spread)"],
+                                 "precommitFailed": True})
+        emitted = json.dumps(result)
+        for value in (secret, "Authorization", "Bearer", "TOKEN=", "/usr/bin", "commit", "--message"):
+            self.assertNotIn(value, emitted.replace("precommitFailed", ""))
+        unknown = subprocess.CalledProcessError(2, ["/tmp/" + secret], output="unrelated output", stderr=b"invalid bytes \xff")
+        self.assertEqual(fixture.subprocess_diagnostic(unknown), {"operation": "subprocess", "exitCode": 2,
+                                                               "ruleCodes": [], "precommitFailed": False})
+
     def bundle(self):
         managed = self.seal()
         version = managed["upstreamVersion"]

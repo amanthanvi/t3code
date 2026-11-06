@@ -29,6 +29,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             scripts/fleet-managed
+            .github/workflows
           sparse-checkout-cone-mode: true
 
       - name: Test publisher contracts
